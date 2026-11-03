@@ -123,7 +123,7 @@ public final class CogramGateway {
         List<TLRPC.Dialog> dialogs = backend.dialogs();
         for (TLRPC.InputDialogPeer inputPeer : request.peers) {
             if (inputPeer instanceof TLRPC.TL_inputDialogPeer) {
-                long userId = inputPeer.peer.user_id;
+                long userId = ((TLRPC.TL_inputDialogPeer) inputPeer).peer.user_id;
                 for (TLRPC.Dialog dialog : dialogs) {
                     if (dialog.peer.user_id == userId) {
                         result.dialogs.add(dialog);
