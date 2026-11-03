@@ -1,0 +1,2 @@
+* Kräv kanalbindning som standard vid nya installationer (kan inaktiveras i inställningarna)
+* Lita inte på rot-certifikatutfärdare (root CAs) från eMudhra

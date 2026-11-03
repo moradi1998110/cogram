@@ -1,0 +1,3 @@
+* Montrer un avertissement dans la discussion si un contact est dans une zone horaire différente et que c'est la nuit pour ellui
+* Montrer un avertissement dans la discussion si le contact est en mode Ne pas Déranger
+* Refactorisation de la gestion automatique du mode Ne Pas Déranger (basé sur le système)

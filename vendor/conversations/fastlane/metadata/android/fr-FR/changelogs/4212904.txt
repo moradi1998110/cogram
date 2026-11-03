@@ -1,0 +1,2 @@
+* Corrections de bugs d'UI mineurs
+* Correction de soucis de connexion avec les domaines en .onion sur les ports non standards

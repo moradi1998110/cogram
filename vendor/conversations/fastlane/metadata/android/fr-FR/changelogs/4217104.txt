@@ -1,0 +1,3 @@
+* Montrer les casquettes dans les salons publiques qui en ont
+* Correction de crash lors du changement de modéle d'accès aux bundles OMEMO
+* Correction de crash lors du partage d'adresses XMPP via Quicksy

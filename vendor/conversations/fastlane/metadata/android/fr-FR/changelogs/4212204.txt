@@ -1,0 +1,1 @@
+* Correction de glitch d'UI quand plusieurs réactions sont affichées

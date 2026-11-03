@@ -1,0 +1,3 @@
+* Correction d'URI d'invitation pour les salons IRC
+* Montrer une icônes d'avertissement rouge dans les détails d'un salon non compatible MUC
+* Correction de tentatives de connexions avec le mode avion et les VPN

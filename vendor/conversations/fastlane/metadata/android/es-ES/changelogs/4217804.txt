@@ -1,0 +1,2 @@
+* Añadir «Nota personal» como sugerencia de búsqueda
+* Pequeñas correcciones de errores

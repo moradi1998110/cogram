@@ -1,0 +1,2 @@
+* Montrer le nombre de participant·es en sous-titre des salons publiques
+* Correction pour rejoindre des salons sur de très vieux serveurs Prosody

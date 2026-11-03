@@ -1,0 +1,2 @@
+* Correction des appels bloqués en état de connection quand "Utiliser des relais" est activé mais que le serveur n'en n'a aucun
+* Optimisations de bande passante

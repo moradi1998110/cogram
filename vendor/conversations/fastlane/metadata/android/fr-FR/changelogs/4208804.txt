@@ -1,0 +1,3 @@
+* Support du transfert de fichier P2P via WebRTC
+* Correction de soucis d'intéropérabilité avec Bind 2.0 sur Ejabberd
+* Intégration des certificats racines de Let's Encrypt pour Android <= 7

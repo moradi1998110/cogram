@@ -1,0 +1,2 @@
+* Exclusion de vieux appareils Oppo de l'intégration d'appel
+* Corrections de bugs diverses

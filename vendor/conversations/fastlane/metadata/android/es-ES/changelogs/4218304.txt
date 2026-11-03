@@ -1,0 +1,2 @@
+* Activar la vinculación de canales por defecto al instalar (configurable en los ajustes).
+* Revocar la confianza en las autoridades de certificación raíz de eMudhra

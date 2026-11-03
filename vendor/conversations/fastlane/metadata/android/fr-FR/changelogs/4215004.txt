@@ -1,0 +1,2 @@
+* Envois et affichage des images de profils haute résolution sur les serveurs le supportant
+* Support de la XEP-0425 : Rétractation de Messages Modérés dans les salons publiques

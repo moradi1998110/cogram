@@ -1,0 +1,4 @@
+* Amélioration du gestionnaire de médias avec possibilité de partager et supprimer des fichiers
+* Stocker les médias en interne par défaut (avec un paramètre pour automatiquement les enregistrer dans la galerie)
+* Envoyer les vocaux immédiatement au lieu des les joindre (et paramètre pour restaurer l'ancien comportement)
+* "Montrer le QR code" icnlus le paramètre de préauthentification sur les serveurs avec invitation facile

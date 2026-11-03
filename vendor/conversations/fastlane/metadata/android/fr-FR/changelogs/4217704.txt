@@ -1,0 +1,2 @@
+* Proposer une barre de recherche pour un accès plus facile à la recherche sur l'acceuil
+* Déplacement du bouton de pièce jointe plus proche du champs de saisie

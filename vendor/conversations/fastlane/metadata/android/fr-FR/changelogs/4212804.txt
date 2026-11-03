@@ -1,0 +1,3 @@
+* Accès simplifié aux sons de notifications personnalisées (via Détails du contact → Menu flottant → Notifications personnalisées)
+* Correction du partage de position direct sur les nouvelles versions d'Android
+* Possibilité de restreindre la visibilité de son image de profil aux contacts

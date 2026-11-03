@@ -1,0 +1,3 @@
+* Support de résolveurs DNS privés (DNS sur TLS)
+* Support d'icônes de lanceur avec thème
+* Correction de problème de permissions rare lors du partage de fichier sur Android 11+

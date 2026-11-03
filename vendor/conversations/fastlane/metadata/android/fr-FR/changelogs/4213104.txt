@@ -1,0 +1,2 @@
+* Utilisation de la protection d'affaiblissement SASL SCRAM (XEP-0474)
+* Envoi des réactions en message privé dans les salons de discussions au bon compte

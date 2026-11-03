@@ -1,0 +1,2 @@
+* Toujours montrer le bouton d'appel
+* Corrections de bugs diverses

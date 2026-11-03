@@ -1,0 +1,3 @@
+* Acceptation de fichiers automatique améliorée
+* Afficher plus d'informations dans "Infos sur le serveur"
+* Corrections de bugs diverses

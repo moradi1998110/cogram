@@ -1,0 +1,1 @@
+* Combiner les actions relatives au QR codes (montrer, scanner, inviter) dans un seul menu central

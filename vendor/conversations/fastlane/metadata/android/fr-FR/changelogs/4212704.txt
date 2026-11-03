@@ -1,0 +1,1 @@
+* Ajout de la possibilité de montrer les bulles de messages alignées à gauche

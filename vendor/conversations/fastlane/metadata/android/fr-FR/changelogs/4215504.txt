@@ -1,0 +1,5 @@
+* Nouvelle page "Salon vide" au lieu de rediriger vers l'écran "Nouvelle discussion"
+* Amélioration des performances pour les salons publiques très peuplés
+* Retour du support de prédiction
+* Support des adresses IP dans les certificats
+* Nécessite TLS 1.3 pour toutes les connections avec possibilité de désactivation dans les paramètres

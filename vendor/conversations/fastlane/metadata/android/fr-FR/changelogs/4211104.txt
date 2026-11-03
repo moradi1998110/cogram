@@ -1,0 +1,3 @@
+* Planifier des sauvegardes régulières
+* Exclure tous les appareils realme jusqu'à Android 11 de l'intégration d'appel
+* Améliorations mineures d'UI (bulles de messages)

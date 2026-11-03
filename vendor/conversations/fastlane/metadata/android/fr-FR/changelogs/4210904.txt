@@ -1,0 +1,2 @@
+* Correction de l'inscription sur Quicksy pour Android 6/7
+* Jouer la sonnerie d'appel sur le canal de notification

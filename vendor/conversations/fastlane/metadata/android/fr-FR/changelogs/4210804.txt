@@ -1,0 +1,2 @@
+* Montrer le status des messages comme icônes
+* Introduction du paramètre "Police large" pour les bulles de messages

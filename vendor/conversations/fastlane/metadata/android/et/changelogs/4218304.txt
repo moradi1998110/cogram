@@ -1,0 +1,2 @@
+* Nüüdsest eelda uute paigalduste puhul kanalite sidumist (seadistustest muudetav)
+* eMudhra sertifitseerimiskeskuse juursertifikaadid on märgitud ebausaldusväärseteks

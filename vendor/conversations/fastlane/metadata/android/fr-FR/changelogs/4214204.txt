@@ -1,0 +1,2 @@
+* Support du "Status d'interruption de service"
+* Correction mineures de sécurité pour parser plusieurs contenus, ID d'occupants et Stanza

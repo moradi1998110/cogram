@@ -1,0 +1,3 @@
+* Permettre d'éditer tous les messages envoyés, pas juste le dernier. Montrer l'historique d'édition
+* Correction des images n'apparaissant pas dans les notifications
+* Correction de certaines URI de géolocalisation ne s'affichant pas correctement

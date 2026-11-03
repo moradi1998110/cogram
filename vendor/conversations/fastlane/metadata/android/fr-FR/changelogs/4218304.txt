@@ -1,0 +1,2 @@
+* Liaison au canal de transmission activée par défaut pour les nouvelles installations (désactivable dans les paramètres)
+* Ne pas faire confiance aux certificats racine de l'Autorité de Certification eMudhra

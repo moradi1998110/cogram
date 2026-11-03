@@ -1,0 +1,2 @@
+* Ajout de la possibilité de sélectionner un emplacement de sauvegarde
+* Plus d'URI cliquables (tel:, mailto:)

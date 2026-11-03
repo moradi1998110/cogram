@@ -1,0 +1,4 @@
+* Permettre de mettre en pause les vocaux en appuyant sur le timer
+* Correction des réactions par messages directs dans les salons de discussion
+* Ne plus accepter les "messages de replis" pour les réactions et notifications de lectures
+* Ajout d'icônes de prévisualisation pour certains médias

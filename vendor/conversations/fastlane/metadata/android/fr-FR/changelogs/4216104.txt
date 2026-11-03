@@ -1,0 +1,4 @@
+* Envois des notifications de réception par défaut et changementdu paramètre en "Accusé de lecture"
+* Introduction d'un paramètre pour toujours tuliser un relai
+* Correction d'un soucis de cache des images de profil
+* Correction des DNS sans résolution quand les résolveurs DNS privés sont activés

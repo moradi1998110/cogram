@@ -1,0 +1,2 @@
+* Restauration de l'accès à la découverte de salons pour Android 6 et 7
+* Amélioration des journeaux pour les appels intégrés échoués

@@ -1,0 +1,2 @@
+* Aggiunta una barra di ricerca per un accesso più semplice alle ricerche nella schermata principale
+* spostato il pulsante degli allegati più vicino al campo di inserimento

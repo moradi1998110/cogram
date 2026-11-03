@@ -1,0 +1,3 @@
+* Correction des appels audio/vidéo sur Android 8
+* Correction de conditions de concurrence dans l'intégration des nouveaux appels
+* Correction de la compression vidéo restant

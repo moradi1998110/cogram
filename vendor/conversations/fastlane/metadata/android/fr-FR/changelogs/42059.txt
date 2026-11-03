@@ -1,0 +1,2 @@
+* Mise à jour du SDK Target vers la version 33 à nouveau
+* Correction pour les serveurs supportant SASL2 sans gestion de flux inline

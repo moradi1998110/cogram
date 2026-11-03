@@ -1,0 +1,2 @@
+* Correction des appels en sourdine quand on change de sortie sonore
+* Exclusion de tous les appareils Umidigi de l'intégration des appels

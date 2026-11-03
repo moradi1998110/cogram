@@ -1,0 +1,2 @@
+* Fournie un accès plus facile à la "Politique de vie privée" sur la version PlayStore (Quicksy et Conversations)
+* Retrait de l'intégration du carnet d'adresse sur al version PlayStore de Conversations

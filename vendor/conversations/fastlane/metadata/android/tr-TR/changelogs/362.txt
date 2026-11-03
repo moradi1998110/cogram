@@ -1,0 +1,1 @@
+* Android 10'da otomatik tema değiştirme özelliğini destekler

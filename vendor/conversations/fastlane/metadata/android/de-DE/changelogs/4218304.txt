@@ -1,0 +1,2 @@
+* Bei Neuinstallationen wird standardmäßig die Kanalbindung hinterlegt (kann in den Einstellungen deaktiviert werden)
+* eMudhra-Root-Zertifizierungsstellen wird nicht mehr vertraut

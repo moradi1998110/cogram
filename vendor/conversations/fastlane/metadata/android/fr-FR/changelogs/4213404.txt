@@ -1,0 +1,1 @@
+* Correction de crash lors de transferts de fichiers avec les traductions fi

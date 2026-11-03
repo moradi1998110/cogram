@@ -1,0 +1,2 @@
+* Tillhandahåller sökfält för enklare åtkomst till sökning på hemskärmen
+* flyttade bilageknappen närmare inmatningsfältet

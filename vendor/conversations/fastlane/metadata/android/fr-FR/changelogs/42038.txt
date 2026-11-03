@@ -1,0 +1,2 @@
+* Correction de bugs mineurs
+* Restaurer la possibilité d'appeler via JMP et autres services (version Google Playstore)

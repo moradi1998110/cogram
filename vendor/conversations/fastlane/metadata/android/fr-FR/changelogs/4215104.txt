@@ -1,0 +1,2 @@
+* Montrer "Vu pour la dernière fois" en avant dans le titre de la discussion (quand activé)
+* Correction de bugs divers

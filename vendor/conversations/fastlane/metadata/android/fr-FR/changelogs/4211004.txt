@@ -1,0 +1,2 @@
+* Correction d'intégration des appels sur certains appareils Android 14
+* Introduction du paramètre "Invitations d'inconnus"

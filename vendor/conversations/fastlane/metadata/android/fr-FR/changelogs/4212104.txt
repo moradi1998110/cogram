@@ -1,0 +1,1 @@
+* Support des réactions aux messages

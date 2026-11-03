@@ -1,0 +1,1 @@
+* Lancer les sauvegardes en tâche mise en avant pour éviter que le processus ne soit stoppé au bout de 10 minutes

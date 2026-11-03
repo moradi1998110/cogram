@@ -1,0 +1,2 @@
+* Correction de l'accessibilité lors de l'ajout de pièce jointe
+* Corrections de bugs d'UI mineurs

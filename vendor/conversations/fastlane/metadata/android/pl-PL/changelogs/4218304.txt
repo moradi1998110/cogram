@@ -1,0 +1,2 @@
+* Wymaganie przywiązywania kanału domyślnie dla nowych instalacji (można wyłączyć w ustawieniach)
+* Nieufanie głównym urzędom certyfikacji eMudhra

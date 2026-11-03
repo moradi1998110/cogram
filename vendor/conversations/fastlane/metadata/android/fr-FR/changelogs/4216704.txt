@@ -1,0 +1,4 @@
+* Permettre de supprimer les messages quand on banni quelqu'un d'un salon publique
+* Refactorisation du scan de QR Code et de la gestion des URI
+* PlayStore : Arrêter d'utiliser les bibliothèques Google et s'interfacer directement avec les services Google Play via IPC
+* Correction de soucis de rotation en mode tablette

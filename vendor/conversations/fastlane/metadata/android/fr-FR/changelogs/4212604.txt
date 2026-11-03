@@ -1,0 +1,2 @@
+* Déplacement des bulles de messages plus proches entre elles au lieu de les fusionner
+* Ajout de la possibilité de cacher les images de profils dans les discussions quand ce n'est pas strictement nécessaire (Paramètres → Interface → Bulles de messages → Afficher les images de profils)

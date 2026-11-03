@@ -1,0 +1,1 @@
+* Intégration de fournisseurs UnifiedPush pour faciliter l'envoi de messages à d'autres apps supportant UnifiedPush comme Tusky et Fedilab

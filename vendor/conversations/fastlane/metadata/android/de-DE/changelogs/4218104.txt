@@ -1,0 +1,2 @@
+* Barrierefreiheit beim Hinzufügen von Anhängen verbessert
+* Kleinere Fehler in der Benutzeroberfläche behoben

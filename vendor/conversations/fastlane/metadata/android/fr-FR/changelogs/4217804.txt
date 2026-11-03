@@ -1,0 +1,2 @@
+* Ajout des "Notes à moi-même" aux suggestions de recherche
+* Corrections de bugs mineurs

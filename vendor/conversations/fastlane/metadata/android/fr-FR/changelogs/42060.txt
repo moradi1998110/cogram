@@ -1,0 +1,1 @@
+* Correction de "q" faussement reconnu comme du cyrillique

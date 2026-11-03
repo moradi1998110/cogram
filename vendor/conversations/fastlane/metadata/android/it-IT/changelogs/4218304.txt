@@ -1,0 +1,2 @@
+* Richiesta di abbinamento dei canali in modo predefinito per le installazioni nuove (può essere disattivato nelle impostazioni)
+* Sfiduciato eMudhra nelle root CA

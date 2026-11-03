@@ -1,0 +1,5 @@
+* Implémentation de Profile SASL Extensible, Bind 2.0 et Fast pour des reconnections plus rapides
+* Implémentation de la liaison au canal de transmission
+* Ajout de la possibilité de basculer d'un appel audio à vidéo
+* Ajout de la possibilité de supprimer son image de profil
+* Ajout de notification pour les appels manqués

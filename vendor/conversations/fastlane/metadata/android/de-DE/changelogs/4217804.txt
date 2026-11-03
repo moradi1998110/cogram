@@ -1,0 +1,2 @@
+* „Notiz für mich selbst“ als Suchvorschlag hinzugefügt
+* Kleinere Fehlerbehebungen
