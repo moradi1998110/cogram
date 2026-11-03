@@ -79,10 +79,19 @@ jobs:
           path: .ccache
           key: ccache-${{ env.NDK_VERSION }}-${{ github.run_id }}
 
+      # The output folder depends on the injected ABI option, so locate the APK instead of naming it.
+      - name: Collect APK
+        run: |
+          mkdir -p dist
+          find TMessagesProj_App/build -type f -name '*.apk' -print
+          APK=$(find TMessagesProj_App/build -type f -name '*.apk' | head -1)
+          test -n "$APK"
+          cp "$APK" dist/cogram-arm64-debug.apk
+
       - uses: actions/upload-artifact@v4
         with:
           name: cogram-arm64-debug
-          path: TMessagesProj_App/build/outputs/apk/afat/debug/app.apk
+          path: dist/cogram-arm64-debug.apk
           retention-days: 14
           if-no-files-found: error
 
@@ -91,6 +100,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cp TMessagesProj_App/build/outputs/apk/afat/debug/app.apk "cogram-${GITHUB_REF_NAME}-arm64-debug.apk"
+          cp dist/cogram-arm64-debug.apk "cogram-${GITHUB_REF_NAME}-arm64-debug.apk"
           gh release create "$GITHUB_REF_NAME" "cogram-${GITHUB_REF_NAME}-arm64-debug.apk" \
             --draft --prerelease --title "$GITHUB_REF_NAME" --notes "Automated build of $GITHUB_SHA"
