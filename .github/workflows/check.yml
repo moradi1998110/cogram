@@ -1,0 +1,47 @@
+name: Compile Java
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - '**.java'
+      - '**.kt'
+      - '**.gradle'
+      - '.github/workflows/check.yml'
+
+jobs:
+  compile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      # Gradle only needs these two submodules to configure and compile Java, not the native ones.
+      - name: Fetch Gradle submodules
+        run: git submodule update --init --depth 1 TMessagesProj_Modules/media TMessagesProj/lib/jlatexmath
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Install Android SDK packages
+        run: |
+          SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKM" --licenses > /dev/null || true
+          "$SDKM" "platforms;android-36" "build-tools;36.0.0" > /dev/null
+
+      - name: Limit Gradle memory for the runner
+        run: |
+          mkdir -p ~/.gradle
+          echo "org.gradle.jvmargs=-Xmx5g -XX:MaxMetaspaceSize=1g" >> ~/.gradle/gradle.properties
+
+      - name: Compile
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon :TMessagesProj:compileDebugJavaWithJavac

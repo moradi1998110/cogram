@@ -25,6 +25,7 @@ import com.google.android.play.core.integrity.IntegrityTokenResponse;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
+import org.telegram.cogram.CogramGateway;
 import org.telegram.messenger.AccountInstance;
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.ApplicationLoader;
@@ -164,13 +165,13 @@ public class ConnectionsManager extends BaseController {
 
     public void discardConnection(int dcId, int connectionType) {
         Utilities.stageQueue.postRunnable(() -> {
-            native_discardConnection(currentAccount, dcId, connectionType);
+            if (!CogramGateway.ENABLED) native_discardConnection(currentAccount, dcId, connectionType);
         });
     }
 
     public void failNotRunningRequest(int requestToken) {
         Utilities.stageQueue.postRunnable(() -> {
-            native_failNotRunningRequest(currentAccount, requestToken);
+            if (!CogramGateway.ENABLED) native_failNotRunningRequest(currentAccount, requestToken);
         });
     }
 
@@ -209,7 +210,7 @@ public class ConnectionsManager extends BaseController {
 
     public ConnectionsManager(int instance) {
         super(instance);
-        connectionState = native_getConnectionState(currentAccount);
+        connectionState = CogramGateway.ENABLED ? ConnectionStateConnected : native_getConnectionState(currentAccount);
         String deviceModel;
         String systemLangCode;
         String langCode;
@@ -254,6 +255,9 @@ public class ConnectionsManager extends BaseController {
             systemVersion = "SDK Unknown";
         }
         getUserConfig().loadConfig();
+        if (CogramGateway.ENABLED) {
+            CogramGateway.getInstance(currentAccount).ensureSignedIn(getUserConfig());
+        }
         String pushString = getRegId();
         String fingerprint = AndroidUtilities.getCertificateSHA256Fingerprint();
 
@@ -297,23 +301,23 @@ public class ConnectionsManager extends BaseController {
     }
 
     public long getCurrentTimeMillis() {
-        return native_getCurrentTimeMillis(currentAccount);
+        return CogramGateway.ENABLED ? System.currentTimeMillis() : native_getCurrentTimeMillis(currentAccount);
     }
 
     public int getCurrentTime() {
-        return native_getCurrentTime(currentAccount);
+        return CogramGateway.ENABLED ? (int) (System.currentTimeMillis() / 1000) : native_getCurrentTime(currentAccount);
     }
 
     public int getCurrentDatacenterId() {
-        return native_getCurrentDatacenterId(currentAccount);
+        return CogramGateway.ENABLED ? DEFAULT_DATACENTER_ID : native_getCurrentDatacenterId(currentAccount);
     }
 
     public long getCurrentAuthKeyId() {
-        return native_getCurrentAuthKeyId(currentAccount);
+        return CogramGateway.ENABLED ? 0 : native_getCurrentAuthKeyId(currentAccount);
     }
 
     public int getTimeDifference() {
-        return native_getTimeDifference(currentAccount);
+        return CogramGateway.ENABLED ? 0 : native_getTimeDifference(currentAccount);
     }
 
     public <T extends TLObject> int sendRequestTyped(TLMethod<T> method, Utilities.Callback2<T, TLRPC.TL_error> completionBlock) {
@@ -395,7 +399,23 @@ public class ConnectionsManager extends BaseController {
         return requestToken;
     }
 
+    private void sendThroughGateway(TLObject object, RequestDelegate onComplete, RequestDelegateTimestamp onCompleteTimestamp) {
+        CogramGateway.getInstance(currentAccount).dispatch(object, (response, error) -> Utilities.stageQueue.postRunnable(() -> {
+            if (onComplete != null) {
+                onComplete.run(response, error);
+            } else if (onCompleteTimestamp != null) {
+                onCompleteTimestamp.run(response, error, System.currentTimeMillis());
+            } else if (response instanceof TLRPC.Updates) {
+                AccountInstance.getInstance(currentAccount).getMessagesController().processUpdates((TLRPC.Updates) response, false);
+            }
+        }));
+    }
+
     private void sendRequestInternal(TLObject object, RequestDelegate onComplete, RequestDelegateTimestamp onCompleteTimestamp, QuickAckDelegate onQuickAck, WriteToSocketDelegate onWriteToSocket, int flags, int datacenterId, int connectionType, boolean immediate, int requestToken) {
+        if (CogramGateway.ENABLED) {
+            sendThroughGateway(object, onComplete, onCompleteTimestamp);
+            return;
+        }
         if (BuildVars.LOGS_ENABLED) {
             FileLog.d("send request " + object + " with token = " + requestToken);
         }
@@ -488,7 +508,7 @@ public class ConnectionsManager extends BaseController {
                     downloadSize = ((TLRPC.TL_upload_getCdnFile) object).limit;
                 }
             }
-            native_sendRequest(currentAccount, buffer.address, flags, datacenterId, connectionType, immediate, requestToken, downloadSize);
+            if (!CogramGateway.ENABLED) native_sendRequest(currentAccount, buffer.address, flags, datacenterId, connectionType, immediate, requestToken, downloadSize);
         } catch (Exception e) {
             FileLog.e(e);
         }
@@ -596,17 +616,17 @@ public class ConnectionsManager extends BaseController {
                     Utilities.stageQueue.postRunnable(onCancelled);
                 });
             }
-            native_cancelRequest(currentAccount, token, notifyServer);
+            if (!CogramGateway.ENABLED) native_cancelRequest(currentAccount, token, notifyServer);
         });
     }
 
     public void cleanup(boolean resetKeys) {
-        native_cleanUp(currentAccount, resetKeys);
+        if (!CogramGateway.ENABLED) native_cleanUp(currentAccount, resetKeys);
     }
 
     public void cancelRequestsForGuid(int guid) {
         Utilities.stageQueue.postRunnable(() -> {
-            native_cancelRequestsForGuid(currentAccount, guid);
+            if (!CogramGateway.ENABLED) native_cancelRequestsForGuid(currentAccount, guid);
         });
     }
 
@@ -614,11 +634,11 @@ public class ConnectionsManager extends BaseController {
         if (guid == 0) {
             return;
         }
-        native_bindRequestToGuid(currentAccount, requestToken, guid);
+        if (!CogramGateway.ENABLED) native_bindRequestToGuid(currentAccount, requestToken, guid);
     }
 
     public void applyDatacenterAddress(int datacenterId, String ipAddress, int port) {
-        native_applyDatacenterAddress(currentAccount, datacenterId, ipAddress, port);
+        if (!CogramGateway.ENABLED) native_applyDatacenterAddress(currentAccount, datacenterId, ipAddress, port);
     }
 
     public int getConnectionState() {
@@ -629,7 +649,7 @@ public class ConnectionsManager extends BaseController {
     }
 
     public void setUserId(long id) {
-        native_setUserId(currentAccount, id);
+        if (!CogramGateway.ENABLED) native_setUserId(currentAccount, id);
     }
 
     public void checkConnection() {
@@ -637,12 +657,12 @@ public class ConnectionsManager extends BaseController {
         if (BuildVars.LOGS_ENABLED) {
             FileLog.d("selected ip strategy " + selectedStrategy);
         }
-        native_setIpStrategy(currentAccount, selectedStrategy);
-        native_setNetworkAvailable(currentAccount, ApplicationLoader.isNetworkOnline(), ApplicationLoader.getCurrentNetworkType(), ApplicationLoader.isConnectionSlow());
+        if (!CogramGateway.ENABLED) native_setIpStrategy(currentAccount, selectedStrategy);
+        if (!CogramGateway.ENABLED) native_setNetworkAvailable(currentAccount, ApplicationLoader.isNetworkOnline(), ApplicationLoader.getCurrentNetworkType(), ApplicationLoader.isConnectionSlow());
     }
 
     public void setPushConnectionEnabled(boolean value) {
-        native_setPushConnectionEnabled(currentAccount, value);
+        if (!CogramGateway.ENABLED) native_setPushConnectionEnabled(currentAccount, value);
     }
 
     public void init(int version, int layer, int apiId, String deviceModel, String systemVersion, String appVersion, String langCode, String systemLangCode, String configPath, String logPath, String regId, String cFingerprint, int timezoneOffset, long userId, boolean userPremium, boolean enablePushConnection) {
@@ -651,10 +671,10 @@ public class ConnectionsManager extends BaseController {
         if (preferences.getBoolean("proxy_enabled", false) && proxySettings.isValid()) {
             if (proxySettings.getType() == ProxySettings.Type.WEB) {
                 int localPort = WebProxyTransport.start(proxySettings.getAddress(), proxySettings.getSecret());
-                native_setProxySettings(currentAccount, "127.0.0.1", localPort != 0 ? localPort : 9, "", "",
+                if (!CogramGateway.ENABLED) native_setProxySettings(currentAccount, "127.0.0.1", localPort != 0 ? localPort : 9, "", "",
                         proxySettings.getSecret());
             } else {
-                native_setProxySettings(currentAccount, proxySettings.getAddress(), proxySettings.getPort(),
+                if (!CogramGateway.ENABLED) native_setProxySettings(currentAccount, proxySettings.getAddress(), proxySettings.getPort(),
                         proxySettings.getUser(), proxySettings.getPassword(), proxySettings.getSecret());
             }
         }
@@ -688,14 +708,14 @@ public class ConnectionsManager extends BaseController {
             packageId = "";
         }
 
-        native_init(currentAccount, version, layer, apiId, deviceModel, systemVersion, appVersion, langCode, systemLangCode, configPath, logPath, regId, cFingerprint, installer, packageId, timezoneOffset, userId, userPremium, enablePushConnection, ApplicationLoader.isNetworkOnline(), ApplicationLoader.getCurrentNetworkType(), SharedConfig.measureDevicePerformanceClass());
+        if (!CogramGateway.ENABLED) native_init(currentAccount, version, layer, apiId, deviceModel, systemVersion, appVersion, langCode, systemLangCode, configPath, logPath, regId, cFingerprint, installer, packageId, timezoneOffset, userId, userPremium, enablePushConnection, ApplicationLoader.isNetworkOnline(), ApplicationLoader.getCurrentNetworkType(), SharedConfig.measureDevicePerformanceClass());
         checkConnection();
     }
 
     public static void setLangCode(String langCode) {
         langCode = langCode.replace('_', '-').toLowerCase();
         for (int a = 0; a < UserConfig.MAX_ACCOUNT_COUNT; a++) {
-            native_setLangCode(a, langCode);
+            if (!CogramGateway.ENABLED) native_setLangCode(a, langCode);
         }
     }
 
@@ -712,37 +732,37 @@ public class ConnectionsManager extends BaseController {
             pushString = SharedConfig.pushStringStatus = "__" + tag + "_GENERATING_SINCE_" + getInstance(0).getCurrentTime() + "__";
         }
         for (int a = 0; a < UserConfig.MAX_ACCOUNT_COUNT; a++) {
-            native_setRegId(a, pushString);
+            if (!CogramGateway.ENABLED) native_setRegId(a, pushString);
         }
     }
 
     public static void setSystemLangCode(String langCode) {
         langCode = langCode.replace('_', '-').toLowerCase();
         for (int a = 0; a < UserConfig.MAX_ACCOUNT_COUNT; a++) {
-            native_setSystemLangCode(a, langCode);
+            if (!CogramGateway.ENABLED) native_setSystemLangCode(a, langCode);
         }
     }
 
     public void switchBackend(boolean restart) {
         SharedPreferences preferences = MessagesController.getGlobalMainSettings();
         preferences.edit().remove("language_showed2").commit();
-        native_switchBackend(currentAccount, restart);
+        if (!CogramGateway.ENABLED) native_switchBackend(currentAccount, restart);
     }
 
     public boolean isTestBackend() {
-        return native_isTestBackend(currentAccount) != 0;
+        return !CogramGateway.ENABLED && native_isTestBackend(currentAccount) != 0;
     }
 
     public void resumeNetworkMaybe() {
-        native_resumeNetwork(currentAccount, true);
+        if (!CogramGateway.ENABLED) native_resumeNetwork(currentAccount, true);
     }
 
     public void updateDcSettings() {
-        native_updateDcSettings(currentAccount);
+        if (!CogramGateway.ENABLED) native_updateDcSettings(currentAccount);
     }
 
     public void setDefaultDatacenterId(int dcId) {
-        native_moveDatacenter(currentAccount, dcId);
+        if (!CogramGateway.ENABLED) native_moveDatacenter(currentAccount, dcId);
     }
 
     public long getPauseTime() {
@@ -758,11 +778,14 @@ public class ConnectionsManager extends BaseController {
             return 0;
         }
 
+        if (CogramGateway.ENABLED) {
+            return 0;
+        }
         return native_checkProxy(currentAccount, settings.getAddress(), settings.getPort(), settings.getUser(), settings.getPassword(), settings.getSecret(), requestTimeDelegate);
     }
 
     private void checkWebProxyInternal(ProxySettings settings, int port, RequestTimeDelegate requestTimeDelegate) {
-        native_checkProxy(currentAccount, "127.0.0.1", port, "", "", settings.getSecret(), requestTimeDelegate);
+        if (!CogramGateway.ENABLED) native_checkProxy(currentAccount, "127.0.0.1", port, "", "", settings.getSecret(), requestTimeDelegate);
     }
 
     public void setAppPaused(final boolean value, final boolean byScreenState) {
@@ -787,7 +810,7 @@ public class ConnectionsManager extends BaseController {
             if (lastPauseTime == 0) {
                 lastPauseTime = System.currentTimeMillis();
             }
-            native_pauseNetwork(currentAccount);
+            if (!CogramGateway.ENABLED) native_pauseNetwork(currentAccount);
         } else {
             if (appPaused) {
                 return;
@@ -799,7 +822,7 @@ public class ConnectionsManager extends BaseController {
                 getContactsController().checkContacts();
             }
             lastPauseTime = 0;
-            native_resumeNetwork(currentAccount, false);
+            if (!CogramGateway.ENABLED) native_resumeNetwork(currentAccount, false);
         }
     }
 
@@ -914,7 +937,7 @@ public class ConnectionsManager extends BaseController {
         AndroidUtilities.runOnUIThread(() -> {
             ResolvedDomain resolvedDomain = dnsCache.get(hostName);
             if (resolvedDomain != null && SystemClock.elapsedRealtime() - resolvedDomain.ttl < 5 * 60 * 1000) {
-                native_onHostNameResolved(hostName, address, resolvedDomain.getAddress());
+                if (!CogramGateway.ENABLED) native_onHostNameResolved(hostName, address, resolvedDomain.getAddress());
             } else {
                 ResolveHostByNameTask task = resolvingHostnameTasks.get(hostName);
                 if (task == null) {
@@ -923,7 +946,7 @@ public class ConnectionsManager extends BaseController {
                         task.executeOnExecutor(DNS_THREAD_POOL_EXECUTOR, null, null, null);
                     } catch (Throwable e) {
                         FileLog.e(e);
-                        native_onHostNameResolved(hostName, address, "");
+                        if (!CogramGateway.ENABLED) native_onHostNameResolved(hostName, address, "");
                         return;
                     }
                     resolvingHostnameTasks.put(hostName, task);
@@ -987,9 +1010,9 @@ public class ConnectionsManager extends BaseController {
 
         for (int a = 0; a < UserConfig.MAX_ACCOUNT_COUNT; a++) {
             if (enabled && settings != null && settings.isValid()) {
-                native_setProxySettings(a, address, port, username, password, secret);
+                if (!CogramGateway.ENABLED) native_setProxySettings(a, address, port, username, password, secret);
             } else {
-                native_setProxySettings(a, "", 1080, "", "", "");
+                if (!CogramGateway.ENABLED) native_setProxySettings(a, "", 1080, "", "", "");
             }
             AccountInstance accountInstance = AccountInstance.getInstance(a);
             if (accountInstance.getUserConfig().isClientActivated()) {
@@ -1241,11 +1264,11 @@ public class ConnectionsManager extends BaseController {
             if (result != null) {
                 dnsCache.put(currentHostName, result);
                 for (int a = 0, N = addresses.size(); a < N; a++) {
-                    native_onHostNameResolved(currentHostName, addresses.get(a), result.getAddress());
+                    if (!CogramGateway.ENABLED) native_onHostNameResolved(currentHostName, addresses.get(a), result.getAddress());
                 }
             } else {
                 for (int a = 0, N = addresses.size(); a < N; a++) {
-                    native_onHostNameResolved(currentHostName, addresses.get(a), "");
+                    if (!CogramGateway.ENABLED) native_onHostNameResolved(currentHostName, addresses.get(a), "");
                 }
             }
             resolvingHostnameTasks.remove(currentHostName);
@@ -1357,7 +1380,7 @@ public class ConnectionsManager extends BaseController {
                 FileLog.d("3. currentTask = null, result = " + result);
                 currentTask = null;
                 if (result != null) {
-                    native_applyDnsConfig(currentAccount, result.address, AccountInstance.getInstance(currentAccount).getUserConfig().getClientPhone(), responseDate);
+                    if (!CogramGateway.ENABLED) native_applyDnsConfig(currentAccount, result.address, AccountInstance.getInstance(currentAccount).getUserConfig().getClientPhone(), responseDate);
                 } else {
                     if (BuildVars.LOGS_ENABLED) {
                         FileLog.d("failed to get google result");
@@ -1478,7 +1501,7 @@ public class ConnectionsManager extends BaseController {
                 FileLog.d("5. currentTask = null");
                 currentTask = null;
                 if (result != null) {
-                    native_applyDnsConfig(currentAccount, result.address, AccountInstance.getInstance(currentAccount).getUserConfig().getClientPhone(), responseDate);
+                    if (!CogramGateway.ENABLED) native_applyDnsConfig(currentAccount, result.address, AccountInstance.getInstance(currentAccount).getUserConfig().getClientPhone(), responseDate);
                 } else {
                     if (BuildVars.LOGS_ENABLED) {
                         FileLog.d("failed to get mozilla txt result");
@@ -1529,7 +1552,7 @@ public class ConnectionsManager extends BaseController {
                 project_id = Long.parseLong(project);
             } catch (Exception e) {
                 FileLog.d("account"+currentAccount+": integrity check failes to parse project id");
-                native_receivedIntegrityCheckClassic(currentAccount, requestToken, nonce, "PLAYINTEGRITY_FAILED_EXCEPTION_NOPROJECT");
+                if (!CogramGateway.ENABLED) native_receivedIntegrityCheckClassic(currentAccount, requestToken, nonce, "PLAYINTEGRITY_FAILED_EXCEPTION_NOPROJECT");
                 return;
             }
             Task<IntegrityTokenResponse> integrityTokenResponse = integrityManager.requestIntegrityToken(IntegrityTokenRequest.builder().setNonce(nonce).setCloudProjectNumber(project_id).build());
@@ -1539,20 +1562,20 @@ public class ConnectionsManager extends BaseController {
 
                     if (token == null) {
                         FileLog.e("account"+currentAccount+": integrity check gave null token in " + (System.currentTimeMillis() - start) + "ms");
-                        native_receivedIntegrityCheckClassic(currentAccount, requestToken, nonce, "PLAYINTEGRITY_FAILED_EXCEPTION_NULL");
+                        if (!CogramGateway.ENABLED) native_receivedIntegrityCheckClassic(currentAccount, requestToken, nonce, "PLAYINTEGRITY_FAILED_EXCEPTION_NULL");
                         return;
                     }
 
                     FileLog.d("account"+currentAccount+": integrity check successfully gave token: " + token + " in " + (System.currentTimeMillis() - start) + "ms");
                     try {
-                        native_receivedIntegrityCheckClassic(currentAccount, requestToken, nonce, token);
+                        if (!CogramGateway.ENABLED) native_receivedIntegrityCheckClassic(currentAccount, requestToken, nonce, token);
                     } catch (Exception e) {
                         FileLog.e("receivedIntegrityCheckClassic failed", e);
                     }
                 })
                 .addOnFailureListener(e -> {
                     FileLog.e("account"+currentAccount+": integrity check failed to give a token in " + (System.currentTimeMillis() - start) + "ms", e);
-                    native_receivedIntegrityCheckClassic(currentAccount, requestToken, nonce, "PLAYINTEGRITY_FAILED_EXCEPTION_" + LoginActivity.errorString(e));
+                    if (!CogramGateway.ENABLED) native_receivedIntegrityCheckClassic(currentAccount, requestToken, nonce, "PLAYINTEGRITY_FAILED_EXCEPTION_" + LoginActivity.errorString(e));
                 });
         });
     }
