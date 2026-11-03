@@ -1,0 +1,96 @@
+name: Build APK
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-24.04
+    # Leave time before the 6h job limit so the ccache step still saves progress.
+    timeout-minutes: 340
+    env:
+      NDK_VERSION: 27.2.12479018
+      CMAKE_C_COMPILER_LAUNCHER: ccache
+      CMAKE_CXX_COMPILER_LAUNCHER: ccache
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_COMPILERCHECK: content
+      CCACHE_MAXSIZE: 4G
+      CCACHE_COMPRESS: 'true'
+    steps:
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/boost
+
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Install native toolchain
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ccache
+          SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKM" --licenses > /dev/null || true
+          "$SDKM" "platforms;android-36" "build-tools;36.0.0" "ndk;$NDK_VERSION" "cmake;3.22.1" > /dev/null
+
+      - name: Limit Gradle memory for the runner
+        run: |
+          mkdir -p ~/.gradle
+          {
+            echo "org.gradle.jvmargs=-Xmx5g -XX:MaxMetaspaceSize=1g"
+            echo "org.gradle.parallel=false"
+          } >> ~/.gradle/gradle.properties
+
+      - name: Restore native object cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .ccache
+          key: ccache-${{ env.NDK_VERSION }}-${{ github.run_id }}
+          restore-keys: ccache-${{ env.NDK_VERSION }}-
+
+      - name: Build arm64 debug APK
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon --stacktrace \
+            -Pandroid.injected.build.abi=arm64-v8a \
+            :TMessagesProj_App:assembleAfatDebug
+
+      - name: Show cache statistics
+        if: always()
+        run: ccache -s || true
+
+      - name: Save native object cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .ccache
+          key: ccache-${{ env.NDK_VERSION }}-${{ github.run_id }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cogram-arm64-debug
+          path: TMessagesProj_App/build/outputs/apk/afat/debug/app.apk
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Attach APK to a draft release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp TMessagesProj_App/build/outputs/apk/afat/debug/app.apk "cogram-${GITHUB_REF_NAME}-arm64-debug.apk"
+          gh release create "$GITHUB_REF_NAME" "cogram-${GITHUB_REF_NAME}-arm64-debug.apk" \
+            --draft --prerelease --title "$GITHUB_REF_NAME" --notes "Automated build of $GITHUB_SHA"
