@@ -4,6 +4,9 @@ include ':TMessagesProj_AppHuawei'
 include ':TMessagesProj_AppHockeyApp'
 include ':TMessagesProj_AppStandalone'
 include ':TMessagesProj_AppTests'
+include ':xmpp-core'
+include ':xmpp-core:annotation'
+include ':xmpp-core:annotation-processor'
 include ':jlatexmath'
 project(':jlatexmath').projectDir = file('TMessagesProj/lib/jlatexmath/jlatexmath')
 

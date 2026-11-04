@@ -27,7 +27,7 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: '21'
           cache: gradle
 
       - name: Install Android SDK packages
@@ -44,4 +44,4 @@ jobs:
       - name: Compile
         run: |
           chmod +x gradlew
-          ./gradlew --no-daemon :TMessagesProj:compileDebugJavaWithJavac
+          ./gradlew --no-daemon --continue :xmpp-core:compileDebugJavaWithJavac :TMessagesProj:compileDebugJavaWithJavac
