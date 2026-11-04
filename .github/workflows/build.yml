@@ -66,6 +66,7 @@ jobs:
           chmod +x gradlew
           ./gradlew --no-daemon --stacktrace \
             -Pandroid.injected.build.abi=arm64-v8a \
+            -Pandroid.injected.testOnly=false \
             :TMessagesProj_App:assembleAfatDebug
 
       - name: Show cache statistics
@@ -87,6 +88,17 @@ jobs:
           APK=$(find TMessagesProj_App/build -type f -name '*.apk' | head -1)
           test -n "$APK"
           cp "$APK" dist/cogram-arm64-debug.apk
+
+      # Package installers reject a testOnly APK as invalid, and the injected ABI option turns that flag on by default.
+      - name: Check the APK can be installed
+        run: |
+          TOOLS="$ANDROID_HOME/build-tools/36.0.0"
+          "$TOOLS/apksigner" verify --verbose dist/cogram-arm64-debug.apk
+          "$TOOLS/aapt2" dump badging dist/cogram-arm64-debug.apk | head -3
+          if "$TOOLS/aapt2" dump xmltree --file AndroidManifest.xml dist/cogram-arm64-debug.apk | grep -E 'android:testOnly.*=(true|-1|0xffffffff)'; then
+            echo "APK is marked testOnly"
+            exit 1
+          fi
 
       - uses: actions/upload-artifact@v4
         with:
