@@ -4,6 +4,10 @@ apply plugin: 'org.telegram.build-app-plugin'
 repositories {
     mavenCentral()
     google()
+    maven {
+        url = 'https://jitpack.io'
+        content { includeGroup 'com.github.open-keychain.open-keychain' }
+    }
 }
 
 configurations {
