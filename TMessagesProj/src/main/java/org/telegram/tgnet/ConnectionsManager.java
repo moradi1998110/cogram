@@ -274,6 +274,10 @@ public class ConnectionsManager extends BaseController {
             userPremium = getUserConfig().getCurrentUser().premium;
         }
         init(SharedConfig.buildVersion(), TLRPC.LAYER, BuildVars.APP_ID, deviceModel, systemVersion, appVersion, langCode, systemLangCode, configPath, FileLog.getNetworkLogPath(), pushString, fingerprint, timezoneOffset, getUserConfig().getClientUserId(), userPremium, enablePushConnection);
+        if (CogramGateway.ENABLED && getUserConfig().isClientActivated()) {
+            // The native layer reports this after connecting, and it is what first loads the update state.
+            onSessionCreated(currentAccount);
+        }
     }
 
     private String getRegId() {

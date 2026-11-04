@@ -70,9 +70,7 @@ public final class CogramGateway {
         if (request instanceof TLRPC.TL_updates_getState) {
             return state();
         } else if (request instanceof TLRPC.TL_updates_getDifference) {
-            TLRPC.TL_updates_differenceEmpty difference = new TLRPC.TL_updates_differenceEmpty();
-            difference.date = now();
-            return difference;
+            return difference((TLRPC.TL_updates_getDifference) request);
         } else if (request instanceof TLRPC.TL_messages_getDialogs) {
             return dialogs((TLRPC.TL_messages_getDialogs) request);
         } else if (request instanceof TLRPC.TL_messages_getPinnedDialogs) {
@@ -104,6 +102,18 @@ public final class CogramGateway {
         state.pts = backend.pts();
         state.date = now();
         return state;
+    }
+
+    /** An empty difference leaves the app's pts as it is, and a stale pts makes it drop every later update. */
+    private TLObject difference(TLRPC.TL_updates_getDifference request) {
+        if (request.pts == backend.pts()) {
+            TLRPC.TL_updates_differenceEmpty empty = new TLRPC.TL_updates_differenceEmpty();
+            empty.date = now();
+            return empty;
+        }
+        TLRPC.TL_updates_difference difference = new TLRPC.TL_updates_difference();
+        difference.state = state();
+        return difference;
     }
 
     private TLObject dialogs(TLRPC.TL_messages_getDialogs request) {
