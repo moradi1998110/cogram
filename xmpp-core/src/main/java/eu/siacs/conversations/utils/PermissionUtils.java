@@ -14,8 +14,8 @@ public class PermissionUtils {
 
     public static List<String> rtpPermissions(final boolean withCamera) {
         final var builder = new ImmutableList.Builder<String>();
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.CINNAMON_BUN) {
-            builder.add(Manifest.permission.ACCESS_LOCAL_NETWORK);
+        if (Build.VERSION.SDK_INT >= 37) {
+            builder.add("android.permission.ACCESS_LOCAL_NETWORK");
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             builder.add(Manifest.permission.BLUETOOTH_CONNECT);
@@ -81,8 +81,8 @@ public class PermissionUtils {
                 }
             }
 
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.CINNAMON_BUN) {
-                if (inPermissions[i].equals(Manifest.permission.ACCESS_LOCAL_NETWORK)) {
+            if (Build.VERSION.SDK_INT >= 37) {
+                if (inPermissions[i].equals("android.permission.ACCESS_LOCAL_NETWORK")) {
                     continue;
                 }
             }

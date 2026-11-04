@@ -63,6 +63,7 @@ android {
         buildConfigField('String', 'PRIVACY_POLICY', '""')
         buildConfigField('String', 'FLAVOR', '"conversationsFree"')
         buildConfigField('String', 'FLAVOR_mode', '"conversations"')
+        buildConfigField('String', 'FLAVOR_distribution', '"free"')
         buildConfigField('int', 'VERSION_CODE', '42183')
         buildConfigField('String', 'VERSION_NAME', '"2.21.0"')
         buildConfigField('String', 'APPLICATION_ID', '"org.telegram.messenger.beta"')

@@ -453,10 +453,10 @@ public class XmppConnection implements Runnable {
                     results.add(0, seeOtherHost);
                 }
                 final var missingLocalNetworkPermission =
-                        Build.VERSION.SDK_INT >= Build.VERSION_CODES.CINNAMON_BUN
+                        Build.VERSION.SDK_INT >= 37
                                 && ContextCompat.checkSelfPermission(
                                                 mXmppConnectionService,
-                                                Manifest.permission.ACCESS_LOCAL_NETWORK)
+                                                "android.permission.ACCESS_LOCAL_NETWORK")
                                         != PackageManager.PERMISSION_GRANTED;
                 for (final Iterator<Resolver.Result> iterator = results.iterator();
                         iterator.hasNext(); ) {
