@@ -32,6 +32,7 @@ public final class CrashReporter {
 
     private static final String REPORT_PROCESS_SUFFIX = ":report";
     private static final String CRASH_FILE = "cogram_crash.txt";
+    private static final int MAX_CRASH_CHARS = 8000;
     private static final int MAX_EXIT_INFOS = 5;
     private static final int MAX_TRACE_BYTES = 512 * 1024;
     private static final int MAX_TRACE_CHARS = 20000;
@@ -97,12 +98,12 @@ public final class CrashReporter {
     static String buildReport(Context context) {
         StringBuilder report = new StringBuilder();
         appendDevice(context, report);
-        report.append("\n== Last Java crash ==\n");
-        appendCrashFile(context, report);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             report.append("\n== Process exits ==\n");
             appendExitInfos(context, report);
         }
+        report.append("\n== Last Java crash ==\n");
+        appendCrashFile(context, report);
         report.append("\n== Logcat ==\n");
         appendLogcat(report);
         return report.toString();
@@ -128,8 +129,10 @@ public final class CrashReporter {
             return;
         }
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(new FileInputStream(file), StandardCharsets.UTF_8))) {
+            // A stack overflow writes thousands of lines, which would push everything after it out of the report.
+            int limit = report.length() + MAX_CRASH_CHARS;
             String line;
-            while ((line = reader.readLine()) != null) {
+            while (report.length() < limit && (line = reader.readLine()) != null) {
                 report.append(line).append('\n');
             }
         } catch (Exception e) {
