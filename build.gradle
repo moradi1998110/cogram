@@ -26,6 +26,13 @@ repositories {
 //   drop:  latin/optional/, maths/optional/  (~290 KB; \textbf/\textit/\mathds fall back)
 //          licences/                          (~20 KB; pure license text files)
 subprojects {
+    repositories {
+        maven {
+            url = 'https://jitpack.io'
+            content { includeGroup 'com.github.open-keychain.open-keychain' }
+        }
+    }
+
     plugins.withId('com.android.application') {
         android {
             androidResources {
