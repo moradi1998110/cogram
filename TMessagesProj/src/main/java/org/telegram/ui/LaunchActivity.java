@@ -93,6 +93,8 @@ import com.google.firebase.appindexing.FirebaseUserActions;
 import com.google.firebase.appindexing.builders.AssistActionBuilder;
 
 import org.telegram.PhoneFormat.PhoneFormat;
+import org.telegram.cogram.CogramGateway;
+import org.telegram.cogram.CogramLoginActivity;
 import org.telegram.messenger.AccountInstance;
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.AnimationNotificationsLocker;
@@ -396,6 +398,12 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        if (CogramGateway.needsLogin()) {
+            super.onCreate(savedInstanceState);
+            startActivity(new Intent(this, CogramLoginActivity.class));
+            finish();
+            return;
+        }
         isActive = true;
         activeInstanceCount++;
         if (BuildVars.DEBUG_VERSION) {

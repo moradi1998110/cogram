@@ -10,7 +10,7 @@ package org.telegram.messenger;
 
 import android.annotation.SuppressLint;
 import android.app.Activity;
-import android.app.Application;
+import eu.siacs.conversations.Conversations;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -50,7 +50,7 @@ import org.telegram.ui.LauncherIconController;
 import java.io.File;
 import java.util.Locale;
 
-public class ApplicationLoader extends Application {
+public class ApplicationLoader extends Conversations {
 
     public static ApplicationLoader applicationLoaderInstance;
 
@@ -295,6 +295,7 @@ public class ApplicationLoader extends Application {
             return;
         }
         CrashReporter.install(applicationContext);
+        initEngine();
 
         // AndroidUtilities must be initialized before FileLog
         final String helloWorld = AndroidUtilities.getHelloWorld();

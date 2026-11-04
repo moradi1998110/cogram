@@ -6,13 +6,16 @@ import java.util.List;
 
 /**
  * Source of chat data behind {@link CogramGateway}. The demo backend proves the Telegram UI runs
- * without its network layer; an XMPP backend replaces it later.
+ * without its network layer, and {@link XmppBackend} serves real chats.
  */
 public interface GatewayBackend {
 
     interface UpdatesListener {
         void onUpdates(TLRPC.Updates updates);
     }
+
+    /** Runs the task once the backend can answer requests. */
+    void whenReady(Runnable runnable);
 
     void setUpdatesListener(UpdatesListener listener);
 
@@ -25,7 +28,7 @@ public interface GatewayBackend {
     List<TLRPC.Message> topMessages();
 
     /** Returns messages of a chat, newest first. A zero offsetId starts from the newest message. */
-    List<TLRPC.Message> history(long userId, int offsetId, int limit, int maxId, int minId);
+    List<TLRPC.Message> history(long userId, int offsetId, int addOffset, int limit, int maxId, int minId);
 
     TLRPC.TL_updateShortSentMessage sendText(long userId, String text);
 

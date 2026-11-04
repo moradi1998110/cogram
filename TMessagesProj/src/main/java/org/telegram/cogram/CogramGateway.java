@@ -1,13 +1,20 @@
 package org.telegram.cogram;
 
+import android.app.Activity;
+import android.content.SharedPreferences;
+
 import org.telegram.messenger.AccountInstance;
+import org.telegram.messenger.ApplicationLoader;
 import org.telegram.messenger.BuildVars;
+import org.telegram.messenger.DispatchQueue;
 import org.telegram.messenger.FileLog;
 import org.telegram.messenger.UserConfig;
 import org.telegram.messenger.Utilities;
+import org.telegram.tgnet.ConnectionsManager;
 import org.telegram.tgnet.TLObject;
 import org.telegram.tgnet.TLRPC;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -24,6 +31,9 @@ public final class CogramGateway {
         void run(TLObject response, TLRPC.TL_error error);
     }
 
+    private static final String PREFERENCES = "cogram_gateway";
+    private static final String KEY_DEMO = "demo";
+
     private static final CogramGateway[] instances = new CogramGateway[UserConfig.MAX_ACCOUNT_COUNT];
 
     public static synchronized CogramGateway getInstance(int account) {
@@ -33,30 +43,79 @@ public final class CogramGateway {
         return instances[account];
     }
 
+    private static SharedPreferences preferences() {
+        return ApplicationLoader.applicationContext.getSharedPreferences(PREFERENCES, Activity.MODE_PRIVATE);
+    }
+
+    private static boolean isDemoSelected() {
+        return preferences().getBoolean(KEY_DEMO, false);
+    }
+
+    static void selectDemo() {
+        preferences().edit().putBoolean(KEY_DEMO, true).apply();
+    }
+
+    public static boolean needsLogin() {
+        return ENABLED && !isDemoSelected() && !XmppBackend.hasAccount(ApplicationLoader.applicationContext);
+    }
+
     private final int account;
-    private final GatewayBackend backend;
+    private final DispatchQueue queue = new DispatchQueue("cogramGateway");
+    private volatile GatewayBackend backend;
 
     private CogramGateway(int account) {
         this.account = account;
-        backend = new DemoBackend(account);
-        backend.setUpdatesListener(updates -> Utilities.stageQueue.postRunnable(() ->
-                AccountInstance.getInstance(this.account).getMessagesController().processUpdates(updates, false)));
+        selectBackend();
+    }
+
+    private void selectBackend() {
+        if (account != 0 || backend != null || needsLogin()) {
+            return;
+        }
+        GatewayBackend selected = isDemoSelected() ? new DemoBackend(account) : new XmppBackend();
+        selected.setUpdatesListener(updates -> Utilities.stageQueue.postRunnable(() -> {
+            AccountInstance instance = AccountInstance.getInstance(this.account);
+            ArrayList<TLRPC.User> users = new ArrayList<>(selected.users());
+            instance.getMessagesController().putUsers(users, false);
+            instance.getMessagesController().processUpdates(updates, false);
+        }));
+        backend = selected;
     }
 
     /** Signs the first account in locally, so the app opens on the chat list. */
     public void ensureSignedIn(UserConfig userConfig) {
-        if (account == 0 && userConfig.getCurrentUser() == null) {
+        if (backend != null && userConfig.getCurrentUser() == null) {
             userConfig.setCurrentUser(backend.selfUser());
             userConfig.saveConfig(false);
         }
     }
 
+    /** Connects the backend after the login screen, which runs before the app has a signed-in user. */
+    void onSignedIn() {
+        selectBackend();
+        UserConfig userConfig = UserConfig.getInstance(account);
+        userConfig.loadConfig();
+        ensureSignedIn(userConfig);
+        ConnectionsManager.onSessionCreated(account);
+    }
+
     public void dispatch(TLObject request, Reply reply) {
-        TLObject response = handle(request);
-        if (response != null) {
-            reply.run(response, null);
+        GatewayBackend current = backend;
+        if (current == null) {
+            replyUnsupported(request, reply);
             return;
         }
+        current.whenReady(() -> queue.postRunnable(() -> {
+            TLObject response = handle(request);
+            if (response != null) {
+                reply.run(response, null);
+            } else {
+                replyUnsupported(request, reply);
+            }
+        }));
+    }
+
+    private static void replyUnsupported(TLObject request, Reply reply) {
         if (BuildVars.LOGS_ENABLED) {
             FileLog.d("cogram: unsupported request " + request.getClass().getSimpleName());
         }
@@ -148,7 +207,7 @@ public final class CogramGateway {
 
     private TLObject history(TLRPC.TL_messages_getHistory request) {
         TLRPC.TL_messages_messages result = new TLRPC.TL_messages_messages();
-        result.messages.addAll(backend.history(request.peer.user_id, request.offset_id, request.limit, request.max_id, request.min_id));
+        result.messages.addAll(backend.history(request.peer.user_id, request.offset_id, request.add_offset, request.limit, request.max_id, request.min_id));
         result.users.addAll(backend.users());
         return result;
     }

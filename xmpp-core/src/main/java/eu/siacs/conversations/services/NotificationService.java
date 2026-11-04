@@ -501,6 +501,10 @@ public class NotificationService {
     }
 
     public void push(final Message message) {
+        // Telegram's NotificationsController reports new messages in Cogram.
+        if (message != null) {
+            return;
+        }
         synchronized (CATCHUP_LOCK) {
             final XmppConnection connection =
                     message.getConversation().getAccount().getXmppConnection();

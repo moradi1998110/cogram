@@ -102,6 +102,11 @@ final class DemoBackend implements GatewayBackend {
     }
 
     @Override
+    public void whenReady(Runnable runnable) {
+        runnable.run();
+    }
+
+    @Override
     public synchronized void setUpdatesListener(UpdatesListener listener) {
         this.listener = listener;
     }
@@ -158,7 +163,7 @@ final class DemoBackend implements GatewayBackend {
     }
 
     @Override
-    public synchronized List<TLRPC.Message> history(long userId, int offsetId, int limit, int maxId, int minId) {
+    public synchronized List<TLRPC.Message> history(long userId, int offsetId, int addOffset, int limit, int maxId, int minId) {
         ArrayList<TLRPC.Message> result = new ArrayList<>();
         ArrayList<TLRPC.Message> messages = chats.get(userId);
         if (messages == null) {

@@ -10,7 +10,7 @@ mkdir -p "$OUT"
 # Permission dialogs would swallow the taps below, so grant everything at install.
 adb install -r -t -g dist/cogram-x86_64-debug.apk
 adb logcat -c
-adb shell am start -n "$PACKAGE/org.telegram.ui.LaunchActivity"
+adb shell am start -n "$PACKAGE/org.telegram.cogram.CogramLoginActivity" --ez demo true
 sleep "$START_SECONDS"
 adb exec-out screencap -p > "$OUT/1-chats.png" || true
 

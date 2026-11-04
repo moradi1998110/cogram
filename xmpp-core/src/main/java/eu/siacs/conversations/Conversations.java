@@ -12,9 +12,6 @@ import com.google.common.base.Suppliers;
 import com.google.common.collect.Iterables;
 import de.gultsch.common.TrustManagers;
 import eu.siacs.conversations.persistance.DatabaseBackend;
-import eu.siacs.conversations.services.EmojiInitializationService;
-import eu.siacs.conversations.ui.util.SettingsUtils;
-import eu.siacs.conversations.utils.ExceptionHelper;
 import java.io.IOException;
 import java.security.KeyStoreException;
 import java.security.NoSuchAlgorithmException;
@@ -24,6 +21,7 @@ import java.util.Arrays;
 import java.util.Collection;
 import javax.net.ssl.X509TrustManager;
 import org.conscrypt.Conscrypt;
+import org.jxmpp.stringprep.libidn.LibIdnXmppStringprep;
 
 public class Conversations extends Application {
 
@@ -90,11 +88,13 @@ public class Conversations extends Application {
     @Override
     public void onCreate() {
         super.onCreate();
-        installSecurityProvider();
         CONTEXT = this.getApplicationContext();
-        EmojiInitializationService.execute(getApplicationContext());
-        ExceptionHelper.init(getApplicationContext());
-        SettingsUtils.applyThemeSettings(this);
+    }
+
+    /** Starts what the engine needs. Cogram does not run this in its crash report process. */
+    protected void initEngine() {
+        LibIdnXmppStringprep.setup();
+        installSecurityProvider();
     }
 
     private static void installSecurityProvider() {
