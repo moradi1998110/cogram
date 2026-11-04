@@ -7,8 +7,8 @@ START_SECONDS=45
 ECHO_SECONDS=8
 
 mkdir -p "$OUT"
-adb install -r -t dist/cogram-x86_64-debug.apk
-adb shell pm grant "$PACKAGE" android.permission.POST_NOTIFICATIONS || true
+# Permission dialogs would swallow the taps below, so grant everything at install.
+adb install -r -t -g dist/cogram-x86_64-debug.apk
 adb logcat -c
 adb shell am start -n "$PACKAGE/org.telegram.ui.LaunchActivity"
 sleep "$START_SECONDS"
