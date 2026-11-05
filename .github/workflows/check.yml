@@ -18,6 +18,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/boost
+
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
@@ -41,11 +44,12 @@ jobs:
       # Private repository runners have 7 GB of memory, and R8 needs more with the build around it.
       - name: Add swap
         run: |
-          sudo fallocate -l 8G /cogram-swap
-          sudo chmod 600 /cogram-swap
-          sudo mkswap /cogram-swap
-          sudo swapon /cogram-swap
+          sudo fallocate -l 8G /mnt/cogram-swap
+          sudo chmod 600 /mnt/cogram-swap
+          sudo mkswap /mnt/cogram-swap
+          sudo swapon /mnt/cogram-swap
           free -h
+          df -h / /mnt
 
       - name: Limit Gradle memory for the runner
         run: |
