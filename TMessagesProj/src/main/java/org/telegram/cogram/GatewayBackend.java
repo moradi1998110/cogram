@@ -2,6 +2,7 @@ package org.telegram.cogram;
 
 import org.telegram.tgnet.TLRPC;
 
+import java.util.Collections;
 import java.util.List;
 
 /**
@@ -35,4 +36,9 @@ public interface GatewayBackend {
     TLRPC.TL_messages_affectedMessages markRead(long userId, int maxId);
 
     int pts();
+
+    /** Returns messages already sent as updates after the given pts, for an app that missed them. */
+    default List<TLRPC.Message> messagesAfter(int pts) {
+        return Collections.emptyList();
+    }
 }

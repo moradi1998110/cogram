@@ -172,6 +172,8 @@ public final class CogramGateway {
         }
         TLRPC.TL_updates_difference difference = new TLRPC.TL_updates_difference();
         difference.state = state();
+        difference.new_messages.addAll(backend.messagesAfter(request.pts));
+        difference.users.addAll(backend.users());
         return difference;
     }
 

@@ -9,6 +9,7 @@ import android.content.SharedPreferences;
 import android.os.IBinder;
 
 import org.telegram.messenger.ApplicationLoader;
+import org.telegram.messenger.BuildVars;
 import org.telegram.messenger.FileLog;
 import org.telegram.tgnet.TLObject;
 import org.telegram.tgnet.TLRPC;
@@ -19,6 +20,7 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -47,6 +49,8 @@ final class XmppBackend implements GatewayBackend {
     private final XmppIdMap ids = new XmppIdMap(context);
     private final ExecutorService events = Executors.newSingleThreadExecutor();
     private final AtomicBoolean syncPending = new AtomicBoolean();
+    // The engine holds its listeners weakly, so a listener nothing else refers to stops being called.
+    private final XmppConnectionService.OnConversationUpdate conversationListener = this::scheduleSync;
     private final ArrayList<Runnable> waiting = new ArrayList<>();
     private final Map<Long, Integer> readOutboxMax = new HashMap<>();
     private final TLRPC.User self;
@@ -105,7 +109,7 @@ final class XmppBackend implements GatewayBackend {
             ready = new ArrayList<>(waiting);
             waiting.clear();
         }
-        connected.setOnConversationListChangedListener(this::scheduleSync);
+        connected.setOnConversationListChangedListener(conversationListener);
         for (Runnable runnable : ready) {
             runnable.run();
         }
@@ -145,6 +149,9 @@ final class XmppBackend implements GatewayBackend {
                 }
             }
         }
+        if (BuildVars.LOGS_ENABLED) {
+            FileLog.d("cogram: sync updates = " + updates.size() + " pts = " + pts + " listener = " + (target != null));
+        }
         if (target != null) {
             for (TLRPC.Updates update : updates) {
                 target.onUpdates(update);
@@ -156,6 +163,7 @@ final class XmppBackend implements GatewayBackend {
         TLRPC.Message tl = toTl(message, peerId);
         pts++;
         savePts();
+        ids.setMessagePts(tl.id, pts);
         TLRPC.TL_updateShortMessage update = new TLRPC.TL_updateShortMessage();
         update.id = tl.id;
         update.user_id = peerId;
@@ -409,6 +417,23 @@ final class XmppBackend implements GatewayBackend {
         affected.pts = pts;
         affected.pts_count = 1;
         return affected;
+    }
+
+    @Override
+    public synchronized List<TLRPC.Message> messagesAfter(int afterPts) {
+        ArrayList<TLRPC.Message> result = new ArrayList<>();
+        Set<String> uuids = ids.messagesAfterPts(afterPts);
+        for (Conversation conversation : singleChats()) {
+            for (Message message : loadedMessages(conversation)) {
+                if (uuids.contains(message.getUuid())) {
+                    result.add(toTl(message, peerId(conversation)));
+                }
+            }
+        }
+        if (BuildVars.LOGS_ENABLED) {
+            FileLog.d("cogram: difference after pts " + afterPts + " current = " + pts + " messages = " + result.size());
+        }
+        return result;
     }
 
     @Override

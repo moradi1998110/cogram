@@ -7,7 +7,9 @@ import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteOpenHelper;
 
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Keeps the numeric ids Telegram needs for XMPP addresses and message uuids. Message ids grow with
@@ -24,17 +26,20 @@ final class XmppIdMap extends SQLiteOpenHelper {
     private final Map<String, Integer> messageIds = new HashMap<>();
 
     XmppIdMap(Context context) {
-        super(context, DATABASE, null, 1);
+        super(context, DATABASE, null, 2);
     }
 
     @Override
     public void onCreate(SQLiteDatabase db) {
         db.execSQL("CREATE TABLE peers (id INTEGER PRIMARY KEY AUTOINCREMENT, jid TEXT UNIQUE NOT NULL)");
-        db.execSQL("CREATE TABLE messages (id INTEGER PRIMARY KEY, uuid TEXT UNIQUE NOT NULL, time INTEGER NOT NULL)");
+        db.execSQL("CREATE TABLE messages (id INTEGER PRIMARY KEY, uuid TEXT UNIQUE NOT NULL, time INTEGER NOT NULL, pts INTEGER NOT NULL DEFAULT 0)");
     }
 
     @Override
     public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
+        if (oldVersion < 2) {
+            db.execSQL("ALTER TABLE messages ADD COLUMN pts INTEGER NOT NULL DEFAULT 0");
+        }
     }
 
     synchronized long peerId(String jid) {
@@ -104,6 +109,23 @@ final class XmppIdMap extends SQLiteOpenHelper {
         try (Cursor cursor = db.rawQuery("SELECT 1 FROM messages WHERE id = ?", new String[]{String.valueOf(id)})) {
             return cursor.moveToFirst();
         }
+    }
+
+    synchronized void setMessagePts(int id, int pts) {
+        ContentValues values = new ContentValues();
+        values.put("pts", pts);
+        getWritableDatabase().update("messages", values, "id = ?", new String[]{String.valueOf(id)});
+    }
+
+    /** Returns the messages sent to Telegram as updates after the given pts. */
+    synchronized Set<String> messagesAfterPts(int pts) {
+        HashSet<String> uuids = new HashSet<>();
+        try (Cursor cursor = getReadableDatabase().rawQuery("SELECT uuid FROM messages WHERE pts > ?", new String[]{String.valueOf(pts)})) {
+            while (cursor.moveToNext()) {
+                uuids.add(cursor.getString(0));
+            }
+        }
+        return uuids;
     }
 
     /** Returns the time a message was sent, or -1 for an unknown id. */
