@@ -45,4 +45,4 @@ jobs:
       - name: Compile
         run: |
           chmod +x gradlew
-          ./gradlew --no-daemon --continue :xmpp-core:compileDebugJavaWithJavac :TMessagesProj:compileDebugJavaWithJavac :TMessagesProj_App:processAfatDebugResources :TMessagesProj_App:checkAfatDebugDuplicateClasses
+          ./gradlew --no-daemon --continue :xmpp-core:compileDebugJavaWithJavac :TMessagesProj:compileDebugJavaWithJavac :TMessagesProj_App:processAfatDebugResources :TMessagesProj_App:checkAfatDebugDuplicateClasses :TMessagesProj_App:mergeAfatDebugJavaResource :TMessagesProj_App:mergeDexAfatDebug

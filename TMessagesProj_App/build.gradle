@@ -67,6 +67,9 @@ android {
     }
 
     packagingOptions {
+        resources {
+            excludes += ['META-INF/BCKEY.DSA', 'META-INF/BCKEY.SF', 'META-INF/LICENSE.md', 'META-INF/versions/9/OSGI-INF/MANIFEST.MF']
+        }
         jniLibs {
             useLegacyPackaging = true
         }

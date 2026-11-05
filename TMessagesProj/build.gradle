@@ -46,7 +46,7 @@ configurations.all {
 }
 
 dependencies {
-    implementation project(':xmpp-core')
+    api project(':xmpp-core')
     compileOnly 'com.google.code.findbugs:jsr305:3.0.2'
     implementation 'androidx.core:core:1.16.0'
     implementation 'androidx.palette:palette:1.0.0'
