@@ -9,6 +9,7 @@ on:
       - '**.java'
       - '**.kt'
       - '**.gradle'
+      - '**.xml'
       - '.github/workflows/check.yml'
 
 jobs:
