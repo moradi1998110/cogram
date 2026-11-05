@@ -57,16 +57,16 @@ android {
 
     defaultConfig {
         minSdk = 23
-        resValue('string', 'applicationId', 'org.telegram.messenger.beta')
-        resValue('string', 'app_name', 'Cogram')
-        buildConfigField('String', 'APP_NAME', '"Cogram"')
+        resValue('string', 'applicationId', 'app.phogram')
+        resValue('string', 'app_name', 'Phogram')
+        buildConfigField('String', 'APP_NAME', '"Phogram"')
         buildConfigField('String', 'PRIVACY_POLICY', '""')
         buildConfigField('String', 'FLAVOR', '"conversationsFree"')
         buildConfigField('String', 'FLAVOR_mode', '"conversations"')
         buildConfigField('String', 'FLAVOR_distribution', '"free"')
         buildConfigField('int', 'VERSION_CODE', '42183')
         buildConfigField('String', 'VERSION_NAME', '"2.21.0"')
-        buildConfigField('String', 'APPLICATION_ID', '"org.telegram.messenger.beta"')
+        buildConfigField('String', 'APPLICATION_ID', '"app.phogram"')
     }
 
     compileOptions {

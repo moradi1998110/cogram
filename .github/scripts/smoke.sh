@@ -1,7 +1,7 @@
 #!/bin/bash
 # Starts the app on the emulator, sends a message and collects what happened. It never fails
 # on a crash, because the logs are what the run is for. Tap positions assume the 320x640 screen.
-PACKAGE=org.telegram.messenger.beta
+PACKAGE=app.phogram
 OUT=smoke
 LOGIN_SECONDS=30
 SIGN_IN_SECONDS=75

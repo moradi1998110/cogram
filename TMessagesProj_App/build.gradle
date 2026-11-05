@@ -80,7 +80,6 @@ android {
             debuggable true
             jniDebuggable true
             signingConfig signingConfigs.debug
-            applicationIdSuffix ".beta"
             minifyEnabled true
             shrinkResources false
             multiDexEnabled true
@@ -200,5 +199,3 @@ android {
         checkReleaseBuilds false
     }
 }
-
-apply plugin: 'com.google.gms.google-services'

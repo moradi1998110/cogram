@@ -121,6 +121,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cp dist/cogram-arm64-debug.apk "cogram-${GITHUB_REF_NAME}-arm64-debug.apk"
-          gh release create "$GITHUB_REF_NAME" "cogram-${GITHUB_REF_NAME}-arm64-debug.apk" \
+          cp dist/cogram-arm64-debug.apk "phogram-${GITHUB_REF_NAME}-arm64-debug.apk"
+          gh release create "$GITHUB_REF_NAME" "phogram-${GITHUB_REF_NAME}-arm64-debug.apk" \
             --draft --prerelease --title "$GITHUB_REF_NAME" --notes "Automated build of $GITHUB_SHA"

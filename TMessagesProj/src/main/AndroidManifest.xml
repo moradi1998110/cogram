@@ -214,7 +214,7 @@
 
         <activity
             android:name="org.telegram.cogram.CrashReportActivity"
-            android:label="Cogram Log"
+            android:label="Phogram Log"
             android:process=":report"
             android:taskAffinity="org.telegram.cogram.report"
             android:theme="@android:style/Theme.DeviceDefault"

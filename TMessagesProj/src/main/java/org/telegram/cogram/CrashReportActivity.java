@@ -70,7 +70,7 @@ public class CrashReportActivity extends Activity {
 
     private void copyReport() {
         ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
-        clipboard.setPrimaryClip(ClipData.newPlainText("Cogram Log", limitedReport()));
+        clipboard.setPrimaryClip(ClipData.newPlainText("Phogram Log", limitedReport()));
         Toast.makeText(this, "تم النسخ", Toast.LENGTH_SHORT).show();
     }
 
@@ -78,6 +78,6 @@ public class CrashReportActivity extends Activity {
         Intent intent = new Intent(Intent.ACTION_SEND);
         intent.setType("text/plain");
         intent.putExtra(Intent.EXTRA_TEXT, limitedReport());
-        startActivity(Intent.createChooser(intent, "Cogram Log"));
+        startActivity(Intent.createChooser(intent, "Phogram Log"));
     }
 }
