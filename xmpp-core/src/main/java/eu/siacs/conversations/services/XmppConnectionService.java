@@ -2364,18 +2364,7 @@ public class XmppConnectionService extends Service {
     }
 
     private void toggleSetProfilePictureActivity(final boolean enabled) {
-        try {
-            final ComponentName name =
-                    new ComponentName(this, ChooseAccountForProfilePictureActivity.class);
-            final int targetState =
-                    enabled
-                            ? PackageManager.COMPONENT_ENABLED_STATE_ENABLED
-                            : PackageManager.COMPONENT_ENABLED_STATE_DISABLED;
-            getPackageManager()
-                    .setComponentEnabledSetting(name, targetState, PackageManager.DONT_KILL_APP);
-        } catch (IllegalStateException e) {
-            Log.d(Config.LOGTAG, "unable to toggle profile picture activity");
-        }
+        // The app has no such activity, because Telegram's screens replace the engine's.
     }
 
     public boolean reconfigurePushDistributor() {

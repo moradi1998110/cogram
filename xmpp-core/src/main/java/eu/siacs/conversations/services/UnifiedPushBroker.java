@@ -233,31 +233,7 @@ public class UnifiedPushBroker {
     }
 
     private void setUnifiedPushDistributorEnabled(final boolean enabled) {
-        final PackageManager packageManager = service.getPackageManager();
-        final var componentNames =
-                Arrays.asList(
-                        new ComponentName(
-                                service.getApplicationContext(),
-                                eu.siacs.conversations.ui.UnifiedPushDistributor.class),
-                        new ComponentName(
-                                service.getApplicationContext(), UnifiedPushDistributor.class));
-        if (enabled) {
-            for (final var componentName : componentNames) {
-                packageManager.setComponentEnabledSetting(
-                        componentName,
-                        PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
-                        PackageManager.DONT_KILL_APP);
-            }
-            Log.d(Config.LOGTAG, "UnifiedPushDistributor has been enabled");
-        } else {
-            for (final var componentName : componentNames) {
-                packageManager.setComponentEnabledSetting(
-                        componentName,
-                        PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
-                        PackageManager.DONT_KILL_APP);
-            }
-            Log.d(Config.LOGTAG, "UnifiedPushDistributor has been disabled");
-        }
+        // The app does not declare the distributor components yet.
     }
 
     private void unregisterCurrentPushTargets() {

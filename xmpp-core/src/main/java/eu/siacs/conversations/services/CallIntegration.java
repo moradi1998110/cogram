@@ -515,13 +515,8 @@ public class CallIntegration extends Connection {
     }
 
     public static boolean hasSystemFeature(final Context context) {
-        final var packageManager = context.getPackageManager();
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            return packageManager.hasSystemFeature(PackageManager.FEATURE_TELECOM);
-        } else {
-            //noinspection deprecation
-            return packageManager.hasSystemFeature(PackageManager.FEATURE_CONNECTION_SERVICE);
-        }
+        // The app does not declare the ConnectionService until calls are connected.
+        return false;
     }
 
     private static boolean isDeviceModelSupported() {
