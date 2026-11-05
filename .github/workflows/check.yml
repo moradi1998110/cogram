@@ -10,6 +10,7 @@ on:
       - '**.kt'
       - '**.gradle'
       - '**.xml'
+      - 'gradle.properties'
       - '.github/workflows/check.yml'
 
 jobs:
