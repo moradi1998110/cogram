@@ -3,6 +3,8 @@
 # on a crash, because the logs are what the run is for. Tap positions assume the 320x640 screen.
 PACKAGE=org.telegram.messenger.beta
 OUT=smoke
+LOGIN_SECONDS=30
+SIGN_IN_SECONDS=75
 START_SECONDS=45
 ECHO_SECONDS=8
 
@@ -10,6 +12,28 @@ mkdir -p "$OUT"
 # Permission dialogs would swallow the taps below, so grant everything at install.
 adb install -r -t -g dist/cogram-x86_64-debug.apk
 adb logcat -c
+
+# First run as a phone sees it: the launcher icon with no account leads to the login screen.
+adb shell am start -n "$PACKAGE/org.telegram.messenger.DefaultIcon"
+sleep "$LOGIN_SECONDS"
+adb exec-out screencap -p > "$OUT/0-login.png" || true
+adb shell pidof "$PACKAGE" > "$OUT/pid-login.txt" || true
+adb shell dumpsys activity activities | grep -m1 -E "topResumedActivity|mResumedActivity" > "$OUT/top-login.txt" || true
+
+# A failed sign-in starts the engine for real. This address cannot resolve, so nothing leaves the runner.
+adb shell input text smoke@cogram.invalid
+adb shell input keyevent 61
+adb shell input text smoke-test
+adb shell input keyevent 61
+adb shell input keyevent 66
+sleep "$SIGN_IN_SECONDS"
+adb exec-out screencap -p > "$OUT/0-sign-in.png" || true
+adb shell pidof "$PACKAGE" > "$OUT/pid-sign-in.txt" || true
+adb shell uiautomator dump /sdcard/sign-in.xml > /dev/null || true
+adb exec-out cat /sdcard/sign-in.xml > "$OUT/sign-in.xml" || true
+adb logcat -d -v threadtime > "$OUT/logcat-sign-in.txt" || true
+adb shell am force-stop "$PACKAGE"
+
 adb shell am start -n "$PACKAGE/org.telegram.cogram.CogramLoginActivity" --ez demo true
 sleep "$START_SECONDS"
 adb exec-out screencap -p > "$OUT/1-chats.png" || true

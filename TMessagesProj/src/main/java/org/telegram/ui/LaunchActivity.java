@@ -395,10 +395,12 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
 
     private FrameMetricsOverlayView frameMetricsOverlayView;
     // private RefreshRateController refreshRateController;
+    private boolean redirectedToLogin;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         if (CogramGateway.needsLogin()) {
+            redirectedToLogin = true;
             super.onCreate(savedInstanceState);
             startActivity(new Intent(this, CogramLoginActivity.class));
             finish();
@@ -6979,6 +6981,10 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
 
     @Override
     protected void onDestroy() {
+        if (redirectedToLogin) {
+            super.onDestroy();
+            return;
+        }
         GramWalletStorageAuth.onActivityDestroyed(this);
         isActive = false;
         activeInstanceCount--;
