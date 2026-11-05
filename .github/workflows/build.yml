@@ -50,7 +50,7 @@ jobs:
         run: |
           mkdir -p ~/.gradle
           {
-            echo "org.gradle.jvmargs=-Xmx5g -XX:MaxMetaspaceSize=1g"
+            echo "org.gradle.jvmargs=-Xmx9g -XX:MaxMetaspaceSize=1g"
             echo "org.gradle.parallel=false"
           } >> ~/.gradle/gradle.properties
 

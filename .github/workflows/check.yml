@@ -41,9 +41,9 @@ jobs:
       - name: Limit Gradle memory for the runner
         run: |
           mkdir -p ~/.gradle
-          echo "org.gradle.jvmargs=-Xmx5g -XX:MaxMetaspaceSize=1g" >> ~/.gradle/gradle.properties
+          echo "org.gradle.jvmargs=-Xmx9g -XX:MaxMetaspaceSize=1g" >> ~/.gradle/gradle.properties
 
       - name: Compile
         run: |
           chmod +x gradlew
-          ./gradlew --no-daemon --continue :xmpp-core:compileDebugJavaWithJavac :TMessagesProj:compileDebugJavaWithJavac :TMessagesProj_App:processAfatDebugResources :TMessagesProj_App:checkAfatDebugDuplicateClasses :TMessagesProj_App:mergeAfatDebugJavaResource :TMessagesProj_App:mergeExtDexAfatDebug :TMessagesProj_App:mergeLibDexAfatDebug :TMessagesProj_App:mergeProjectDexAfatDebug
+          ./gradlew --no-daemon --continue :xmpp-core:compileDebugJavaWithJavac :TMessagesProj:compileDebugJavaWithJavac :TMessagesProj_App:processAfatDebugResources :TMessagesProj_App:checkAfatDebugDuplicateClasses :TMessagesProj_App:mergeAfatDebugJavaResource :TMessagesProj_App:minifyAfatDebugWithR8
