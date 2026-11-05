@@ -43,11 +43,20 @@ jobs:
           yes | "$SDKM" --licenses > /dev/null || true
           "$SDKM" "platforms;android-36" "build-tools;36.0.0" "ndk;$NDK_VERSION" "cmake;3.22.1" > /dev/null
 
+      # Private repository runners have 7 GB of memory, and R8 needs more with the build around it.
+      - name: Add swap
+        run: |
+          sudo fallocate -l 8G /cogram-swap
+          sudo chmod 600 /cogram-swap
+          sudo mkswap /cogram-swap
+          sudo swapon /cogram-swap
+          free -h
+
       - name: Limit Gradle memory for the runner
         run: |
           mkdir -p ~/.gradle
           {
-            echo "org.gradle.jvmargs=-Xmx9g -XX:MaxMetaspaceSize=1g"
+            echo "org.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1g"
             echo "org.gradle.parallel=false"
           } >> ~/.gradle/gradle.properties
 
