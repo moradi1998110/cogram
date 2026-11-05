@@ -81,7 +81,7 @@ android {
             jniDebuggable true
             signingConfig signingConfigs.debug
             minifyEnabled true
-            shrinkResources false
+            shrinkResources true
             multiDexEnabled true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), '../TMessagesProj/proguard-rules.pro', 'cogram-debug-rules.pro'
             ndk.debugSymbolLevel = 'FULL'
