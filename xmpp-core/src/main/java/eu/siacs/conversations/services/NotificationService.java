@@ -572,6 +572,9 @@ public class NotificationService {
 
     public synchronized void startRinging(
             final AbstractJingleConnection.Id id, final Set<Media> media) {
+        if (ExternalCallUi.isEnabled()) {
+            return;
+        }
         showIncomingCallNotification(id, media, false);
     }
 

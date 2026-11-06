@@ -46,6 +46,7 @@ import eu.siacs.conversations.persistance.FileBackend;
 import eu.siacs.conversations.services.XmppConnectionService;
 import eu.siacs.conversations.ui.interfaces.OnAvatarPublication;
 import eu.siacs.conversations.xmpp.Jid;
+import eu.siacs.conversations.xmpp.jingle.RtpCapability;
 
 /**
  * Serves one-to-one chats from the Conversations engine. Messages are sent unencrypted for now, and
@@ -83,6 +84,34 @@ final class XmppBackend implements GatewayBackend {
     private final Set<Long> onlinePeers = new HashSet<>();
     private final long selfId;
     private TLRPC.User self;
+    private volatile XmppCalls calls;
+
+    private final XmppCalls.Peers callPeers = new XmppCalls.Peers() {
+        @Override
+        public long peerId(Jid address) {
+            return ids.peerId(address.asBareJid().toString());
+        }
+
+        @Override
+        public String address(long peerId) {
+            return ids.peerJid(peerId);
+        }
+
+        @Override
+        public void push(TLRPC.Updates updates, long peerId) {
+            UpdatesListener target;
+            synchronized (XmppBackend.this) {
+                TLRPC.User user = user(peerId);
+                if (user != null) {
+                    updates.users.add(user);
+                }
+                target = listener;
+            }
+            if (target != null) {
+                target.onUpdates(updates);
+            }
+        }
+    };
     private UpdatesListener listener;
     private XmppConnectionService service;
     private int pts;
@@ -141,6 +170,13 @@ final class XmppBackend implements GatewayBackend {
         }
         connected.setOnConversationListChangedListener(conversationListener);
         connected.setOnRosterUpdateListener(rosterListener);
+        Account account;
+        synchronized (this) {
+            account = account();
+        }
+        if (account != null) {
+            calls = new XmppCalls(connected, account, selfId, callPeers);
+        }
         for (Runnable runnable : ready) {
             runnable.run();
         }
@@ -554,7 +590,19 @@ final class XmppBackend implements GatewayBackend {
             full.profile_photo = photo(avatar);
             full.flags |= TLObject.FLAG_2;
         }
+        Conversation conversation = userId == selfId ? null : conversation(userId);
+        if (conversation != null && calls != null) {
+            // Telegram shows its call buttons only when the contact's client can answer.
+            RtpCapability.Capability capability = XmppCalls.capability(conversation.getContact());
+            full.phone_calls_available = capability != RtpCapability.Capability.NONE;
+            full.video_calls_available = capability == RtpCapability.Capability.VIDEO;
+        }
         return full;
+    }
+
+    @Override
+    public XmppCalls calls() {
+        return calls;
     }
 
     @Override
@@ -771,6 +819,10 @@ final class XmppBackend implements GatewayBackend {
     @Override
     public synchronized void signOut() {
         listener = null;
+        if (service != null && calls != null) {
+            service.removeRtpConnectionUpdateListener(calls);
+            calls = null;
+        }
         if (service != null) {
             for (Account account : new ArrayList<>(service.getAccounts())) {
                 service.deleteAccount(account);

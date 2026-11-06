@@ -93,6 +93,7 @@ import android.widget.Toast;
 import androidx.annotation.Nullable;
 
 import org.json.JSONObject;
+import org.telegram.cogram.CogramGateway;
 import org.telegram.messenger.AccountInstance;
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.ApplicationLoader;
@@ -846,7 +847,10 @@ public class VoIPService extends Service implements SensorEventListener, AudioMa
 		}
 
 		if (videoCall) {
-			if (Build.VERSION.SDK_INT < 23 || checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+			if (CogramGateway.ENABLED && user != null) {
+				// The XMPP call opens the camera itself once it connects.
+				videoState[CAPTURE_DEVICE_CAMERA] = Instance.VIDEO_STATE_ACTIVE;
+			} else if (Build.VERSION.SDK_INT < 23 || checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
 				captureDevice[CAPTURE_DEVICE_CAMERA] = NativeInstance.createVideoCapturer(localSink[CAPTURE_DEVICE_CAMERA], isFrontFaceCamera ? 1 : 0);
 				if (chatID != 0) {
 					videoState[CAPTURE_DEVICE_CAMERA] = Instance.VIDEO_STATE_PAUSED;
@@ -1065,6 +1069,10 @@ public class VoIPService extends Service implements SensorEventListener, AudioMa
 		startConnectingSound();
 		dispatchStateChanged(STATE_REQUESTING);
 		AndroidUtilities.runOnUIThread(() -> NotificationCenter.getGlobalInstance().postNotificationName(NotificationCenter.didStartedCall));
+		if (CogramGateway.ENABLED) {
+			requestXmppCall();
+			return;
+		}
 		final byte[] salt = new byte[256];
 		Utilities.random.nextBytes(salt);
 
@@ -1176,6 +1184,39 @@ public class VoIPService extends Service implements SensorEventListener, AudioMa
 		}, ConnectionsManager.RequestFlagFailOnServerErrorsExceptFloodWait);
 	}
 
+	/** XMPP calls are encrypted by DTLS inside the call, so they skip Telegram's key exchange and ask the gateway directly. */
+	private void requestXmppCall() {
+		TL_phone.requestCall reqCall = new TL_phone.requestCall();
+		reqCall.user_id = MessagesController.getInstance(currentAccount).getInputUser(user);
+		reqCall.video = videoCall;
+		reqCall.random_id = Utilities.random.nextInt();
+		callReqId = ConnectionsManager.getInstance(currentAccount).sendRequest(reqCall, (response, error) -> AndroidUtilities.runOnUIThread(() -> {
+			callReqId = 0;
+			if (endCallAfterRequest) {
+				callEnded();
+				return;
+			}
+			if (error != null) {
+				callFailed();
+				return;
+			}
+			privateCall = ((TL_phone.TL_phone_phoneCall) response).phone_call;
+			g_a = new byte[0];
+			dispatchStateChanged(STATE_WAITING);
+			if (pendingUpdates.size() > 0) {
+				for (TL_phone.PhoneCall call : pendingUpdates) {
+					onCallUpdated(call);
+				}
+				pendingUpdates.clear();
+			}
+			timeoutRunnable = () -> {
+				timeoutRunnable = null;
+				declineIncomingCall(DISCARD_REASON_MISSED, null);
+			};
+			AndroidUtilities.runOnUIThread(timeoutRunnable, MessagesController.getInstance(currentAccount).callReceiveTimeout);
+		}), ConnectionsManager.RequestFlagFailOnServerErrorsExceptFloodWait);
+	}
+
 	private void acknowledgeCall(final boolean startRinging) {
 		if (privateCall == null) {
 			if (BuildVars.LOGS_ENABLED) {
@@ -1261,6 +1302,10 @@ public class VoIPService extends Service implements SensorEventListener, AudioMa
 		}
 		switchingCamera = true;
 		tgVoip[CAPTURE_DEVICE_CAMERA].switchCamera(!isFrontFaceCamera);
+		if (CogramGateway.ENABLED) {
+			// Telegram's native camera reports when it has switched, and the XMPP call switches at once.
+			setSwitchingCamera(false, !isFrontFaceCamera);
+		}
 	}
 
 	public boolean isSwitchingCamera() {
@@ -1359,8 +1404,12 @@ public class VoIPService extends Service implements SensorEventListener, AudioMa
 				videoState[trueIndex] = state;
 				NativeInstance.setVideoStateCapturer(captureDevice[index], videoState[trueIndex]);
 			} else if (state == Instance.VIDEO_STATE_ACTIVE && currentState != STATE_BUSY && currentState != STATE_ENDED) {
-				captureDevice[index] = NativeInstance.createVideoCapturer(localSink[trueIndex], screencast ? 2 : isFrontFaceCamera ? 1 : 0);
+				if (!CogramGateway.ENABLED || groupCall != null) {
+					captureDevice[index] = NativeInstance.createVideoCapturer(localSink[trueIndex], screencast ? 2 : isFrontFaceCamera ? 1 : 0);
+				}
 				videoState[trueIndex] = Instance.VIDEO_STATE_ACTIVE;
+			} else if (CogramGateway.ENABLED) {
+				videoState[trueIndex] = state;
 			}
 			return;
 		}
@@ -1720,6 +1769,10 @@ public class VoIPService extends Service implements SensorEventListener, AudioMa
 				stopSelf();
 			} else {
 				callEnded();
+			}
+		} else if (CogramGateway.ENABLED && phoneCall instanceof TL_phone.TL_phoneCall) {
+			if (tgVoip[CAPTURE_DEVICE_CAMERA] == null) {
+				initiateActualEncryptedCall();
 			}
 		} else if (phoneCall instanceof TL_phone.TL_phoneCall && authKey == null) {
 			if (phoneCall.g_a_or_b == null) {
@@ -3356,6 +3409,10 @@ public class VoIPService extends Service implements SensorEventListener, AudioMa
 			AndroidUtilities.cancelRunOnUIThread(timeoutRunnable);
 			timeoutRunnable = null;
 		}
+		if (CogramGateway.ENABLED) {
+			initiateXmppCall();
+			return;
+		}
 		try {
 			if (BuildVars.LOGS_ENABLED) {
 				FileLog.d("InitCall: keyID=" + keyFingerprint);
@@ -3516,6 +3573,45 @@ public class VoIPService extends Service implements SensorEventListener, AudioMa
 			}
 			callFailed();
 		}
+	}
+
+	/** Connects Telegram's call screen to the XMPP call, in place of Telegram's native call engine. */
+	private void initiateXmppCall() {
+		final NativeInstance instance = CogramGateway.getInstance(currentAccount).createCallInstance(privateCall.id, remoteSink[CAPTURE_DEVICE_CAMERA]);
+		if (instance == null) {
+			callFailed();
+			return;
+		}
+		if (g_a == null) {
+			g_a = new byte[0];
+		}
+		tgVoip[CAPTURE_DEVICE_CAMERA] = instance;
+		instance.setOnStateUpdatedListener((state, inTransition) -> {
+			if (state == STATE_ESTABLISHED) {
+				authKey = CogramGateway.callEncryptionKey(instance);
+			}
+			onConnectionStateChanged(state, inTransition);
+		});
+		instance.setOnSignalBarsUpdatedListener(this::onSignalBarCountChanged);
+		instance.setOnRemoteMediaStateUpdatedListener((audioState, videoState) -> AndroidUtilities.runOnUIThread(() -> {
+			remoteAudioState = audioState;
+			remoteVideoState = videoState;
+			checkIsNear();
+			for (int a = 0; a < stateListeners.size(); a++) {
+				stateListeners.get(a).onMediaStateUpdated(audioState, videoState);
+			}
+		}));
+		instance.setMuteMicrophone(micMute);
+		if (videoState[CAPTURE_DEVICE_CAMERA] == Instance.VIDEO_STATE_ACTIVE) {
+			instance.setupOutgoingVideo(localSink[CAPTURE_DEVICE_CAMERA], isFrontFaceCamera ? 1 : 0);
+		}
+		if (!isVideoAvailable) {
+			isVideoAvailable = true;
+			for (int a = 0; a < stateListeners.size(); a++) {
+				stateListeners.get(a).onVideoAvailableChange(true);
+			}
+		}
+		dispatchStateChanged(STATE_WAIT_INIT);
 	}
 
 	public void playConnectedSound() {
@@ -4306,6 +4402,22 @@ public class VoIPService extends Service implements SensorEventListener, AudioMa
 		startConnectingSound();
 		dispatchStateChanged(STATE_EXCHANGING_KEYS);
 		AndroidUtilities.runOnUIThread(() -> NotificationCenter.getGlobalInstance().postNotificationName(NotificationCenter.didStartedCall));
+		if (CogramGateway.ENABLED) {
+			if (privateCall == null) {
+				callFailed();
+				return;
+			}
+			TL_phone.acceptCall acceptXmpp = new TL_phone.acceptCall();
+			acceptXmpp.peer = new TLRPC.TL_inputPhoneCall();
+			acceptXmpp.peer.id = privateCall.id;
+			acceptXmpp.peer.access_hash = privateCall.access_hash;
+			ConnectionsManager.getInstance(currentAccount).sendRequest(acceptXmpp, (response, error) -> AndroidUtilities.runOnUIThread(() -> {
+				if (error != null) {
+					callFailed();
+				}
+			}), ConnectionsManager.RequestFlagFailOnServerErrorsExceptFloodWait);
+			return;
+		}
 		final MessagesStorage messagesStorage = MessagesStorage.getInstance(currentAccount);
 		TLRPC.TL_messages_getDhConfig req = new TLRPC.TL_messages_getDhConfig();
 		req.random_length = 256;

@@ -1075,6 +1075,27 @@ public class JingleRtpConnection extends AbstractJingleConnection
         }
     }
 
+    /**
+     * The DTLS fingerprints of both sides, initiator first. Both users get the same list, so the
+     * embedding app can turn it into a code they compare to rule out a man in the middle.
+     */
+    public synchronized List<String> getDtlsFingerprints() {
+        final var fingerprints = new java.util.ArrayList<String>();
+        for (final RtpContentMap map :
+                Arrays.asList(this.initiatorRtpContentMap, this.responderRtpContentMap)) {
+            if (map == null) {
+                continue;
+            }
+            for (final var content : map.contents.values()) {
+                final var fingerprint = content.transport.getFingerprint();
+                if (fingerprint != null && fingerprint.getContent() != null) {
+                    fingerprints.add(fingerprint.getContent());
+                }
+            }
+        }
+        return fingerprints;
+    }
+
     private RtpContentMap getRemoteContentMap() {
         return isInitiator() ? this.responderRtpContentMap : this.initiatorRtpContentMap;
     }

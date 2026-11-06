@@ -14,7 +14,10 @@ import org.telegram.tgnet.ConnectionsManager;
 import org.telegram.tgnet.TLObject;
 import org.telegram.tgnet.TLRPC;
 import org.telegram.tgnet.Vector;
+import org.telegram.messenger.voip.NativeInstance;
 import org.telegram.tgnet.tl.TL_account;
+import org.telegram.tgnet.tl.TL_phone;
+import org.webrtc.VideoSink;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -181,8 +184,45 @@ public final class CogramGateway {
             return new TLRPC.TL_boolTrue();
         } else if (request instanceof TLRPC.TL_photos_uploadProfilePhoto) {
             return uploadProfilePhoto((TLRPC.TL_photos_uploadProfilePhoto) request);
+        } else if (request instanceof TL_phone.requestCall || request instanceof TL_phone.acceptCall
+                || request instanceof TL_phone.receivedCall || request instanceof TL_phone.discardCall) {
+            return call(request);
+        } else if (request instanceof TL_phone.setCallRating) {
+            return new TLRPC.TL_updates();
+        } else if (request instanceof TL_phone.saveCallDebug || request instanceof TL_phone.sendSignalingData) {
+            return new TLRPC.TL_boolTrue();
         }
         return null;
+    }
+
+    private TLObject call(TLObject request) {
+        XmppCalls calls = backend.calls();
+        if (calls == null) {
+            return null;
+        }
+        if (request instanceof TL_phone.requestCall) {
+            TL_phone.requestCall requestCall = (TL_phone.requestCall) request;
+            return calls.requestCall(userId(requestCall.user_id), requestCall.video);
+        } else if (request instanceof TL_phone.acceptCall) {
+            return calls.acceptCall(((TL_phone.acceptCall) request).peer.id);
+        } else if (request instanceof TL_phone.receivedCall) {
+            return calls.receivedCall(((TL_phone.receivedCall) request).peer.id) ? new TLRPC.TL_boolTrue() : null;
+        }
+        TL_phone.discardCall discard = (TL_phone.discardCall) request;
+        calls.discardCall(discard.peer.id, discard.reason);
+        return new TLRPC.TL_updates();
+    }
+
+    /** Creates the engine for a call Telegram's call service is starting, or null when the call is gone. */
+    public NativeInstance createCallInstance(long callId, VideoSink remoteSink) {
+        GatewayBackend current = backend;
+        XmppCalls calls = current == null ? null : current.calls();
+        return calls == null ? null : calls.createInstance(callId, remoteSink);
+    }
+
+    /** The key behind the emoji Telegram shows, so both users can compare their calls' encryption. */
+    public static byte[] callEncryptionKey(NativeInstance instance) {
+        return instance instanceof XmppCallInstance ? ((XmppCallInstance) instance).encryptionKey() : null;
     }
 
     private long userId(TLRPC.InputUser inputUser) {

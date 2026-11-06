@@ -105,13 +105,13 @@ public class NativeInstance {
         onRemoteMediaStateUpdatedListener = listener;
     }
 
-    private void onStateUpdated(int state/*, boolean */) {
+    protected void onStateUpdated(int state/*, boolean */) {
         if (onStateUpdatedListener != null) {
             onStateUpdatedListener.onStateUpdated(state, false);
         }
     }
 
-    private void onSignalBarsUpdated(int signalBars) {
+    protected void onSignalBarsUpdated(int signalBars) {
         if (onSignalBarsUpdatedListener != null) {
             onSignalBarsUpdatedListener.onSignalBarsUpdated(signalBars);
         }
@@ -123,7 +123,7 @@ public class NativeInstance {
         }
     }
 
-    private void onRemoteMediaStateUpdated(int audioState, int videoState) {
+    protected void onRemoteMediaStateUpdated(int audioState, int videoState) {
         if (onRemoteMediaStateUpdatedListener != null) {
             onRemoteMediaStateUpdatedListener.onMediaStateUpdated(audioState, videoState);
         }

@@ -15,6 +15,7 @@ import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.SettableFuture;
 import eu.siacs.conversations.Config;
+import eu.siacs.conversations.services.ExternalCallUi;
 import eu.siacs.conversations.services.XmppConnectionService;
 import eu.siacs.conversations.xmpp.manager.JingleManager;
 import java.util.Collection;
@@ -236,12 +237,16 @@ public class WebRTCWrapper {
             PeerConnectionFactory.initialize(
                     PeerConnectionFactory.InitializationOptions.builder(service)
                             .setFieldTrials("WebRTC-BindUsingInterfaceName/Enabled/")
+                            // WebRTC is built into the embedding app's native library, which is
+                            // already loaded, so there is no separate library to load here.
+                            .setNativeLibraryLoader(name -> true)
                             .createInitializationOptions());
         } catch (final UnsatisfiedLinkError e) {
             throw new InitializationException("Unable to initialize PeerConnectionFactory", e);
         }
         try {
-            this.eglBase = EglBase.create();
+            final var sharedContext = ExternalCallUi.sharedEglContext();
+            this.eglBase = sharedContext == null ? EglBase.create() : EglBase.create(sharedContext);
         } catch (final RuntimeException e) {
             throw new InitializationException("Unable to create EGL base", e);
         }

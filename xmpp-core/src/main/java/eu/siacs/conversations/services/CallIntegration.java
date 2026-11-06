@@ -364,6 +364,9 @@ public class CallIntegration extends Connection {
     @Override
     public void onStateChanged(final int state) {
         Log.d(Config.LOGTAG, "onStateChanged(" + state + ")");
+        if (ExternalCallUi.isEnabled()) {
+            return;
+        }
         if (notSelfManaged(context)) {
             if (state == STATE_DIALING) {
                 requireAppRtcAudioManager().startRingBack();
@@ -444,6 +447,9 @@ public class CallIntegration extends Connection {
     }
 
     private void startTone(final int volume, final int toneType, final int durationMs) {
+        if (ExternalCallUi.isEnabled()) {
+            return;
+        }
         final ToneGenerator toneGenerator;
         try {
             toneGenerator = new ToneGenerator(AudioManager.STREAM_VOICE_CALL, volume);
@@ -549,6 +555,9 @@ public class CallIntegration extends Connection {
 
     public void startAudioRouting() {
         this.isAudioRoutingRequested = true;
+        if (ExternalCallUi.isEnabled()) {
+            return;
+        }
         if (selfManaged()) {
             final var devices = getAudioDevices();
             if (devices.isEmpty()) {

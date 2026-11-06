@@ -80,4 +80,9 @@ public interface GatewayBackend {
     default TLRPC.Photo updatePhoto(byte[] image) {
         return null;
     }
+
+    /** Returns the engine's call handling, or null when the backend has no calls. */
+    default XmppCalls calls() {
+        return null;
+    }
 }
