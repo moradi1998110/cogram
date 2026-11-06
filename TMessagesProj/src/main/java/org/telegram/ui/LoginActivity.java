@@ -114,6 +114,8 @@ import com.google.android.gms.tasks.Task;
 import org.json.JSONException;
 import org.json.JSONObject;
 import org.telegram.PhoneFormat.PhoneFormat;
+import org.telegram.cogram.CogramGateway;
+import org.telegram.cogram.CogramSignIn;
 import org.telegram.messenger.AccountInstance;
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.ApplicationLoader;
@@ -253,7 +255,8 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
             VIEW_CODE_FRAGMENT_SMS = 15,
             VIEW_CODE_WORD = 16,
             VIEW_CODE_PHRASE = 17,
-            VIEW_PAY = 18;
+            VIEW_PAY = 18,
+            VIEW_USERNAME = 19;
 
     public final static int COUNTRY_STATE_NOT_SET_OR_VALID = 0,
             COUNTRY_STATE_EMPTY = 1,
@@ -301,7 +304,8 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
             VIEW_CODE_FRAGMENT_SMS,
             VIEW_CODE_WORD,
             VIEW_CODE_PHRASE,
-            VIEW_PAY
+            VIEW_PAY,
+            VIEW_USERNAME
     })
     private @interface ViewNumber {}
 
@@ -314,7 +318,7 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
 
     @ViewNumber
     private int currentViewNum;
-    private final SlideView[] views = new SlideView[19];
+    private final SlideView[] views = new SlideView[20];
     private CustomPhoneKeyboardView keyboardView;
     private ValueAnimator keyboardAnimator;
     private boolean paid;
@@ -680,6 +684,7 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
         views[VIEW_CODE_WORD] = new LoginActivityPhraseView(context, AUTH_TYPE_WORD);
         views[VIEW_CODE_PHRASE] = new LoginActivityPhraseView(context, AUTH_TYPE_PHRASE);
         views[VIEW_PAY] = new LoginPayView(context);
+        views[VIEW_USERNAME] = new LoginActivityUsernameView(context);
 
         for (int a = 0; a < views.length; a++) {
             views[a].setVisibility(a == 0 ? View.VISIBLE : View.GONE);
@@ -1102,8 +1107,9 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
             return true;
         } else if (currentViewNum == VIEW_PASSWORD) {
             if (invoked) {
+                boolean xmpp = ((LoginActivityPasswordView) views[currentViewNum]).xmppAddress != null;
                 views[currentViewNum].onBackPressed(true);
-                setPage(VIEW_PHONE_INPUT, true, null, true);
+                setPage(xmpp ? VIEW_USERNAME : VIEW_PHONE_INPUT, true, null, true);
             }
         } else if (currentViewNum == VIEW_RECOVER || currentViewNum == VIEW_RESET_WAIT) {
             if (invoked) {
@@ -1495,7 +1501,7 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
     }
 
     public void setPage(@ViewNumber int page, boolean animated, Bundle params, boolean back) {
-        boolean needFloatingButton = page == VIEW_PHONE_INPUT || page == VIEW_REGISTER || page == VIEW_PASSWORD ||
+        boolean needFloatingButton = page == VIEW_PHONE_INPUT || page == VIEW_USERNAME || page == VIEW_REGISTER || page == VIEW_PASSWORD ||
                 page == VIEW_NEW_PASSWORD_STAGE_1 || page == VIEW_NEW_PASSWORD_STAGE_2 || page == VIEW_ADD_EMAIL || page == VIEW_CODE_PHRASE || page == VIEW_CODE_WORD;
         if (page == currentViewNum) {
             animated = false;
@@ -1852,6 +1858,7 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
         private ImageView chevronRight;
         private CheckBoxCell syncContactsBox;
         private CheckBoxCell testBackendCheckBox;
+        private TextView usernameLoginView;
 
         @CountryState
         private int countryState = COUNTRY_STATE_NOT_SET_OR_VALID;
@@ -2340,6 +2347,18 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
             });
 
             int bottomMargin = 72;
+            // XMPP accounts are addressed by user@server, so the phone page offers that as the other way in.
+            if (CogramGateway.ENABLED && activityMode == MODE_LOGIN) {
+                usernameLoginView = new TextView(context);
+                usernameLoginView.setText(getString(R.string.PhogramLoginByUsername));
+                usernameLoginView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 15);
+                usernameLoginView.setGravity(Gravity.CENTER);
+                usernameLoginView.setLineSpacing(dp(2), 1.0f);
+                usernameLoginView.setPadding(dp(16), dp(12), dp(16), dp(12));
+                usernameLoginView.setOnClickListener(v -> setPage(VIEW_USERNAME, true, new Bundle(), false));
+                addView(usernameLoginView, LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, Gravity.CENTER_HORIZONTAL, 16, 12, 16, 0));
+                bottomMargin -= 24;
+            }
             if (newAccount && activityMode == MODE_LOGIN) {
                 syncContactsBox = new CheckBoxCell(context, 2);
                 syncContactsBox.setText(getString("SyncContacts", R.string.SyncContacts), "", syncContacts, false);
@@ -2360,7 +2379,7 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
                 });
             }
 
-            final boolean allowTestBackend = (BuildVars.DEBUG_VERSION || TEST_BACKEND_IN_STORE && !BuildConfig.BUNDLE) || getConnectionsManager().isTestBackend();
+            final boolean allowTestBackend = !CogramGateway.ENABLED && ((BuildVars.DEBUG_VERSION || TEST_BACKEND_IN_STORE && !BuildConfig.BUNDLE) || getConnectionsManager().isTestBackend());
             if (allowTestBackend && activityMode == MODE_LOGIN) {
                 testBackendCheckBox = new CheckBoxCell(context, 2);
                 testBackendCheckBox.setText(getString(R.string.DebugTestBackend), "", testBackend = getConnectionsManager().isTestBackend(), false);
@@ -2568,6 +2587,9 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
             chevronRight.setBackground(Theme.createSelectorDrawable(getThemedColor(Theme.key_listSelector), 1));
 
             plusTextView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText));
+            if (usernameLoginView != null) {
+                usernameLoginView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlueText4));
+            }
 
             codeField.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText));
             codeField.setCursorColor(Theme.getColor(Theme.key_windowBackgroundWhiteInputFieldActivated));
@@ -3037,6 +3059,11 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
                 changePhoneCode.settings = settings;
                 req = changePhoneCode;
             } else {
+                if (CogramGateway.ENABLED) {
+                    // No server verifies phone numbers yet, so the phone page stays as Telegram's and points to the username sign-in.
+                    needShowAlert(getString(R.string.AppName), getString(R.string.PhogramPhoneLoginUnavailable));
+                    return;
+                }
                 ConnectionsManager.getInstance(currentAccount).cleanup(false);
 
                 TLRPC.TL_auth_sendCode sendCode = new TLRPC.TL_auth_sendCode();
@@ -5232,6 +5259,9 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
         private String requestPhone;
         private String phoneHash;
         private String phoneCode;
+        // Set when the page asks for an XMPP account's password instead of Telegram's two-step password.
+        private String xmppAddress;
+        private CogramSignIn xmppSignIn;
 
         private OutlineTextContainerView outlineCodeField;
 
@@ -5304,6 +5334,15 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
 
             cancelButton.setOnClickListener(view -> {
                 if (radialProgressView.getTag() != null) {
+                    return;
+                }
+                if (xmppAddress != null) {
+                    AndroidUtilities.hideKeyboard(codeField);
+                    new AlertDialog.Builder(context)
+                            .setTitle(getString(R.string.RestorePasswordNoEmailTitle))
+                            .setMessage(getString(R.string.PhogramForgotPasswordText))
+                            .setPositiveButton(getString(R.string.Close), null)
+                            .show();
                     return;
                 }
                 if (currentPassword.has_recovery) {
@@ -5390,6 +5429,56 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
         @Override
         public void onCancelPressed() {
             nextPressed = false;
+            cancelXmppSignIn();
+        }
+
+        private void cancelXmppSignIn() {
+            if (xmppSignIn != null) {
+                xmppSignIn.cancel();
+                xmppSignIn = null;
+            }
+        }
+
+        private void signInToXmpp() {
+            String password = codeField.getText().toString();
+            if (password.length() == 0) {
+                onPasscodeError(false);
+                return;
+            }
+            nextPressed = true;
+            needShowProgress(0);
+            xmppSignIn = CogramSignIn.start(currentAccount, xmppAddress, password, new CogramSignIn.Callback() {
+                @Override
+                public void onSignedIn(TLRPC.TL_auth_authorization authorization) {
+                    xmppSignIn = null;
+                    nextPressed = false;
+                    showDoneButton(false, true);
+                    postDelayed(() -> {
+                        needHideProgress(false, false);
+                        AndroidUtilities.hideKeyboard(codeField);
+                        onAuthSuccess(authorization);
+                        ConnectionsManager.onSessionCreated(currentAccount);
+                    }, 150);
+                }
+
+                @Override
+                public void onWrongPassword() {
+                    xmppSignIn = null;
+                    nextPressed = false;
+                    needHideProgress(false);
+                    onPasscodeError(true);
+                }
+
+                @Override
+                public void onFailed(String state) {
+                    xmppSignIn = null;
+                    nextPressed = false;
+                    needHideProgress(false);
+                    boolean noServer = "SERVER_NOT_FOUND".equals(state) || "HOST_UNKNOWN".equals(state);
+                    String text = noServer ? getString(R.string.PhogramServerNotFound) : formatString(R.string.PhogramSignInFailed, state);
+                    needShowAlert(getString(R.string.AppName), text);
+                }
+            });
         }
 
         @Override
@@ -5412,6 +5501,8 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
             requestPhone = params.getString("phoneFormated");
             phoneHash = params.getString("phoneHash");
             phoneCode = params.getString("code");
+            xmppAddress = params.getString("xmppAddress");
+            confirmTextView.setText(xmppAddress != null ? formatString(R.string.PhogramPasswordText, xmppAddress) : getString(R.string.LoginPasswordTextShort));
 
             if (currentPassword != null && !TextUtils.isEmpty(currentPassword.hint)) {
                 codeField.setHint(currentPassword.hint);
@@ -5433,6 +5524,11 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
         @Override
         public void onNextPressed(String code) {
             if (nextPressed) {
+                return;
+            }
+
+            if (xmppAddress != null) {
+                signInToXmpp();
                 return;
             }
 
@@ -5523,6 +5619,7 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
         @Override
         public boolean onBackPressed(boolean force) {
             nextPressed = false;
+            cancelXmppSignIn();
             needHideProgress(true);
             currentParams = null;
             return true;
@@ -5562,6 +5659,138 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
             String code = bundle.getString("passview_code");
             if (code != null) {
                 codeField.setText(code);
+            }
+        }
+    }
+
+    /** Asks for the user@server address of an XMPP account, laid out like the phone page. */
+    public class LoginActivityUsernameView extends SlideView {
+
+        private final TextView titleView;
+        private final TextView subtitleView;
+        private final OutlineTextContainerView outlineAddressField;
+        private final EditTextBoldCursor addressField;
+        private final TextView phoneLoginView;
+
+        public LoginActivityUsernameView(Context context) {
+            super(context);
+
+            setOrientation(VERTICAL);
+            setGravity(Gravity.CENTER);
+
+            titleView = new TextView(context);
+            titleView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 18);
+            titleView.setTypeface(AndroidUtilities.bold());
+            titleView.setText(getString(R.string.PhogramUsernameTitle));
+            titleView.setGravity(Gravity.CENTER);
+            titleView.setLineSpacing(dp(2), 1.0f);
+            addView(titleView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.CENTER_HORIZONTAL, 32, 0, 32, 0));
+
+            subtitleView = new TextView(context);
+            subtitleView.setText(getString(R.string.PhogramUsernameText));
+            subtitleView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 14);
+            subtitleView.setGravity(Gravity.CENTER);
+            subtitleView.setLineSpacing(dp(2), 1.0f);
+            addView(subtitleView, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.CENTER_HORIZONTAL, 32, 8, 32, 0));
+
+            outlineAddressField = new OutlineTextContainerView(context);
+            outlineAddressField.setText(getString(R.string.PhogramUsernameField));
+            addressField = new EditTextBoldCursor(context);
+            addressField.setCursorSize(dp(20));
+            addressField.setCursorWidth(1.5f);
+            addressField.setBackground(null);
+            addressField.setImeOptions(EditorInfo.IME_ACTION_NEXT | EditorInfo.IME_FLAG_NO_EXTRACT_UI);
+            addressField.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 18);
+            addressField.setMaxLines(1);
+            int padding = dp(16);
+            addressField.setPadding(padding, padding, padding, padding);
+            addressField.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS);
+            addressField.setTypeface(Typeface.DEFAULT);
+            addressField.setTextDirection(TEXT_DIRECTION_LTR);
+            addressField.setGravity(LocaleController.isRTL ? Gravity.RIGHT : Gravity.LEFT);
+            addressField.setOnFocusChangeListener((v, hasFocus) -> outlineAddressField.animateSelection(hasFocus ? 1f : 0f));
+            outlineAddressField.attachEditText(addressField);
+            outlineAddressField.addView(addressField, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.TOP));
+            addressField.setOnEditorActionListener((textView, i, keyEvent) -> {
+                if (i == EditorInfo.IME_ACTION_NEXT) {
+                    onNextPressed(null);
+                    return true;
+                }
+                return false;
+            });
+            addView(outlineAddressField, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.CENTER_HORIZONTAL, 16, 32, 16, 0));
+
+            phoneLoginView = new TextView(context);
+            phoneLoginView.setText(getString(R.string.PhogramLoginByPhone));
+            phoneLoginView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 15);
+            phoneLoginView.setGravity(Gravity.CENTER);
+            phoneLoginView.setLineSpacing(dp(2), 1.0f);
+            phoneLoginView.setPadding(dp(16), dp(12), dp(16), dp(12));
+            phoneLoginView.setOnClickListener(v -> setPage(VIEW_PHONE_INPUT, true, null, true));
+            addView(phoneLoginView, LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, Gravity.CENTER_HORIZONTAL, 16, 12, 16, 0));
+        }
+
+        @Override
+        public void updateColors() {
+            titleView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText));
+            subtitleView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText6));
+            addressField.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText));
+            addressField.setCursorColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText));
+            addressField.setHintTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteHintText));
+            phoneLoginView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlueText4));
+            outlineAddressField.updateColor();
+        }
+
+        @Override
+        public String getHeaderName() {
+            return getString(R.string.PhogramUsernameTitle);
+        }
+
+        @Override
+        public boolean needBackButton() {
+            return true;
+        }
+
+        @Override
+        public boolean onBackPressed(boolean force) {
+            return true;
+        }
+
+        @Override
+        public void onNextPressed(String code) {
+            String address = CogramSignIn.parseAddress(addressField.getText().toString());
+            if (address == null) {
+                onFieldError(outlineAddressField, true);
+                return;
+            }
+            Bundle params = new Bundle();
+            params.putString("xmppAddress", address);
+            setPage(VIEW_PASSWORD, true, params, false);
+        }
+
+        @Override
+        public void onShow() {
+            super.onShow();
+            AndroidUtilities.runOnUIThread(() -> {
+                addressField.requestFocus();
+                addressField.setSelection(addressField.length());
+                showKeyboard(addressField);
+            }, SHOW_DELAY);
+        }
+
+        @Override
+        public void saveStateParams(Bundle bundle) {
+            String address = addressField.getText().toString();
+            if (address.length() != 0) {
+                bundle.putString("usernameview_address", address);
+            }
+        }
+
+        @Override
+        public void restoreStateParams(Bundle bundle) {
+            String address = bundle.getString("usernameview_address");
+            if (address != null) {
+                addressField.setText(address);
             }
         }
     }

@@ -41,4 +41,8 @@ public interface GatewayBackend {
     default List<TLRPC.Message> messagesAfter(int pts) {
         return Collections.emptyList();
     }
+
+    /** Removes the account and everything kept for it, after the user logs out. */
+    default void signOut() {
+    }
 }

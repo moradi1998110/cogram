@@ -1,9 +1,11 @@
 #!/bin/bash
-# Starts the app on the emulator, sends a message and collects what happened. It never fails
-# on a crash, because the logs are what the run is for. Tap positions assume the 320x640 screen.
+# Starts the app on the emulator, signs in through Telegram's login pages, sends a message and
+# collects what happened. It never fails on a crash, because the logs are what the run is for.
+# Buttons are found by their text in the UI dump, and the chat taps assume the 320x640 screen.
 PACKAGE=app.phogram
 OUT=smoke
-LOGIN_SECONDS=30
+INTRO_SECONDS=30
+PAGE_SECONDS=4
 SIGN_IN_SECONDS=75
 START_SECONDS=45
 ECHO_SECONDS=8
@@ -13,28 +15,59 @@ mkdir -p "$OUT"
 adb install -r -t -g dist/cogram-x86_64-debug.apk
 adb logcat -c
 
-# First run as a phone sees it: the launcher icon with no account leads to the login screen.
+# Taps the centre of the first view whose UI dump attributes match the pattern.
+tap_view() {
+  local pattern="$1"
+  adb shell uiautomator dump /sdcard/ui.xml > /dev/null || true
+  local bounds
+  bounds=$(adb exec-out cat /sdcard/ui.xml | grep -oE "<node [^>]*${pattern}[^>]*>" | head -1 \
+    | grep -oE 'bounds="\[[0-9]+,[0-9]+\]\[[0-9]+,[0-9]+\]"' | grep -oE '[0-9]+' | tr '\n' ' ')
+  set -- $bounds
+  if [ $# -ne 4 ]; then
+    echo "No view matches $pattern" | tee -a "$OUT/steps.txt"
+    return 1
+  fi
+  echo "Tap $pattern" >> "$OUT/steps.txt"
+  adb shell input tap $(( ($1 + $3) / 2 )) $(( ($2 + $4) / 2 ))
+}
+
+dump_screen() {
+  adb exec-out screencap -p > "$OUT/$1.png" || true
+  adb shell uiautomator dump /sdcard/ui.xml > /dev/null || true
+  adb exec-out cat /sdcard/ui.xml > "$OUT/$1.xml" || true
+}
+
+# First run as a phone sees it: the launcher icon with no account opens Telegram's intro.
 adb shell am start -n "$PACKAGE/org.telegram.messenger.DefaultIcon"
-sleep "$LOGIN_SECONDS"
-adb exec-out screencap -p > "$OUT/0-login.png" || true
-adb shell pidof "$PACKAGE" > "$OUT/pid-login.txt" || true
-adb shell dumpsys activity activities | grep -m1 -E "topResumedActivity|mResumedActivity" > "$OUT/top-login.txt" || true
+sleep "$INTRO_SECONDS"
+dump_screen 0-intro
+adb shell pidof "$PACKAGE" > "$OUT/pid-intro.txt" || true
+
+tap_view 'text="Start Messaging"'
+sleep "$PAGE_SECONDS"
+dump_screen 0-login
+
+tap_view 'text="Log in with username"'
+sleep "$PAGE_SECONDS"
+dump_screen 0-username
 
 # A failed sign-in starts the engine for real. This address cannot resolve, so nothing leaves the runner.
 adb shell input text smoke@cogram.invalid
-adb shell input keyevent 61
+tap_view 'content-desc="Done"'
+sleep "$PAGE_SECONDS"
+dump_screen 0-password
 adb shell input text smoke-test
-adb shell input keyevent 61
-adb shell input keyevent 66
+tap_view 'content-desc="Done"'
 sleep "$SIGN_IN_SECONDS"
-adb exec-out screencap -p > "$OUT/0-sign-in.png" || true
+dump_screen 0-sign-in
+cp "$OUT/0-sign-in.xml" "$OUT/sign-in.xml"
 adb shell pidof "$PACKAGE" > "$OUT/pid-sign-in.txt" || true
-adb shell uiautomator dump /sdcard/sign-in.xml > /dev/null || true
-adb exec-out cat /sdcard/sign-in.xml > "$OUT/sign-in.xml" || true
 adb logcat -d -v threadtime > "$OUT/logcat-sign-in.txt" || true
 adb shell am force-stop "$PACKAGE"
 
-adb shell am start -n "$PACKAGE/org.telegram.cogram.CogramLoginActivity" --ez demo true
+# The demo backend serves a chat without a server. Its switch is a preference the release app never writes.
+adb shell run-as "$PACKAGE" sh -c 'mkdir -p shared_prefs && echo "<?xml version=\"1.0\" encoding=\"utf-8\"?><map><boolean name=\"demo\" value=\"true\" /></map>" > shared_prefs/cogram_gateway.xml' || true
+adb shell am start -n "$PACKAGE/org.telegram.messenger.DefaultIcon"
 sleep "$START_SECONDS"
 adb exec-out screencap -p > "$OUT/1-chats.png" || true
 

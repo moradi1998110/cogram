@@ -440,4 +440,18 @@ final class XmppBackend implements GatewayBackend {
     public synchronized int pts() {
         return pts;
     }
+
+    @Override
+    public synchronized void signOut() {
+        listener = null;
+        if (service != null) {
+            for (Account account : new ArrayList<>(service.getAccounts())) {
+                service.deleteAccount(account);
+            }
+            context.unbindService(connection);
+            service = null;
+        }
+        preferences.edit().clear().apply();
+        ids.erase(context);
+    }
 }

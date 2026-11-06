@@ -1243,4 +1243,14 @@
     <string name="RemindTodayAt">\'ذكّرني اليوم عند\' HH:mm</string>
     <string name="RemindDayAt">\'ذكّرني بتاريخ\' d MMM \'عند\' HH:mm</string>
     <string name="RemindDayYearAt">\'ذكّرني بتاريخ\' d MMM yyyy \'عند\' HH:mm</string>
+    <string name="PhogramLoginByUsername">تسجيل الدخول باسم المستخدم</string>
+    <string name="PhogramLoginByPhone">تسجيل الدخول برقم الهاتف</string>
+    <string name="PhogramUsernameTitle">اسم المستخدم</string>
+    <string name="PhogramUsernameText">أدخل عنوان حسابك مع الخادم،\nمثل name@example.org.</string>
+    <string name="PhogramUsernameField">اسم المستخدم</string>
+    <string name="PhogramPasswordText">أدخل كلمة مرور الحساب %1$s.</string>
+    <string name="PhogramPhoneLoginUnavailable">تسجيل الدخول برقم الهاتف غير متاح حالياً. يرجى تسجيل الدخول باسم المستخدم.</string>
+    <string name="PhogramForgotPasswordText">لا يستطيع إعادة تعيين كلمة المرور إلا مسؤول الخادم الذي عليه حسابك.</string>
+    <string name="PhogramServerNotFound">تعذّر العثور على هذا الخادم. تحقق من العنوان ومن اتصالك بالإنترنت.</string>
+    <string name="PhogramSignInFailed">تعذّر تسجيل الدخول (%1$s).</string>
 </resources>

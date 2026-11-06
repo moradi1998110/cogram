@@ -90,8 +90,6 @@ import com.google.android.gms.common.api.Status;
 import com.google.common.primitives.Longs;
 
 import org.telegram.PhoneFormat.PhoneFormat;
-import org.telegram.cogram.CogramGateway;
-import org.telegram.cogram.CogramLoginActivity;
 import org.telegram.messenger.AccountInstance;
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.AnimationNotificationsLocker;
@@ -392,17 +390,9 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
 
     private FrameMetricsOverlayView frameMetricsOverlayView;
     // private RefreshRateController refreshRateController;
-    private boolean redirectedToLogin;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
-        if (CogramGateway.needsLogin()) {
-            redirectedToLogin = true;
-            super.onCreate(savedInstanceState);
-            startActivity(new Intent(this, CogramLoginActivity.class));
-            finish();
-            return;
-        }
         isActive = true;
         activeInstanceCount++;
         if (BuildVars.DEBUG_VERSION) {
@@ -6962,10 +6952,6 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
 
     @Override
     protected void onDestroy() {
-        if (redirectedToLogin) {
-            super.onDestroy();
-            return;
-        }
         GramWalletStorageAuth.onActivityDestroyed(this);
         isActive = false;
         activeInstanceCount--;

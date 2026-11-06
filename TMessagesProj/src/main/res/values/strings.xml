@@ -11630,4 +11630,14 @@
     <string name="NoPaidMessagesTokenUsed">un1 used your QR code and can message you for free</string>
     <string name="NoPaidMessagesTokenUsedOut">You used the QR code of un1 and can message them for free</string>
     <string name="NoPaidMessagesTokenImported">You can now message **%1$s** for free.</string>
+    <string name="PhogramLoginByUsername">Log in with username</string>
+    <string name="PhogramLoginByPhone">Log in with phone number</string>
+    <string name="PhogramUsernameTitle">Your username</string>
+    <string name="PhogramUsernameText">Enter your account address with its server, for example name@example.org.</string>
+    <string name="PhogramUsernameField">Username</string>
+    <string name="PhogramPasswordText">Enter the password of %1$s.</string>
+    <string name="PhogramPhoneLoginUnavailable">Logging in with a phone number is not available yet. Please log in with your username.</string>
+    <string name="PhogramForgotPasswordText">Only the administrator of your server can reset your password.</string>
+    <string name="PhogramServerNotFound">Could not find this server. Check the address and your connection.</string>
+    <string name="PhogramSignInFailed">Could not log in (%1$s).</string>
 </resources>

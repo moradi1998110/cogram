@@ -29,6 +29,14 @@ final class XmppIdMap extends SQLiteOpenHelper {
         super(context, DATABASE, null, 2);
     }
 
+    /** Forgets every id, so the next account starts with fresh message ids and pts. */
+    void erase(Context context) {
+        close();
+        peerIds.clear();
+        messageIds.clear();
+        context.deleteDatabase(DATABASE);
+    }
+
     @Override
     public void onCreate(SQLiteDatabase db) {
         db.execSQL("CREATE TABLE peers (id INTEGER PRIMARY KEY AUTOINCREMENT, jid TEXT UNIQUE NOT NULL)");

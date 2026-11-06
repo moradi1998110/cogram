@@ -207,11 +207,6 @@
         </activity-alias>
 
         <activity
-            android:name="org.telegram.cogram.CogramLoginActivity"
-            android:theme="@android:style/Theme.DeviceDefault"
-            android:exported="true" />
-
-        <activity
             android:name="org.telegram.cogram.CrashReportActivity"
             android:label="Phogram Log"
             android:process=":report"

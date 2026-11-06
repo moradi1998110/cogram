@@ -47,12 +47,9 @@ public final class CogramGateway {
         return ApplicationLoader.applicationContext.getSharedPreferences(PREFERENCES, Activity.MODE_PRIVATE);
     }
 
+    /** The emulator check turns the demo on by writing this preference, so the app needs no server. */
     private static boolean isDemoSelected() {
         return preferences().getBoolean(KEY_DEMO, false);
-    }
-
-    static void selectDemo() {
-        preferences().edit().putBoolean(KEY_DEMO, true).apply();
     }
 
     public static boolean needsLogin() {
@@ -90,13 +87,20 @@ public final class CogramGateway {
         }
     }
 
-    /** Connects the backend after the login screen, which runs before the app has a signed-in user. */
-    void onSignedIn() {
+    /** Connects the account just signed in to, and returns it as the authorization Telegram's login screen expects. */
+    TLRPC.TL_auth_authorization completeSignIn() {
         selectBackend();
-        UserConfig userConfig = UserConfig.getInstance(account);
-        userConfig.loadConfig();
-        ensureSignedIn(userConfig);
-        ConnectionsManager.onSessionCreated(account);
+        TLRPC.TL_auth_authorization authorization = new TLRPC.TL_auth_authorization();
+        authorization.user = backend.selfUser();
+        return authorization;
+    }
+
+    private TLObject signOut() {
+        GatewayBackend current = backend;
+        backend = null;
+        current.signOut();
+        preferences().edit().remove(KEY_DEMO).apply();
+        return new TLRPC.TL_auth_loggedOut();
     }
 
     public void dispatch(TLObject request, Reply reply) {
@@ -148,6 +152,8 @@ public final class CogramGateway {
             return backend.markRead(read.peer.user_id, read.max_id);
         } else if (request instanceof TLRPC.TL_messages_setTyping) {
             return new TLRPC.TL_boolTrue();
+        } else if (request instanceof TLRPC.TL_auth_logOut) {
+            return signOut();
         }
         return null;
     }
