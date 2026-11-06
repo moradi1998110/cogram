@@ -40,8 +40,8 @@ public class BuildVars {
     // You can use this flag to disable Google Play Billing (If you're making fork and want it to be in Google Play)
     public static boolean IS_BILLING_UNAVAILABLE = false;
 
-    // works only on official app ids, disable on your forks
-    public static boolean SUPPORTS_PASSKEYS = true;
+    // Passkeys sign in to Telegram's servers, which Phogram does not use.
+    public static boolean SUPPORTS_PASSKEYS = false;
 
     static {
         if (ApplicationLoader.applicationContext != null) {

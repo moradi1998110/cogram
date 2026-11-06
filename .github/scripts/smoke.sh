@@ -66,7 +66,13 @@ adb logcat -d -v threadtime > "$OUT/logcat-sign-in.txt" || true
 adb shell am force-stop "$PACKAGE"
 
 # The demo backend serves a chat without a server. Its switch is a preference the release app never writes.
-adb shell run-as "$PACKAGE" sh -c 'mkdir -p shared_prefs && echo "<?xml version=\"1.0\" encoding=\"utf-8\"?><map><boolean name=\"demo\" value=\"true\" /></map>" > shared_prefs/cogram_gateway.xml' || true
+# adb joins its arguments into one device command, so the file is pushed rather than echoed through quotes.
+echo '<?xml version="1.0" encoding="utf-8"?><map><boolean name="demo" value="true" /></map>' > "$OUT/cogram_gateway.xml"
+adb push "$OUT/cogram_gateway.xml" /data/local/tmp/cogram_gateway.xml > /dev/null || true
+adb shell chmod 644 /data/local/tmp/cogram_gateway.xml || true
+adb shell run-as "$PACKAGE" mkdir -p shared_prefs || true
+adb shell run-as "$PACKAGE" cp /data/local/tmp/cogram_gateway.xml shared_prefs/cogram_gateway.xml || true
+adb shell run-as "$PACKAGE" ls -l shared_prefs > "$OUT/prefs.txt" || true
 adb shell am start -n "$PACKAGE/org.telegram.messenger.DefaultIcon"
 sleep "$START_SECONDS"
 adb exec-out screencap -p > "$OUT/1-chats.png" || true

@@ -364,7 +364,8 @@ final class XmppBackend implements GatewayBackend {
             return new TLRPC.TL_userStatusRecently();
         }
         TLRPC.TL_userStatusOffline offline = new TLRPC.TL_userStatusOffline();
-        offline.was_online = lastSeen;
+        // Telegram keeps an offline user's last-seen time in the expires field.
+        offline.expires = lastSeen;
         return offline;
     }
 
