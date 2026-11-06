@@ -17,6 +17,7 @@ jobs:
       CMAKE_CXX_COMPILER_LAUNCHER: ccache
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_NOHASHDIR: 'true'
       CCACHE_COMPILERCHECK: content
       CCACHE_MAXSIZE: 4G
       CCACHE_COMPRESS: 'true'
@@ -60,6 +61,7 @@ jobs:
             echo "org.gradle.parallel=false"
           } >> ~/.gradle/gradle.properties
 
+      # Filled by native-cache.yml on main, because caches saved from tag runs are visible only to that tag.
       - name: Restore native object cache
         uses: actions/cache/restore@v4
         with:
@@ -75,12 +77,9 @@ jobs:
             -Pandroid.injected.testOnly=false \
             :TMessagesProj_App:assembleAfatDebug
 
-      - name: Save native object cache
+      - name: Show cache statistics
         if: always()
-        uses: actions/cache/save@v4
-        with:
-          path: .ccache
-          key: ccache-x86_64-${{ env.NDK_VERSION }}-${{ github.run_id }}
+        run: ccache -s || true
 
       - name: Collect APK
         run: |

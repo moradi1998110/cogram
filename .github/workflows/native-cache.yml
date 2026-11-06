@@ -1,0 +1,89 @@
+name: Native cache
+
+# Tag builds can only restore caches saved on the default branch, so the native object cache is
+# filled here on main. Builds started from tags then compile only the native files that changed.
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'TMessagesProj/jni/**'
+      - 'TMessagesProj/build.gradle'
+      - '.gitmodules'
+      - '.github/workflows/native-cache.yml'
+
+jobs:
+  native:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 340
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - abi: arm64-v8a
+            prefix: ccache-
+          - abi: x86_64
+            prefix: ccache-x86_64-
+    env:
+      NDK_VERSION: 27.2.12479018
+      CMAKE_C_COMPILER_LAUNCHER: ccache
+      CMAKE_CXX_COMPILER_LAUNCHER: ccache
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_NOHASHDIR: 'true'
+      CCACHE_COMPILERCHECK: content
+      CCACHE_MAXSIZE: 4G
+      CCACHE_COMPRESS: 'true'
+    steps:
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/boost
+
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      - name: Install native toolchain
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ccache
+          SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKM" --licenses > /dev/null || true
+          "$SDKM" "platforms;android-36" "build-tools;36.0.0" "ndk;$NDK_VERSION" "cmake;3.22.1" > /dev/null
+
+      - name: Limit Gradle memory for the runner
+        run: |
+          mkdir -p ~/.gradle
+          echo "org.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1g" >> ~/.gradle/gradle.properties
+
+      - name: Restore native object cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .ccache
+          key: ${{ matrix.prefix }}${{ env.NDK_VERSION }}-${{ github.run_id }}
+          restore-keys: ${{ matrix.prefix }}${{ env.NDK_VERSION }}-
+
+      - name: Build the native library
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon --stacktrace \
+            -Pandroid.injected.build.abi=${{ matrix.abi }} \
+            :TMessagesProj:externalNativeBuildDebug
+
+      - name: Show cache statistics
+        if: always()
+        run: ccache -s || true
+
+      - name: Save native object cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .ccache
+          key: ${{ matrix.prefix }}${{ env.NDK_VERSION }}-${{ github.run_id }}

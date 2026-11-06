@@ -13,7 +13,6 @@ permissions:
 jobs:
   apk:
     runs-on: ubuntu-24.04
-    # Leave time before the 6h job limit so the ccache step still saves progress.
     timeout-minutes: 340
     env:
       NDK_VERSION: 27.2.12479018
@@ -21,6 +20,7 @@ jobs:
       CMAKE_CXX_COMPILER_LAUNCHER: ccache
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_NOHASHDIR: 'true'
       CCACHE_COMPILERCHECK: content
       CCACHE_MAXSIZE: 4G
       CCACHE_COMPRESS: 'true'
@@ -64,6 +64,7 @@ jobs:
             echo "org.gradle.parallel=false"
           } >> ~/.gradle/gradle.properties
 
+      # Filled by native-cache.yml on main, because caches saved from tag runs are visible only to that tag.
       - name: Restore native object cache
         uses: actions/cache/restore@v4
         with:
@@ -82,13 +83,6 @@ jobs:
       - name: Show cache statistics
         if: always()
         run: ccache -s || true
-
-      - name: Save native object cache
-        if: always()
-        uses: actions/cache/save@v4
-        with:
-          path: .ccache
-          key: ccache-${{ env.NDK_VERSION }}-${{ github.run_id }}
 
       # The output folder depends on the injected ABI option, so locate the APK instead of naming it.
       - name: Collect APK
