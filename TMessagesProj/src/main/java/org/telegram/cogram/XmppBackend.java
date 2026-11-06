@@ -25,6 +25,7 @@ import java.io.FileOutputStream;
 import java.io.RandomAccessFile;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -41,6 +42,7 @@ import eu.siacs.conversations.entities.Account;
 import eu.siacs.conversations.entities.Contact;
 import eu.siacs.conversations.entities.Conversation;
 import eu.siacs.conversations.entities.Message;
+import eu.siacs.conversations.entities.RtpSessionStatus;
 import eu.siacs.conversations.persistance.DatabaseBackend;
 import eu.siacs.conversations.persistance.FileBackend;
 import eu.siacs.conversations.services.XmppConnectionService;
@@ -65,6 +67,7 @@ final class XmppBackend implements GatewayBackend {
     private static final int AVATAR_PUBLISH_TIMEOUT_SECONDS = 60;
     private static final int AVATAR_ECHO_WAIT_MS = 10000;
     private static final int AVATAR_ECHO_POLL_MS = 200;
+    private static final int CALL_HISTORY_SCAN = 500;
     private static final String PREFERENCE_LAST_SEEN = "seen_";
 
     private final Context context = ApplicationLoader.applicationContext;
@@ -242,6 +245,17 @@ final class XmppBackend implements GatewayBackend {
         pts++;
         savePts();
         ids.setMessagePts(tl.id, pts);
+        if (tl instanceof TLRPC.TL_messageService) {
+            // A short update carries only text, so call entries travel as whole messages.
+            TL_update.TL_updateNewMessage newMessage = new TL_update.TL_updateNewMessage();
+            newMessage.message = tl;
+            newMessage.pts = pts;
+            newMessage.pts_count = 1;
+            TLRPC.TL_updates updates = new TLRPC.TL_updates();
+            updates.updates.add(newMessage);
+            updates.date = now();
+            return updates;
+        }
         TLRPC.TL_updateShortMessage update = new TLRPC.TL_updateShortMessage();
         update.id = tl.id;
         update.user_id = peerId;
@@ -308,8 +322,7 @@ final class XmppBackend implements GatewayBackend {
     }
 
     private static boolean isShown(Message message) {
-        int type = message.getType();
-        return type != Message.TYPE_STATUS && type != Message.TYPE_RTP_SESSION;
+        return message.getType() != Message.TYPE_STATUS;
     }
 
     private static String textOf(Message message) {
@@ -325,6 +338,9 @@ final class XmppBackend implements GatewayBackend {
     }
 
     private TLRPC.Message toTl(Message message, long peerId) {
+        if (message.getType() == Message.TYPE_RTP_SESSION) {
+            return callToTl(message, peerId);
+        }
         boolean out = message.getStatus() != Message.STATUS_RECEIVED;
         TLRPC.TL_message tl = new TLRPC.TL_message();
         tl.id = ids.messageId(message.getUuid(), message.getTimeSent());
@@ -336,6 +352,31 @@ final class XmppBackend implements GatewayBackend {
         tl.dialog_id = peerId;
         tl.media = new TLRPC.TL_messageMediaEmpty();
         tl.flags = TLObject.FLAG_8 | TLObject.FLAG_9;
+        return tl;
+    }
+
+    /** The engine logs each call as a message, which Telegram shows as a call entry in the chat and the calls list. */
+    private TLRPC.Message callToTl(Message message, long peerId) {
+        boolean out = message.getStatus() != Message.STATUS_RECEIVED;
+        RtpSessionStatus status = RtpSessionStatus.of(message.getBody());
+        TLRPC.TL_messageActionPhoneCall action = new TLRPC.TL_messageActionPhoneCall();
+        action.call_id = ids.messageId(message.getUuid(), message.getTimeSent());
+        if (status.successful) {
+            action.duration = (int) (status.duration / 1000);
+            action.flags |= TLObject.FLAG_1;
+        } else {
+            action.reason = new TLRPC.TL_phoneCallDiscardReasonMissed();
+            action.flags |= TLObject.FLAG_0;
+        }
+        TLRPC.TL_messageService tl = new TLRPC.TL_messageService();
+        tl.id = (int) action.call_id;
+        tl.out = out;
+        tl.date = (int) (message.getTimeSent() / 1000);
+        tl.peer_id = peerUser(peerId);
+        tl.from_id = peerUser(out ? selfId : peerId);
+        tl.dialog_id = peerId;
+        tl.action = action;
+        tl.flags = TLObject.FLAG_8;
         return tl;
     }
 
@@ -603,6 +644,27 @@ final class XmppBackend implements GatewayBackend {
     @Override
     public XmppCalls calls() {
         return calls;
+    }
+
+    @Override
+    public synchronized List<TLRPC.Message> callHistory(int offsetId, int limit) {
+        ArrayList<TLRPC.Message> history = new ArrayList<>();
+        if (service == null) {
+            return history;
+        }
+        for (Conversation conversation : singleChats()) {
+            long peerId = peerId(conversation);
+            for (Message message : service.databaseBackend.getMessages(conversation, CALL_HISTORY_SCAN, -1)) {
+                if (message.getType() == Message.TYPE_RTP_SESSION) {
+                    TLRPC.Message call = toTl(message, peerId);
+                    if (offsetId == 0 || call.id < offsetId) {
+                        history.add(call);
+                    }
+                }
+            }
+        }
+        Collections.sort(history, (a, b) -> Integer.compare(b.id, a.id));
+        return history.size() > limit ? new ArrayList<>(history.subList(0, limit)) : history;
     }
 
     @Override

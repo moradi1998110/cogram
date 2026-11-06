@@ -187,6 +187,13 @@ public final class CogramGateway {
         } else if (request instanceof TL_phone.requestCall || request instanceof TL_phone.acceptCall
                 || request instanceof TL_phone.receivedCall || request instanceof TL_phone.discardCall) {
             return call(request);
+        } else if (request instanceof TLRPC.TL_messages_search
+                && ((TLRPC.TL_messages_search) request).filter instanceof TLRPC.TL_inputMessagesFilterPhoneCalls) {
+            TLRPC.TL_messages_search search = (TLRPC.TL_messages_search) request;
+            TLRPC.TL_messages_messages result = new TLRPC.TL_messages_messages();
+            result.messages.addAll(backend.callHistory(search.offset_id, search.limit));
+            result.users.addAll(backend.users());
+            return result;
         } else if (request instanceof TL_phone.setCallRating) {
             return new TLRPC.TL_updates();
         } else if (request instanceof TL_phone.saveCallDebug || request instanceof TL_phone.sendSignalingData) {

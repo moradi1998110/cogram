@@ -81,6 +81,11 @@ public interface GatewayBackend {
         return null;
     }
 
+    /** Returns call entries across all chats, newest first, older than offsetId when it is not zero. */
+    default List<TLRPC.Message> callHistory(int offsetId, int limit) {
+        return Collections.emptyList();
+    }
+
     /** Returns the engine's call handling, or null when the backend has no calls. */
     default XmppCalls calls() {
         return null;
