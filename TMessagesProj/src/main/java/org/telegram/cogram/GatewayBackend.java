@@ -45,4 +45,39 @@ public interface GatewayBackend {
     /** Removes the account and everything kept for it, after the user logs out. */
     default void signOut() {
     }
+
+    default TLRPC.User user(long userId) {
+        for (TLRPC.User user : users()) {
+            if (user.id == userId) {
+                return user;
+            }
+        }
+        return null;
+    }
+
+    /** Returns part of a profile photo's file, or null when the photo is unknown. */
+    default TLRPC.TL_upload_file photoFile(long photoId, long offset, int limit) {
+        return null;
+    }
+
+    default TLRPC.UserFull fullUser(long userId) {
+        TLRPC.TL_userFull full = new TLRPC.TL_userFull();
+        full.id = userId;
+        full.settings = new TLRPC.TL_peerSettings();
+        full.notify_settings = new TLRPC.TL_peerNotifySettings();
+        return full;
+    }
+
+    default List<TLRPC.Photo> userPhotos(long userId) {
+        return Collections.emptyList();
+    }
+
+    default TLRPC.User updateName(String firstName, String lastName) {
+        return selfUser();
+    }
+
+    /** Sets the account's profile photo, and returns it, or null when it could not be published. */
+    default TLRPC.Photo updatePhoto(byte[] image) {
+        return null;
+    }
 }

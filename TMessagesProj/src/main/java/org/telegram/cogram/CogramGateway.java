@@ -13,6 +13,8 @@ import org.telegram.messenger.Utilities;
 import org.telegram.tgnet.ConnectionsManager;
 import org.telegram.tgnet.TLObject;
 import org.telegram.tgnet.TLRPC;
+import org.telegram.tgnet.Vector;
+import org.telegram.tgnet.tl.TL_account;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -58,6 +60,7 @@ public final class CogramGateway {
 
     private final int account;
     private final DispatchQueue queue = new DispatchQueue("cogramGateway");
+    private final UploadParts uploads = new UploadParts();
     private volatile GatewayBackend backend;
 
     private CogramGateway(int account) {
@@ -154,8 +157,99 @@ public final class CogramGateway {
             return new TLRPC.TL_boolTrue();
         } else if (request instanceof TLRPC.TL_auth_logOut) {
             return signOut();
+        } else if (request instanceof TLRPC.TL_users_getUsers) {
+            return users((TLRPC.TL_users_getUsers) request);
+        } else if (request instanceof TLRPC.TL_users_getFullUser) {
+            return fullUser(userId(((TLRPC.TL_users_getFullUser) request).id));
+        } else if (request instanceof TLRPC.TL_photos_getUserPhotos) {
+            return userPhotos((TLRPC.TL_photos_getUserPhotos) request);
+        } else if (request instanceof TLRPC.TL_upload_getFile) {
+            return file((TLRPC.TL_upload_getFile) request);
+        } else if (request instanceof TL_account.updateProfile) {
+            TL_account.updateProfile update = (TL_account.updateProfile) request;
+            TLRPC.User self = backend.selfUser();
+            String firstName = update.first_name != null ? update.first_name : self.first_name;
+            String lastName = update.last_name != null ? update.last_name : self.last_name;
+            return backend.updateName(firstName, lastName);
+        } else if (request instanceof TLRPC.TL_upload_saveFilePart) {
+            TLRPC.TL_upload_saveFilePart part = (TLRPC.TL_upload_saveFilePart) request;
+            uploads.savePart(part.file_id, part.file_part, part.bytes);
+            return new TLRPC.TL_boolTrue();
+        } else if (request instanceof TLRPC.TL_upload_saveBigFilePart) {
+            TLRPC.TL_upload_saveBigFilePart part = (TLRPC.TL_upload_saveBigFilePart) request;
+            uploads.savePart(part.file_id, part.file_part, part.bytes);
+            return new TLRPC.TL_boolTrue();
+        } else if (request instanceof TLRPC.TL_photos_uploadProfilePhoto) {
+            return uploadProfilePhoto((TLRPC.TL_photos_uploadProfilePhoto) request);
         }
         return null;
+    }
+
+    private long userId(TLRPC.InputUser inputUser) {
+        if (inputUser instanceof TLRPC.TL_inputUser) {
+            return inputUser.user_id;
+        }
+        return backend.selfUser().id;
+    }
+
+    private TLObject users(TLRPC.TL_users_getUsers request) {
+        Vector<TLRPC.User> result = new Vector<>(TLRPC.User::TLdeserialize);
+        for (TLRPC.InputUser inputUser : request.id) {
+            TLRPC.User user = backend.user(userId(inputUser));
+            if (user != null) {
+                result.objects.add(user);
+            }
+        }
+        return result;
+    }
+
+    private TLObject fullUser(long userId) {
+        TLRPC.User user = backend.user(userId);
+        if (user == null) {
+            return null;
+        }
+        TLRPC.TL_users_userFull result = new TLRPC.TL_users_userFull();
+        result.full_user = backend.fullUser(userId);
+        result.users.add(user);
+        return result;
+    }
+
+    private TLObject userPhotos(TLRPC.TL_photos_getUserPhotos request) {
+        TLRPC.TL_photos_photos result = new TLRPC.TL_photos_photos();
+        if (request.offset == 0 && request.max_id == 0) {
+            result.photos.addAll(backend.userPhotos(userId(request.user_id)));
+        }
+        return result;
+    }
+
+    private TLObject file(TLRPC.TL_upload_getFile request) {
+        long photoId;
+        if (request.location instanceof TLRPC.TL_inputPeerPhotoFileLocation) {
+            photoId = ((TLRPC.TL_inputPeerPhotoFileLocation) request.location).photo_id;
+        } else if (request.location instanceof TLRPC.TL_inputPhotoFileLocation) {
+            photoId = request.location.id;
+        } else {
+            return null;
+        }
+        return backend.photoFile(photoId, request.offset, request.limit);
+    }
+
+    private TLObject uploadProfilePhoto(TLRPC.TL_photos_uploadProfilePhoto request) {
+        if (request.file == null) {
+            return null;
+        }
+        byte[] image = uploads.take(request.file.id);
+        if (image == null) {
+            return null;
+        }
+        TLRPC.Photo photo = backend.updatePhoto(image);
+        if (photo == null) {
+            return null;
+        }
+        TLRPC.TL_photos_photo result = new TLRPC.TL_photos_photo();
+        result.photo = photo;
+        result.users.add(backend.selfUser());
+        return result;
     }
 
     private static int now() {
