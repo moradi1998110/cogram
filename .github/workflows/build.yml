@@ -83,10 +83,18 @@ jobs:
             case "$GITHUB_REF" in refs/tags/v*) exit 1;; esac
             exit 0
           fi
+          # Values pasted into the secrets page can pick up spaces and line breaks, which neither value contains.
+          KEYSTORE_PASSWORD=$(printf '%s' "$KEYSTORE_PASSWORD" | tr -d ' \t\r\n')
+          echo "::add-mask::$KEYSTORE_PASSWORD"
           KEYSTORE="$RUNNER_TEMP/phogram.p12"
-          echo "$KEYSTORE_BASE64" | base64 -d > "$KEYSTORE"
-          ALIAS=$(keytool -list -keystore "$KEYSTORE" -storetype pkcs12 -storepass "$KEYSTORE_PASSWORD" | grep -m1 PrivateKeyEntry | cut -d, -f1)
-          test -n "$ALIAS"
+          printf '%s' "$KEYSTORE_BASE64" | tr -d ' \t\r\n' | base64 -d > "$KEYSTORE"
+          echo "Keystore SHA-256: $(sha256sum "$KEYSTORE" | cut -d' ' -f1)"
+          LISTING=$(keytool -list -keystore "$KEYSTORE" -storetype pkcs12 -storepass "$KEYSTORE_PASSWORD" 2>&1) || true
+          ALIAS=$(printf '%s\n' "$LISTING" | grep -m1 PrivateKeyEntry | cut -d, -f1)
+          if [ -z "$ALIAS" ]; then
+            printf '%s\n' "$LISTING"
+            exit 1
+          fi
           {
             echo "PHOGRAM_KEYSTORE_FILE=$KEYSTORE"
             echo "PHOGRAM_KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD"
