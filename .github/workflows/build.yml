@@ -72,6 +72,27 @@ jobs:
           key: ccache-${{ env.NDK_VERSION }}-${{ github.run_id }}
           restore-keys: ccache-${{ env.NDK_VERSION }}-
 
+      # Release tags must be signed with Phogram's key so they install over earlier releases.
+      - name: Load the signing key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.PHOGRAM_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.PHOGRAM_KEYSTORE_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ] || [ -z "$KEYSTORE_PASSWORD" ]; then
+            echo "Phogram signing secrets are not set"
+            case "$GITHUB_REF" in refs/tags/v*) exit 1;; esac
+            exit 0
+          fi
+          KEYSTORE="$RUNNER_TEMP/phogram.p12"
+          echo "$KEYSTORE_BASE64" | base64 -d > "$KEYSTORE"
+          ALIAS=$(keytool -list -keystore "$KEYSTORE" -storetype pkcs12 -storepass "$KEYSTORE_PASSWORD" | grep -m1 PrivateKeyEntry | cut -d, -f1)
+          test -n "$ALIAS"
+          {
+            echo "PHOGRAM_KEYSTORE_FILE=$KEYSTORE"
+            echo "PHOGRAM_KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD"
+            echo "PHOGRAM_KEY_ALIAS=$ALIAS"
+          } >> "$GITHUB_ENV"
+
       - name: Build arm64 debug APK
         run: |
           chmod +x gradlew
@@ -97,7 +118,7 @@ jobs:
       - name: Check the APK can be installed
         run: |
           TOOLS="$ANDROID_HOME/build-tools/36.0.0"
-          "$TOOLS/apksigner" verify --verbose dist/cogram-arm64-debug.apk
+          "$TOOLS/apksigner" verify --verbose --print-certs dist/cogram-arm64-debug.apk | grep -v "Signer #1 public key"
           "$TOOLS/aapt2" dump badging dist/cogram-arm64-debug.apk | head -3
           if "$TOOLS/aapt2" dump xmltree --file AndroidManifest.xml dist/cogram-arm64-debug.apk | grep -E 'android:testOnly.*=(true|-1|0xffffffff)'; then
             echo "APK is marked testOnly"
