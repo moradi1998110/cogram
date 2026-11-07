@@ -294,9 +294,7 @@ public class PeerConnectionFactory {
   public static void initialize(InitializationOptions options) {
     ContextUtils.initialize(options.applicationContext);
     NativeLibrary.initialize(options.nativeLibraryLoader, options.nativeLibraryName);
-    // Telegram's native library sets up the JVM for WebRTC when it loads (JNI_OnLoad in
-    // org_telegram_messenger_voip_Instance.cpp), and a second setup aborts the process, so
-    // nativeInitializeAndroidGlobals() is not called here.
+    nativeInitializeAndroidGlobals();
     nativeInitializeFieldTrials(options.fieldTrials);
     if (options.enableInternalTracer && !internalTracerInitialized) {
       initializeInternalTracer();

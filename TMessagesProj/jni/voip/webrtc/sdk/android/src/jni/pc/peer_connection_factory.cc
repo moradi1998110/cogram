@@ -41,6 +41,10 @@
 #include "sdk/android/src/jni/pc/video.h"
 #include "system_wrappers/include/field_trial.h"
 
+// Telegram's call code sets WebRTC up on first use (org_telegram_messenger_voip_Instance.cpp), and
+// setting it up twice aborts the process.
+extern "C" void initWebRTC(JNIEnv* env);
+
 namespace webrtc {
 namespace jni {
 
@@ -163,7 +167,8 @@ jobject NativeToJavaPeerConnectionFactory(
 
 static void JNI_PeerConnectionFactory_InitializeAndroidGlobals(JNIEnv* jni) {
   if (!factory_static_initialized) {
-    JVM::Initialize(GetJVM());
+    // Telegram's setup also loads WebRTC's classes and SSL, and does nothing when it already ran.
+    initWebRTC(jni);
     factory_static_initialized = true;
   }
 }

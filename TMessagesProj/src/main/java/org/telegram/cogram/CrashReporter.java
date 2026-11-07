@@ -198,37 +198,51 @@ public final class CrashReporter {
         }
     }
 
-    /** Native traces are binary tombstones on recent Android, so this keeps their readable text. */
+    /**
+     * Native traces are binary tombstones on recent Android. The crashing thread's backtrace comes
+     * first, read from the tombstone's protobuf, since it is the one that explains the crash and the
+     * readable text below lists every thread and gets cut off.
+     */
     private static void appendTrace(ApplicationExitInfo info, StringBuilder report) throws Exception {
+        byte[] data;
         try (InputStream stream = info.getTraceInputStream()) {
             if (stream == null) {
                 report.append("none\n");
                 return;
             }
-            StringBuilder trace = new StringBuilder();
-            StringBuilder run = new StringBuilder();
+            java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
             byte[] buffer = new byte[8192];
-            int total = 0;
             int read;
-            while (total < MAX_TRACE_BYTES && (read = stream.read(buffer)) > 0) {
-                total += read;
-                for (int a = 0; a < read; a++) {
-                    int value = buffer[a];
-                    if (value >= 0x20 && value < 0x7f || value == '\t') {
-                        run.append((char) value);
-                    } else {
-                        if (run.length() >= MIN_TRACE_RUN) {
-                            trace.append(run).append('\n');
-                        }
-                        run.setLength(0);
-                    }
-                }
+            while (bytes.size() < MAX_TRACE_BYTES && (read = stream.read(buffer)) > 0) {
+                bytes.write(buffer, 0, read);
             }
-            if (run.length() >= MIN_TRACE_RUN) {
-                trace.append(run).append('\n');
-            }
-            report.append(trace, 0, Math.min(trace.length(), MAX_TRACE_CHARS));
+            data = bytes.toByteArray();
         }
+        if (info.getReason() == ApplicationExitInfo.REASON_CRASH_NATIVE) {
+            try {
+                report.append(Tombstone.describeCrash(data));
+            } catch (RuntimeException e) {
+                report.append("unreadable tombstone: ").append(e).append('\n');
+            }
+        }
+        StringBuilder trace = new StringBuilder();
+        StringBuilder run = new StringBuilder();
+        for (byte b : data) {
+            int value = b;
+            if (value >= 0x20 && value < 0x7f || value == '\t') {
+                run.append((char) value);
+            } else {
+                if (run.length() >= MIN_TRACE_RUN) {
+                    trace.append(run).append('\n');
+                }
+                run.setLength(0);
+            }
+        }
+        if (run.length() >= MIN_TRACE_RUN) {
+            trace.append(run).append('\n');
+        }
+        report.append("\n== All threads ==\n");
+        report.append(trace, 0, Math.min(trace.length(), MAX_TRACE_CHARS));
     }
 
     private static void appendLogcat(StringBuilder report) {
