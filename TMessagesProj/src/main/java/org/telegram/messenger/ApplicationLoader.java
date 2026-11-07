@@ -11,6 +11,7 @@ package org.telegram.messenger;
 import android.annotation.SuppressLint;
 import android.app.Activity;
 import eu.siacs.conversations.Conversations;
+import eu.siacs.conversations.services.ExternalCallUi;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -36,6 +37,7 @@ import com.google.android.gms.common.ConnectionResult;
 import com.google.android.gms.common.GooglePlayServicesUtil;
 
 import org.json.JSONObject;
+import org.telegram.cogram.CogramGateway;
 import org.telegram.cogram.CrashReporter;
 import org.telegram.messenger.utils.Choreographer60FpsContent;
 import org.telegram.messenger.voip.VideoCapturerDevice;
@@ -358,6 +360,14 @@ public class ApplicationLoader extends Conversations {
         applicationHandler = new Handler(applicationContext.getMainLooper());
 
         AndroidUtilities.runOnUIThread(ApplicationLoader::startPushService);
+
+        if (CogramGateway.ENABLED) {
+            // The XMPP service also starts the process with no screen open, after a crash, a reboot or
+            // a swipe away. Telegram's call screen must ring then too, and only the gateway set up by
+            // the accounts can start it, so the accounts start here as they would for a push.
+            ExternalCallUi.enable(null);
+            AndroidUtilities.runOnUIThread(ApplicationLoader::postInitApplication);
+        }
 
         LauncherIconController.tryFixLauncherIconIfNeeded();
         ProxyRotationController.init();
