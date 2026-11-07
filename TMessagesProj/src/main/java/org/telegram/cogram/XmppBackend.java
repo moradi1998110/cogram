@@ -14,6 +14,8 @@ import android.text.TextUtils;
 import org.telegram.messenger.ApplicationLoader;
 import org.telegram.messenger.BuildVars;
 import org.telegram.messenger.FileLog;
+import org.telegram.messenger.LocaleController;
+import org.telegram.messenger.R;
 import org.telegram.tgnet.NativeByteBuffer;
 import org.telegram.tgnet.SerializedData;
 import org.telegram.tgnet.TLObject;
@@ -28,7 +30,9 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
@@ -49,6 +53,7 @@ import eu.siacs.conversations.services.XmppConnectionService;
 import eu.siacs.conversations.ui.interfaces.OnAvatarPublication;
 import eu.siacs.conversations.xmpp.Jid;
 import eu.siacs.conversations.xmpp.jingle.RtpCapability;
+import eu.siacs.conversations.xmpp.manager.PresenceManager;
 
 /**
  * Serves one-to-one chats from the Conversations engine. Messages are sent unencrypted for now, and
@@ -68,6 +73,7 @@ final class XmppBackend implements GatewayBackend {
     private static final int AVATAR_ECHO_WAIT_MS = 10000;
     private static final int AVATAR_ECHO_POLL_MS = 200;
     private static final int CALL_HISTORY_SCAN = 500;
+    private static final String CONTACT_REQUEST_PREFIX = "contact-request:";
     private static final String PREFERENCE_LAST_SEEN = "seen_";
 
     private final Context context = ApplicationLoader.applicationContext;
@@ -218,6 +224,11 @@ final class XmppBackend implements GatewayBackend {
                     updates.add(createReadOutboxUpdate(peerId, readMax));
                 }
             }
+            for (Contact contact : pendingRequestsWithoutChat()) {
+                if (ids.findMessage(CONTACT_REQUEST_PREFIX + contact.getAddress().asBareJid()) == 0) {
+                    updates.add(newMessageUpdate(contactRequestMessage(contact)));
+                }
+            }
             ArrayList<TLRPC.User> changed = new ArrayList<>();
             for (TLRPC.User user : users()) {
                 String snapshot = snapshotOf(user);
@@ -247,14 +258,7 @@ final class XmppBackend implements GatewayBackend {
         ids.setMessagePts(tl.id, pts);
         if (tl instanceof TLRPC.TL_messageService) {
             // A short update carries only text, so call entries travel as whole messages.
-            TL_update.TL_updateNewMessage newMessage = new TL_update.TL_updateNewMessage();
-            newMessage.message = tl;
-            newMessage.pts = pts;
-            newMessage.pts_count = 1;
-            TLRPC.TL_updates updates = new TLRPC.TL_updates();
-            updates.updates.add(newMessage);
-            updates.date = now();
-            return updates;
+            return wholeMessageUpdate(tl);
         }
         TLRPC.TL_updateShortMessage update = new TLRPC.TL_updateShortMessage();
         update.id = tl.id;
@@ -265,6 +269,24 @@ final class XmppBackend implements GatewayBackend {
         update.pts_count = 1;
         update.date = tl.date;
         return update;
+    }
+
+    private TLRPC.Updates newMessageUpdate(TLRPC.Message tl) {
+        pts++;
+        savePts();
+        ids.setMessagePts(tl.id, pts);
+        return wholeMessageUpdate(tl);
+    }
+
+    private TLRPC.Updates wholeMessageUpdate(TLRPC.Message tl) {
+        TL_update.TL_updateNewMessage newMessage = new TL_update.TL_updateNewMessage();
+        newMessage.message = tl;
+        newMessage.pts = pts;
+        newMessage.pts_count = 1;
+        TLRPC.TL_updates updates = new TLRPC.TL_updates();
+        updates.updates.add(newMessage);
+        updates.date = now();
+        return updates;
     }
 
     private static TLRPC.Updates createReadOutboxUpdate(long peerId, int maxId) {
@@ -407,9 +429,65 @@ final class XmppBackend implements GatewayBackend {
     }
 
     private TLRPC.User contactUser(Conversation conversation) {
-        Contact contact = conversation.getContact();
-        long peerId = peerId(conversation);
-        return createUser(peerId, contact.getDisplayName(), conversation.getAddress().getLocal(), contact.getAvatar(), statusOf(contact, peerId), false);
+        return contactUser(conversation.getContact());
+    }
+
+    private TLRPC.User contactUser(Contact contact) {
+        long peerId = peerId(contact);
+        TLRPC.User user = createUser(peerId, contact.getDisplayName(), contact.getAddress().getLocal(), contact.getAvatar(), statusOf(contact, peerId), false);
+        user.contact = contact.showInContactList();
+        user.mutual_contact = contact.getOption(Contact.Options.TO) && contact.getOption(Contact.Options.FROM);
+        return user;
+    }
+
+    private long peerId(Contact contact) {
+        return ids.peerId(contact.getAddress().asBareJid().toString());
+    }
+
+    /** The roster entry for a peer. The engine makes one on demand, without starting a chat. */
+    private Contact contact(long peerId) {
+        String jid = ids.peerJid(peerId);
+        Account account = service == null ? null : account();
+        if (jid == null || account == null) {
+            return null;
+        }
+        return account.getRoster().getContact(Jid.of(jid));
+    }
+
+    private static boolean hasPendingRequest(Contact contact) {
+        return contact.getOption(Contact.Options.PENDING_SUBSCRIPTION_REQUEST);
+    }
+
+    /** The people Telegram lists as contacts, and those waiting for an answer to their contact request. */
+    private List<Contact> rosterContacts() {
+        ArrayList<Contact> contacts = new ArrayList<>();
+        Account account = account();
+        if (account == null) {
+            return contacts;
+        }
+        for (Contact contact : account.getRoster().getContacts()) {
+            if (contact.showInContactList() || hasPendingRequest(contact)) {
+                contacts.add(contact);
+            }
+        }
+        return contacts;
+    }
+
+    /** A contact request has no message in XMPP, so it appears as a service message that opens the chat. */
+    private TLRPC.Message contactRequestMessage(Contact contact) {
+        long peerId = peerId(contact);
+        int id = ids.messageId(CONTACT_REQUEST_PREFIX + contact.getAddress().asBareJid(), System.currentTimeMillis());
+        TLRPC.TL_messageActionCustomAction action = new TLRPC.TL_messageActionCustomAction();
+        action.message = LocaleController.getString(R.string.PhogramContactRequest);
+        TLRPC.TL_messageService tl = new TLRPC.TL_messageService();
+        tl.id = id;
+        tl.date = (int) (ids.messageTime(id) / 1000);
+        tl.peer_id = peerUser(peerId);
+        tl.from_id = peerUser(peerId);
+        tl.dialog_id = peerId;
+        tl.action = action;
+        tl.flags = TLObject.FLAG_8;
+        return tl;
     }
 
     private TLRPC.User accountUser(Account account) {
@@ -543,8 +621,8 @@ final class XmppBackend implements GatewayBackend {
             Account account = account();
             return account == null ? null : account.getAvatar();
         }
-        Conversation conversation = conversation(userId);
-        return conversation == null ? null : conversation.getContact().getAvatar();
+        Contact contact = contact(userId);
+        return contact == null ? null : contact.getAvatar();
     }
 
     @Override
@@ -572,14 +650,20 @@ final class XmppBackend implements GatewayBackend {
 
     @Override
     public synchronized List<TLRPC.User> users() {
-        ArrayList<TLRPC.User> users = new ArrayList<>();
-        users.add(selfUser());
+        LinkedHashMap<Long, TLRPC.User> users = new LinkedHashMap<>();
+        TLRPC.User me = selfUser();
+        users.put(me.id, me);
         if (service != null) {
             for (Conversation conversation : singleChats()) {
-                users.add(contactUser(conversation));
+                TLRPC.User user = contactUser(conversation);
+                users.put(user.id, user);
+            }
+            for (Contact contact : rosterContacts()) {
+                TLRPC.User user = contactUser(contact);
+                users.put(user.id, user);
             }
         }
-        return users;
+        return new ArrayList<>(users.values());
     }
 
     @Override
@@ -587,8 +671,140 @@ final class XmppBackend implements GatewayBackend {
         if (userId == selfId) {
             return selfUser();
         }
-        Conversation conversation = conversation(userId);
-        return conversation == null ? null : contactUser(conversation);
+        Contact contact = contact(userId);
+        return contact == null ? null : contactUser(contact);
+    }
+
+    @Override
+    public synchronized String address(long userId) {
+        if (userId == selfId) {
+            Account account = service == null ? null : account();
+            return account == null ? firstAccountAddress(context).asBareJid().toString() : account.getJid().asBareJid().toString();
+        }
+        return ids.peerJid(userId);
+    }
+
+    @Override
+    public synchronized List<TLRPC.TL_contact> contacts() {
+        ArrayList<TLRPC.TL_contact> contacts = new ArrayList<>();
+        if (service == null) {
+            return contacts;
+        }
+        for (Contact contact : rosterContacts()) {
+            if (contact.showInContactList()) {
+                TLRPC.TL_contact tl = new TLRPC.TL_contact();
+                tl.user_id = peerId(contact);
+                tl.mutual = contact.getOption(Contact.Options.TO) && contact.getOption(Contact.Options.FROM);
+                contacts.add(tl);
+            }
+        }
+        return contacts;
+    }
+
+    /** Finds contacts by name or address, and anyone at all when the query is a full user@server address. */
+    @Override
+    public synchronized List<TLRPC.User> search(String query) {
+        LinkedHashMap<Long, TLRPC.User> found = new LinkedHashMap<>();
+        if (service == null || account() == null) {
+            return new ArrayList<>();
+        }
+        String address = CogramSignIn.parseAddress(query);
+        if (address != null && !address.equals(account().getJid().asBareJid().toString())) {
+            TLRPC.User user = user(ids.peerId(address));
+            if (user != null) {
+                found.put(user.id, user);
+            }
+        }
+        String needle = query.trim().toLowerCase(Locale.ROOT);
+        if (!needle.isEmpty()) {
+            for (Contact contact : rosterContacts()) {
+                String name = String.valueOf(contact.getDisplayName()).toLowerCase(Locale.ROOT);
+                String jid = contact.getAddress().asBareJid().toString().toLowerCase(Locale.ROOT);
+                if (name.contains(needle) || jid.contains(needle)) {
+                    TLRPC.User user = contactUser(contact);
+                    found.put(user.id, user);
+                }
+            }
+        }
+        return new ArrayList<>(found.values());
+    }
+
+    /** Resolves a full address, or a bare username when exactly one contact has it. */
+    @Override
+    public synchronized TLRPC.User resolve(String username) {
+        if (service == null || account() == null) {
+            return null;
+        }
+        String address = CogramSignIn.parseAddress(username);
+        if (address != null) {
+            return user(ids.peerId(address));
+        }
+        TLRPC.User match = null;
+        for (Contact contact : rosterContacts()) {
+            if (username.equalsIgnoreCase(contact.getAddress().getLocal())) {
+                if (match != null) {
+                    return null;
+                }
+                match = contactUser(contact);
+            }
+        }
+        return match;
+    }
+
+    /** Adds the peer to the roster and asks to see their presence, accepting their own request if they sent one. */
+    @Override
+    public synchronized TLRPC.User addContact(long userId, String firstName, String lastName) {
+        Contact contact = contact(userId);
+        if (contact == null) {
+            return null;
+        }
+        String name = ((firstName == null ? "" : firstName) + " " + (lastName == null ? "" : lastName)).trim();
+        if (!name.isEmpty()) {
+            contact.setServerName(name);
+        }
+        if (hasPendingRequest(contact)) {
+            contact.resetOption(Contact.Options.PENDING_SUBSCRIPTION_REQUEST);
+            account().getXmppConnection().getManager(PresenceManager.class).subscribed(contact.getAddress().asBareJid());
+        }
+        service.createContact(contact);
+        return contactUser(contact);
+    }
+
+    @Override
+    public synchronized void deleteContact(long userId) {
+        Contact contact = contact(userId);
+        if (contact != null) {
+            service.deleteContactOnServer(contact);
+        }
+    }
+
+    /** Blocking also turns down a pending contact request, as Telegram's block button does for strangers. */
+    @Override
+    public synchronized void setBlocked(long userId, boolean blocked) {
+        Contact contact = contact(userId);
+        if (contact == null) {
+            return;
+        }
+        if (!blocked) {
+            service.sendUnblockRequest(contact);
+            return;
+        }
+        if (hasPendingRequest(contact)) {
+            service.stopPresenceUpdatesTo(contact);
+        }
+        service.sendBlockRequest(contact, false, null);
+    }
+
+    /** Strangers and people asking to be added get Telegram's bar with "Add contact" and "Block". */
+    @Override
+    public synchronized TLRPC.PeerSettings peerSettings(long userId) {
+        TLRPC.TL_peerSettings settings = new TLRPC.TL_peerSettings();
+        Contact contact = userId == selfId ? null : contact(userId);
+        if (contact != null && (!contact.showInContactList() || hasPendingRequest(contact))) {
+            settings.add_contact = true;
+            settings.block_contact = true;
+        }
+        return settings;
     }
 
     @Override
@@ -631,10 +847,10 @@ final class XmppBackend implements GatewayBackend {
             full.profile_photo = photo(avatar);
             full.flags |= TLObject.FLAG_2;
         }
-        Conversation conversation = userId == selfId ? null : conversation(userId);
-        if (conversation != null && calls != null) {
+        Contact contact = userId == selfId ? null : contact(userId);
+        if (contact != null && calls != null) {
             // Telegram shows its call buttons only when the contact's client can answer.
-            RtpCapability.Capability capability = XmppCalls.capability(conversation.getContact());
+            RtpCapability.Capability capability = XmppCalls.capability(contact);
             full.phone_calls_available = capability != RtpCapability.Capability.NONE;
             full.video_calls_available = capability == RtpCapability.Capability.VIDEO;
         }
@@ -776,7 +992,36 @@ final class XmppBackend implements GatewayBackend {
             dialog.notify_settings = new TLRPC.TL_peerNotifySettings();
             dialogs.add(dialog);
         }
+        for (Contact contact : pendingRequestsWithoutChat()) {
+            TLRPC.Message request = contactRequestMessage(contact);
+            TLRPC.TL_dialog dialog = new TLRPC.TL_dialog();
+            dialog.id = request.dialog_id;
+            dialog.peer = peerUser(request.dialog_id);
+            dialog.top_message = request.id;
+            dialog.read_inbox_max_id = request.id - 1;
+            dialog.unread_count = 1;
+            dialog.notify_settings = new TLRPC.TL_peerNotifySettings();
+            dialogs.add(dialog);
+        }
         return dialogs;
+    }
+
+    /** People asking to be added who have not written yet, whose chat would otherwise not exist. */
+    private List<Contact> pendingRequestsWithoutChat() {
+        ArrayList<Contact> pending = new ArrayList<>();
+        if (service == null) {
+            return pending;
+        }
+        for (Contact contact : rosterContacts()) {
+            if (!hasPendingRequest(contact)) {
+                continue;
+            }
+            Conversation conversation = service.find(account(), contact.getAddress().asBareJid());
+            if (conversation == null || loadedMessages(conversation).isEmpty()) {
+                pending.add(contact);
+            }
+        }
+        return pending;
     }
 
     @Override
@@ -787,6 +1032,9 @@ final class XmppBackend implements GatewayBackend {
             if (!messages.isEmpty()) {
                 tops.add(toTl(messages.get(messages.size() - 1), peerId(conversation)));
             }
+        }
+        for (Contact contact : pendingRequestsWithoutChat()) {
+            tops.add(contactRequestMessage(contact));
         }
         return tops;
     }
@@ -806,6 +1054,9 @@ final class XmppBackend implements GatewayBackend {
             if (isShown(message)) {
                 newestFirst.add(toTl(message, userId));
             }
+        }
+        if (newestFirst.isEmpty() && hasPendingRequest(conversation.getContact())) {
+            newestFirst.add(contactRequestMessage(conversation.getContact()));
         }
         int start = 0;
         if (offsetId != 0) {

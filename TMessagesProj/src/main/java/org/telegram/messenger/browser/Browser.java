@@ -204,6 +204,12 @@ public class Browser {
         if (link.startsWith("@")) {
             return link.substring(1);
         }
+        if (link.regionMatches(true, 0, "xmpp:", 0, 5)) {
+            // An XMPP address resolves like a username; the part after "?" only says what to do with it.
+            final String address = link.substring(5);
+            final int query = address.indexOf('?');
+            return Uri.decode(query >= 0 ? address.substring(0, query) : address);
+        }
         if (link.startsWith("t.me/")) {
             return link.substring(5);
         }

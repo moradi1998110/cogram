@@ -57,6 +57,8 @@ import android.widget.TextView;
 import androidx.core.app.ActivityCompat;
 
 import org.telegram.PhoneFormat.PhoneFormat;
+import org.telegram.cogram.CogramGateway;
+import org.telegram.cogram.CogramSignIn;
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.ApplicationLoader;
 import org.telegram.messenger.ContactsController;
@@ -142,6 +144,7 @@ public class NewContactBottomSheet extends BottomSheet implements AdapterView.On
     private AnimatedPhoneNumberEditText phoneField;
     private ImageView phoneStatusView;
     private CheckBox2 checkBox;
+    private OutlineEditText usernameField;
     private TextView checkTextView;
     private LinearLayout checkLayout;
     private String countryCodeForHint;
@@ -211,6 +214,10 @@ public class NewContactBottomSheet extends BottomSheet implements AdapterView.On
         }
         frameLayout.addView(lastNameField, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, 58, Gravity.LEFT | Gravity.TOP, 0, 68, 0, 0));
         lastNameField.getEditText().setOnEditorActionListener((textView, i, keyEvent) -> {
+            if (i == EditorInfo.IME_ACTION_NEXT && usernameField != null) {
+                usernameField.requestFocus();
+                return true;
+            }
             if (i == EditorInfo.IME_ACTION_NEXT) {
                 codeField.requestFocus();
                 codeField.setSelection(codeField.length());
@@ -226,6 +233,23 @@ public class NewContactBottomSheet extends BottomSheet implements AdapterView.On
         phoneOutlineView.addView(linearLayout, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.CENTER_VERTICAL, 4, 8, 16, 8));
         phoneOutlineView.setText(LocaleController.getString(R.string.PhoneNumber));
         contentLayout.addView(phoneOutlineView, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 58, 0, 12, 0, 6));
+        if (CogramGateway.ENABLED) {
+            // XMPP contacts are found by their address, so the phone field gives way to one for it.
+            phoneOutlineView.setVisibility(View.GONE);
+            usernameField = new OutlineEditText(context);
+            usernameField.getEditText().setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS);
+            usernameField.getEditText().setImeOptions(EditorInfo.IME_ACTION_DONE);
+            usernameField.getEditText().setTextDirection(View.TEXT_DIRECTION_LTR);
+            usernameField.setHint(LocaleController.getString(R.string.PhogramUsernameField));
+            usernameField.getEditText().setOnEditorActionListener((textView, i, keyEvent) -> {
+                if (i == EditorInfo.IME_ACTION_DONE) {
+                    doOnDone();
+                    return true;
+                }
+                return false;
+            });
+            contentLayout.addView(usernameField, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 58, 0, 12, 0, 6));
+        }
 
         underPhoneTextView = new LinkSpanDrawable.LinksTextView(context);
         underPhoneTextView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 12);
@@ -607,6 +631,10 @@ public class NewContactBottomSheet extends BottomSheet implements AdapterView.On
         ScaleStateListAnimator.apply(checkLayout, .0125f, 1.2f);
         checkLayout.setBackground(Theme.createRadSelectorDrawable(Theme.getColor(Theme.key_listSelector, resourcesProvider), 6, 6));
         contentLayout.addView(checkLayout, LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, 0, 5, 0, 0));
+        if (CogramGateway.ENABLED) {
+            // Saving to the phone's address book needs a phone number, which XMPP contacts lack.
+            checkLayout.setVisibility(View.GONE);
+        }
 
 //        accountTextView = TextHelper.makeLinkTextView(context, 15, Theme.key_windowBackgroundWhiteBlackText, false, resourcesProvider);
 //        accountTextView.setText("Phone");
@@ -1012,6 +1040,19 @@ public class NewContactBottomSheet extends BottomSheet implements AdapterView.On
             AndroidUtilities.shakeView(firstNameField);
             return;
         }
+        if (usernameField != null) {
+            String address = CogramSignIn.parseAddress(usernameField.getEditText().getText().toString());
+            if (address == null) {
+                final Vibrator v = (Vibrator) parentFragment.getParentActivity().getSystemService(Context.VIBRATOR_SERVICE);
+                if (v != null) {
+                    v.vibrate(200);
+                }
+                AndroidUtilities.shakeView(usernameField);
+                return;
+            }
+            addXmppContact(address);
+            return;
+        }
         if (codeField.length() == 0) {
             final Vibrator v = (Vibrator) parentFragment.getParentActivity().getSystemService(Context.VIBRATOR_SERVICE);
             if (v != null) {
@@ -1088,6 +1129,46 @@ public class NewContactBottomSheet extends BottomSheet implements AdapterView.On
         if (checkBox.isChecked()) {
             saveContact(getContext(), phone, firstName, lastName, null, account);
         }
+    }
+
+    /** Looks the address up as a username, then adds that user, which also sends them a contact request. */
+    private void addXmppContact(String address) {
+        donePressed = true;
+        showEditDoneProgress(true, true);
+        final String firstName = firstNameField.getEditText().getText().toString();
+        final String lastName = lastNameField.getEditText().getText().toString();
+        final TLRPC.TL_contacts_resolveUsername resolve = new TLRPC.TL_contacts_resolveUsername();
+        resolve.username = address;
+        ConnectionsManager.getInstance(currentAccount).sendRequest(resolve, (response, error) -> AndroidUtilities.runOnUIThread(() -> {
+            if (!(response instanceof TLRPC.TL_contacts_resolvedPeer) || ((TLRPC.TL_contacts_resolvedPeer) response).users.isEmpty()) {
+                donePressed = false;
+                showEditDoneProgress(false, true);
+                if (error != null) {
+                    AlertsCreator.processError(currentAccount, error, parentFragment, resolve);
+                }
+                return;
+            }
+            final TLRPC.User user = ((TLRPC.TL_contacts_resolvedPeer) response).users.get(0);
+            MessagesController.getInstance(currentAccount).putUser(user, false);
+            final TLRPC.TL_contacts_addContact add = new TLRPC.TL_contacts_addContact();
+            add.id = MessagesController.getInstance(currentAccount).getInputUser(user);
+            add.first_name = firstName;
+            add.last_name = lastName;
+            add.phone = "";
+            ConnectionsManager.getInstance(currentAccount).sendRequest(add, (response2, error2) -> AndroidUtilities.runOnUIThread(() -> {
+                donePressed = false;
+                if (response2 instanceof TLRPC.Updates) {
+                    MessagesController.getInstance(currentAccount).processUpdates((TLRPC.Updates) response2, false);
+                    MessagesController.getInstance(currentAccount).openChatOrProfileWith(user, null, parentFragment, 1, false);
+                    dismiss();
+                } else {
+                    showEditDoneProgress(false, true);
+                    if (error2 != null) {
+                        AlertsCreator.processError(currentAccount, error2, parentFragment, add);
+                    }
+                }
+            }), ConnectionsManager.RequestFlagFailOnServerErrors);
+        }), ConnectionsManager.RequestFlagFailOnServerErrors);
     }
 
     @Override

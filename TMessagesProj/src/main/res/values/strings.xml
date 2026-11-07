@@ -11640,4 +11640,6 @@
     <string name="PhogramForgotPasswordText">Only the administrator of your server can reset your password.</string>
     <string name="PhogramServerNotFound">Could not find this server. Check the address and your connection.</string>
     <string name="PhogramSignInFailed">Could not log in (%1$s).</string>
+    <string name="PhogramContactRequest">wants to add you to contacts</string>
+    <string name="PhogramUsernameHint">name@example.org</string>
 </resources>

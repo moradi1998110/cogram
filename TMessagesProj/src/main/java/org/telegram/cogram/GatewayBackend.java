@@ -81,6 +81,38 @@ public interface GatewayBackend {
         return null;
     }
 
+    /** Returns the user's full user@server address, or null for a user the backend does not know. */
+    default String address(long userId) {
+        return null;
+    }
+
+    default List<TLRPC.TL_contact> contacts() {
+        return Collections.emptyList();
+    }
+
+    default List<TLRPC.User> search(String query) {
+        return Collections.emptyList();
+    }
+
+    /** Returns the user with this username or address, or null when there is none. */
+    default TLRPC.User resolve(String username) {
+        return null;
+    }
+
+    default TLRPC.User addContact(long userId, String firstName, String lastName) {
+        return null;
+    }
+
+    default void deleteContact(long userId) {
+    }
+
+    default void setBlocked(long userId, boolean blocked) {
+    }
+
+    default TLRPC.PeerSettings peerSettings(long userId) {
+        return new TLRPC.TL_peerSettings();
+    }
+
     /** Returns call entries across all chats, newest first, older than offsetId when it is not zero. */
     default List<TLRPC.Message> callHistory(int offsetId, int limit) {
         return Collections.emptyList();

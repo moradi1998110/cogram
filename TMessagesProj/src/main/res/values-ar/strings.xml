@@ -1253,4 +1253,6 @@
     <string name="PhogramForgotPasswordText">لا يستطيع إعادة تعيين كلمة المرور إلا مسؤول الخادم الذي عليه حسابك.</string>
     <string name="PhogramServerNotFound">تعذّر العثور على هذا الخادم. تحقق من العنوان ومن اتصالك بالإنترنت.</string>
     <string name="PhogramSignInFailed">تعذّر تسجيل الدخول (%1$s).</string>
+    <string name="PhogramContactRequest">يريد إضافتك إلى جهات الاتصال</string>
+    <string name="PhogramUsernameHint">name@example.org</string>
 </resources>

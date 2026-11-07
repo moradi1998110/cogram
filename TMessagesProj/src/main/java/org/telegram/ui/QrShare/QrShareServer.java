@@ -6,6 +6,7 @@ import android.text.TextUtils;
 
 import androidx.annotation.Nullable;
 
+import org.telegram.cogram.CogramGateway;
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.ChatObject;
 import org.telegram.messenger.ContactsController;
@@ -116,6 +117,14 @@ final class QrShareServer implements NotificationCenter.NotificationCenterDelega
         }
         final boolean self = userId == UserConfig.getInstance(account).getClientUserId();
         final TLRPC.User user = controller.getUser(userId);
+        if (CogramGateway.ENABLED) {
+            // An xmpp: link adds the account in any XMPP client, and Telegram's scanner opens it too.
+            final String address = CogramGateway.getInstance(account).addressOf(userId);
+            if (address != null) {
+                final String caption = user != null && user.username != null ? user.username : address;
+                return new Link("xmpp:" + address, caption, true, false, self, userId, self);
+            }
+        }
         final String username = user != null ? UserObject.getPublicUsername(user) : null;
         if (username != null) {
             return new Link(prefix + username, username, true, false, self, userId, self);

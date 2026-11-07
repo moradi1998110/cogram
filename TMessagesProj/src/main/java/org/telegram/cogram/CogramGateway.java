@@ -116,13 +116,29 @@ public final class CogramGateway {
             return;
         }
         current.whenReady(() -> queue.postRunnable(() -> {
-            TLObject response = handle(request);
+            TLObject response;
+            try {
+                response = handle(request);
+            } catch (GatewayError e) {
+                TLRPC.TL_error error = new TLRPC.TL_error();
+                error.code = 400;
+                error.text = e.getMessage();
+                reply.run(null, error);
+                return;
+            }
             if (response != null) {
                 reply.run(response, null);
             } else {
                 replyUnsupported(request, reply);
             }
         }));
+    }
+
+    /** A request Telegram should see fail with one of its own error codes, which its screens explain to the user. */
+    private static final class GatewayError extends RuntimeException {
+        GatewayError(String text) {
+            super(text);
+        }
     }
 
     private static void replyUnsupported(TLObject request, Reply reply) {
@@ -194,6 +210,74 @@ public final class CogramGateway {
             result.messages.addAll(backend.callHistory(search.offset_id, search.limit));
             result.users.addAll(backend.users());
             return result;
+        } else if (request instanceof TLRPC.TL_contacts_getContacts) {
+            TLRPC.TL_contacts_contacts result = new TLRPC.TL_contacts_contacts();
+            result.contacts.addAll(backend.contacts());
+            result.users.addAll(backend.users());
+            return result;
+        } else if (request instanceof TLRPC.TL_contacts_getStatuses) {
+            Vector<TLRPC.TL_contactStatus> result = new Vector<>(TLRPC.TL_contactStatus::TLdeserialize);
+            for (TLRPC.TL_contact contact : backend.contacts()) {
+                TLRPC.User user = backend.user(contact.user_id);
+                if (user != null && user.status != null) {
+                    TLRPC.TL_contactStatus status = new TLRPC.TL_contactStatus();
+                    status.user_id = user.id;
+                    status.status = user.status;
+                    result.objects.add(status);
+                }
+            }
+            return result;
+        } else if (request instanceof TLRPC.TL_contacts_importContacts) {
+            // XMPP has no phone numbers, so the address book never matches anyone.
+            return new TLRPC.TL_contacts_importedContacts();
+        } else if (request instanceof TLRPC.TL_contacts_resetSaved) {
+            return new TLRPC.TL_boolTrue();
+        } else if (request instanceof TLRPC.TL_contacts_search) {
+            TLRPC.TL_contacts_found result = new TLRPC.TL_contacts_found();
+            for (TLRPC.User user : backend.search(((TLRPC.TL_contacts_search) request).q)) {
+                TLRPC.TL_peerUser peer = new TLRPC.TL_peerUser();
+                peer.user_id = user.id;
+                (user.contact ? result.my_results : result.results).add(peer);
+                result.users.add(user);
+            }
+            return result;
+        } else if (request instanceof TLRPC.TL_contacts_resolveUsername) {
+            TLRPC.User user = backend.resolve(((TLRPC.TL_contacts_resolveUsername) request).username);
+            if (user == null) {
+                throw new GatewayError("USERNAME_NOT_OCCUPIED");
+            }
+            TLRPC.TL_contacts_resolvedPeer result = new TLRPC.TL_contacts_resolvedPeer();
+            TLRPC.TL_peerUser peer = new TLRPC.TL_peerUser();
+            peer.user_id = user.id;
+            result.peer = peer;
+            result.users.add(user);
+            return result;
+        } else if (request instanceof TLRPC.TL_contacts_addContact) {
+            TLRPC.TL_contacts_addContact add = (TLRPC.TL_contacts_addContact) request;
+            TLRPC.User user = backend.addContact(userId(add.id), add.first_name, add.last_name);
+            if (user == null) {
+                return null;
+            }
+            TLRPC.TL_updates updates = new TLRPC.TL_updates();
+            updates.users.add(user);
+            updates.date = now();
+            return updates;
+        } else if (request instanceof TLRPC.TL_contacts_deleteContacts) {
+            for (TLRPC.InputUser inputUser : ((TLRPC.TL_contacts_deleteContacts) request).id) {
+                backend.deleteContact(userId(inputUser));
+            }
+            TLRPC.TL_updates updates = new TLRPC.TL_updates();
+            updates.date = now();
+            return updates;
+        } else if (request instanceof TLRPC.TL_contacts_block || request instanceof TLRPC.TL_contacts_unblock) {
+            boolean block = request instanceof TLRPC.TL_contacts_block;
+            TLRPC.InputPeer peer = block ? ((TLRPC.TL_contacts_block) request).id : ((TLRPC.TL_contacts_unblock) request).id;
+            backend.setBlocked(peer.user_id, block);
+            return new TLRPC.TL_boolTrue();
+        } else if (request instanceof TLRPC.TL_messages_getPeerSettings) {
+            TLRPC.TL_messages_peerSettings result = new TLRPC.TL_messages_peerSettings();
+            result.settings = backend.peerSettings(((TLRPC.TL_messages_getPeerSettings) request).peer.user_id);
+            return result;
         } else if (request instanceof TL_phone.setCallRating) {
             return new TLRPC.TL_updates();
         } else if (request instanceof TL_phone.saveCallDebug || request instanceof TL_phone.sendSignalingData) {
@@ -218,6 +302,12 @@ public final class CogramGateway {
         TL_phone.discardCall discard = (TL_phone.discardCall) request;
         calls.discardCall(discard.peer.id, discard.reason);
         return new TLRPC.TL_updates();
+    }
+
+    /** The user's full XMPP address, which Telegram's screens show only without the server. */
+    public String addressOf(long userId) {
+        GatewayBackend current = backend;
+        return current == null ? null : current.address(userId);
     }
 
     /** Creates the engine for a call Telegram's call service is starting, or null when the call is gone. */
