@@ -29,6 +29,8 @@ final class XmppCallInstance extends NativeInstance {
     private VideoTrack attachedLocalTrack;
     private VideoTrack attachedRemoteTrack;
     private boolean established;
+    private volatile boolean microphoneMuted;
+    private volatile Boolean videoWanted;
 
     XmppCallInstance(JingleRtpConnection connection, VideoSink remoteSink) {
         this.connection = connection;
@@ -53,6 +55,7 @@ final class XmppCallInstance extends NativeInstance {
     void onConnected() {
         AndroidUtilities.runOnUIThread(() -> {
             established = true;
+            applyMedia();
             attachVideo();
             onSignalBarsUpdated(SIGNAL_BARS_CONNECTED);
             onStateUpdated(Instance.STATE_ESTABLISHED);
@@ -101,15 +104,36 @@ final class XmppCallInstance extends NativeInstance {
         return new Instance.FinalState(null, "", new Instance.TrafficStats(0, 0, 0, 0), false);
     }
 
+    /**
+     * Telegram sets the microphone and camera as soon as the call starts, before the engine has
+     * created the tracks, so the wanted state is kept and applied again once the call connects.
+     */
+    private void applyMedia() {
+        try {
+            connection.setMicrophoneEnabled(!microphoneMuted);
+        } catch (IllegalStateException e) {
+            // No audio track yet; applied again on connect.
+        }
+        if (videoWanted != null) {
+            try {
+                connection.setVideoEnabled(videoWanted);
+            } catch (IllegalStateException e) {
+                // No video track yet; applied again on connect.
+            }
+        }
+    }
+
     @Override
     public void setMuteMicrophone(boolean muteMicrophone) {
-        connection.setMicrophoneEnabled(!muteMicrophone);
+        microphoneMuted = muteMicrophone;
+        applyMedia();
     }
 
     @Override
     public void setupOutgoingVideo(VideoSink localSink, int type) {
         this.localSink = localSink;
-        connection.setVideoEnabled(true);
+        videoWanted = true;
+        applyMedia();
         if (established) {
             attachVideo();
         }
@@ -121,13 +145,18 @@ final class XmppCallInstance extends NativeInstance {
 
     @Override
     public void setVideoState(int videoState) {
-        connection.setVideoEnabled(videoState == Instance.VIDEO_STATE_ACTIVE);
+        videoWanted = videoState == Instance.VIDEO_STATE_ACTIVE;
+        applyMedia();
     }
 
     @Override
     public void switchCamera(boolean front) {
-        if (connection.isCameraSwitchable() && connection.isFrontCamera() != front) {
-            connection.switchCamera();
+        try {
+            if (connection.isCameraSwitchable() && connection.isFrontCamera() != front) {
+                connection.switchCamera();
+            }
+        } catch (IllegalStateException e) {
+            FileLog.e(e);
         }
     }
 

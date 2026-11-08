@@ -10,7 +10,7 @@ import org.webrtc.VideoSink;
 
 import java.lang.ref.WeakReference;
 import java.util.EnumSet;
-import java.util.HashMap;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.Map;
 import java.util.Set;
 
@@ -45,14 +45,14 @@ final class XmppCalls implements XmppConnectionService.OnJingleRtpConnectionUpda
         final long id;
         // The engine keys a session by the full address of the device on the other end, which an
         // outgoing call learns only when that device answers, so this follows the engine's updates.
-        Jid with;
+        volatile Jid with;
         final long peerId;
         final boolean outgoing;
         final boolean video;
-        String sessionId;
-        boolean started;
-        boolean finished;
-        XmppCallInstance instance;
+        volatile String sessionId;
+        volatile boolean started;
+        volatile boolean finished;
+        volatile XmppCallInstance instance;
 
         Call(long id, Jid with, long peerId, boolean outgoing, boolean video) {
             this.id = id;
@@ -67,7 +67,9 @@ final class XmppCalls implements XmppConnectionService.OnJingleRtpConnectionUpda
     private final Account account;
     private final long selfId;
     private final Peers peers;
-    private final Map<Long, Call> calls = new HashMap<>();
+    // Engine threads report call states while holding the engine's locks, and this class calls back into the
+    // engine. A lock of its own taken on both paths deadlocks, so calls live in a concurrent map instead.
+    private final Map<Long, Call> calls = new ConcurrentHashMap<>();
 
     XmppCalls(XmppConnectionService service, Account account, long selfId, Peers peers) {
         this.service = service;
@@ -120,7 +122,7 @@ final class XmppCalls implements XmppConnectionService.OnJingleRtpConnectionUpda
         return connection;
     }
 
-    synchronized TL_phone.TL_phone_phoneCall requestCall(long peerId, boolean video) {
+    TL_phone.TL_phone_phoneCall requestCall(long peerId, boolean video) {
         String address = peers.address(peerId);
         if (address == null) {
             return null;
@@ -137,7 +139,7 @@ final class XmppCalls implements XmppConnectionService.OnJingleRtpConnectionUpda
         return phoneCall(waiting(call, 0));
     }
 
-    synchronized TL_phone.TL_phone_phoneCall acceptCall(long callId) {
+    TL_phone.TL_phone_phoneCall acceptCall(long callId) {
         Call call = calls.get(callId);
         JingleRtpConnection connection = call == null ? null : connection(call);
         if (connection == null) {
@@ -147,12 +149,12 @@ final class XmppCalls implements XmppConnectionService.OnJingleRtpConnectionUpda
         return phoneCall(waiting(call, now()));
     }
 
-    synchronized boolean receivedCall(long callId) {
+    boolean receivedCall(long callId) {
         return calls.containsKey(callId);
     }
 
     /** Ends the call in whatever stage it is: retracts our ringing, declines theirs or hangs up. */
-    synchronized void discardCall(long callId, TLRPC.PhoneCallDiscardReason reason) {
+    void discardCall(long callId, TLRPC.PhoneCallDiscardReason reason) {
         Call call = calls.get(callId);
         if (call == null) {
             return;
@@ -174,7 +176,7 @@ final class XmppCalls implements XmppConnectionService.OnJingleRtpConnectionUpda
         calls.remove(callId);
     }
 
-    synchronized XmppCallInstance createInstance(long callId, VideoSink remoteSink) {
+    XmppCallInstance createInstance(long callId, VideoSink remoteSink) {
         Call call = calls.get(callId);
         JingleRtpConnection connection = call == null ? null : connection(call);
         if (connection == null) {
@@ -197,27 +199,25 @@ final class XmppCalls implements XmppConnectionService.OnJingleRtpConnectionUpda
         }
         TL_phone.PhoneCall update = null;
         long peerId;
-        synchronized (this) {
-            Call call = findBySession(sessionId);
-            if (call == null) {
-                if (state != RtpEndUserState.INCOMING_CALL) {
-                    return;
-                }
-                call = incomingCall(with, sessionId);
-                if (call == null) {
-                    return;
-                }
-                update = requested(call);
-            } else if (call.finished) {
+        Call call = findBySession(sessionId);
+        if (call == null) {
+            if (state != RtpEndUserState.INCOMING_CALL) {
                 return;
-            } else {
-                if (with.getResource() != null) {
-                    call.with = with;
-                }
-                update = onState(call, state);
             }
-            peerId = call.peerId;
+            call = incomingCall(with, sessionId);
+            if (call == null) {
+                return;
+            }
+            update = requested(call);
+        } else if (call.finished) {
+            return;
+        } else {
+            if (with.getResource() != null) {
+                call.with = with;
+            }
+            update = onState(call, state);
         }
+        peerId = call.peerId;
         if (update != null) {
             TL_update.TL_updatePhoneCall phoneCallUpdate = new TL_update.TL_updatePhoneCall();
             phoneCallUpdate.phone_call = update;
