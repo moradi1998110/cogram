@@ -566,7 +566,7 @@ final class XmppBackend implements GatewayBackend {
             case Message.ENCRYPTION_AXOLOTL_FAILED:
                 return TEXT_UNREADABLE;
             default:
-                if (message.isOob() && message.getBody() != null && message.getBody().startsWith("null|")) {
+                if (message.getBody() != null && message.getBody().matches("null\\|\\d+")) {
                     // An older engine lost the link of a file while checking its size.
                     return TEXT_FILE;
                 }
