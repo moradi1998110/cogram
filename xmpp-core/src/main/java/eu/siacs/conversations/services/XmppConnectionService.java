@@ -3148,7 +3148,34 @@ public class XmppConnectionService extends Service {
         if (!databaseBackend.updateMessage(message, uuid)) {
             Log.e(Config.LOGTAG, "error updated message in DB after edit");
         }
+        final OnMessageChange listener = this.onMessageChange;
+        if (listener != null) {
+            listener.onMessageReplaced(message, uuid);
+        }
         updateConversationUi();
+    }
+
+    /**
+     * Tells an app that keeps its own ids for messages when a message changes identity, which an
+     * edit does by taking a new uuid, or disappears, which a retraction does.
+     */
+    public interface OnMessageChange {
+        void onMessageReplaced(Message message, String previousUuid);
+
+        void onMessageDeleted(String uuid);
+    }
+
+    private volatile OnMessageChange onMessageChange;
+
+    public void setOnMessageChangeListener(final OnMessageChange listener) {
+        this.onMessageChange = listener;
+    }
+
+    public void notifyMessageDeleted(final String uuid) {
+        final OnMessageChange listener = this.onMessageChange;
+        if (listener != null) {
+            listener.onMessageDeleted(uuid);
+        }
     }
 
     public void createContact(final Contact contact) {

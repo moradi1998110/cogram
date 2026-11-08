@@ -26,7 +26,7 @@ final class XmppIdMap extends SQLiteOpenHelper {
     private final Map<String, Integer> messageIds = new HashMap<>();
 
     XmppIdMap(Context context) {
-        super(context, DATABASE, null, 2);
+        super(context, DATABASE, null, 3);
     }
 
     /** Forgets every id, so the next account starts with fresh message ids and pts. */
@@ -41,12 +41,64 @@ final class XmppIdMap extends SQLiteOpenHelper {
     public void onCreate(SQLiteDatabase db) {
         db.execSQL("CREATE TABLE peers (id INTEGER PRIMARY KEY AUTOINCREMENT, jid TEXT UNIQUE NOT NULL)");
         db.execSQL("CREATE TABLE messages (id INTEGER PRIMARY KEY, uuid TEXT UNIQUE NOT NULL, time INTEGER NOT NULL, pts INTEGER NOT NULL DEFAULT 0)");
+        createReads(db);
     }
 
     @Override
     public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
         if (oldVersion < 2) {
             db.execSQL("ALTER TABLE messages ADD COLUMN pts INTEGER NOT NULL DEFAULT 0");
+        }
+        if (oldVersion < 3) {
+            createReads(db);
+        }
+    }
+
+    /** When a contact had read up to which message, which Telegram shows as a message's read time. */
+    private static void createReads(SQLiteDatabase db) {
+        db.execSQL("CREATE TABLE reads (peer INTEGER NOT NULL, max_id INTEGER NOT NULL, date INTEGER NOT NULL)");
+    }
+
+    synchronized void addRead(long peer, int maxId, int date) {
+        ContentValues values = new ContentValues();
+        values.put("peer", peer);
+        values.put("max_id", maxId);
+        values.put("date", date);
+        getWritableDatabase().insert("reads", null, values);
+    }
+
+    /** Returns when the contact first had read this message, or 0 when that is not known. */
+    synchronized int readDate(long peer, int messageId) {
+        try (Cursor cursor = getReadableDatabase().rawQuery("SELECT MIN(date) FROM reads WHERE peer = ? AND max_id >= ?",
+                new String[]{String.valueOf(peer), String.valueOf(messageId)})) {
+            return cursor.moveToFirst() ? cursor.getInt(0) : 0;
+        }
+    }
+
+    /** An edit gives the engine's message a new uuid, and Telegram must keep seeing the same message. */
+    synchronized void replaceUuid(String previous, String current) {
+        Integer id = messageIds.remove(previous);
+        ContentValues values = new ContentValues();
+        values.put("uuid", current);
+        getWritableDatabase().update("messages", values, "uuid = ?", new String[]{previous});
+        if (id != null) {
+            messageIds.put(current, id);
+        }
+    }
+
+    /**
+     * Runs work that may number many messages at once in one transaction. Each new id is a write,
+     * and a chat opened for the first time would otherwise wait for hundreds of separate commits.
+     */
+    synchronized <T> T inTransaction(java.util.function.Supplier<T> work) {
+        SQLiteDatabase db = getWritableDatabase();
+        db.beginTransaction();
+        try {
+            T result = work.get();
+            db.setTransactionSuccessful();
+            return result;
+        } finally {
+            db.endTransaction();
         }
     }
 

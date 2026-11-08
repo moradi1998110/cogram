@@ -11,6 +11,9 @@ import eu.siacs.conversations.entities.Conversation;
 import eu.siacs.conversations.services.XmppConnectionService;
 import eu.siacs.conversations.xmpp.Jid;
 import eu.siacs.conversations.xmpp.XmppConnection;
+import eu.siacs.conversations.xml.Namespace;
+import im.conversations.android.xmpp.model.fallback.Fallback;
+import im.conversations.android.xmpp.model.hints.Store;
 import im.conversations.android.xmpp.model.moderation.Moderate;
 import im.conversations.android.xmpp.model.retraction.Retract;
 import im.conversations.android.xmpp.model.stanza.Iq;
@@ -129,6 +132,65 @@ public class ModerationManager extends AbstractManager {
         }
         this.service.updateConversationUi();
     }
+
+    /** Deletes one of our messages in a one-to-one chat on both sides (XEP-0424). */
+    public void retractOwn(final eu.siacs.conversations.entities.Message message) {
+        if (!(message.getConversation() instanceof Conversation conversation)) {
+            return;
+        }
+        final var packet = new Message(Message.Type.CHAT);
+        packet.setTo(conversation.getAddress().asBareJid());
+        final var retract = packet.addExtension(new Retract());
+        retract.setId(message.getMessageId());
+        final var fallback = packet.addExtension(new Fallback());
+        fallback.setAttribute("for", Namespace.RETRACTION);
+        packet.setBody(RETRACTION_FALLBACK);
+        packet.addExtension(new Store());
+        this.connection.sendMessagePacket(packet);
+        deleteLocally(message);
+    }
+
+    /** Deletes a message on this device only. */
+    public void deleteLocally(final eu.siacs.conversations.entities.Message message) {
+        if (message.getConversation() instanceof Conversation conversation) {
+            conversation.remove(message);
+        }
+        this.service.getNotificationService().clear(message);
+        if (getDatabase().deleteMessage(message.getUuid())) {
+            deleteAssociatedFile(message);
+        }
+        this.service.notifyMessageDeleted(message.getUuid());
+        this.service.updateConversationUi();
+    }
+
+    /** A contact, or another device of ours, deleting a message in a one-to-one chat. */
+    public void handlePrivateRetraction(final Message packet, final Jid counterpart) {
+        final var retraction = packet.getExtension(Retract.class);
+        final var id = retraction == null ? null : retraction.getId();
+        final var conversation = this.service.find(getAccount(), counterpart.asBareJid());
+        if (id == null || conversation == null || conversation.getMode() != Conversation.MODE_SINGLE) {
+            return;
+        }
+        // Only the sender may retract, so a contact's retraction only finds messages they sent.
+        final boolean received = !packet.fromAccount(getAccount());
+        eu.siacs.conversations.entities.Message message =
+                conversation.findMessageWithUuidOrRemoteId(id, null, received);
+        if (message == null) {
+            message = getDatabase().getMessageWithUuidOrRemoteId(conversation, id);
+            if (message != null
+                    && (message.getStatus() == eu.siacs.conversations.entities.Message.STATUS_RECEIVED) != received) {
+                message = null;
+            }
+        }
+        if (message == null) {
+            Log.d(Config.LOGTAG, "received retraction for unknown message " + id);
+            return;
+        }
+        deleteLocally(message);
+    }
+
+    private static final String RETRACTION_FALLBACK =
+            "This person attempted to retract a previous message, but it's unsupported by your client.";
 
     private void deleteAssociatedFile(final eu.siacs.conversations.entities.Message message) {
         if (message.isFileOrImage()) {

@@ -54,7 +54,9 @@ import eu.siacs.conversations.services.XmppConnectionService;
 import eu.siacs.conversations.ui.interfaces.OnAvatarPublication;
 import eu.siacs.conversations.xmpp.Jid;
 import eu.siacs.conversations.xmpp.jingle.RtpCapability;
+import eu.siacs.conversations.xmpp.manager.ModerationManager;
 import eu.siacs.conversations.xmpp.manager.PresenceManager;
+import eu.siacs.conversations.xmpp.manager.ReactionManager;
 
 /**
  * Serves one-to-one chats from the Conversations engine. Messages are sent unencrypted for now, and
@@ -90,6 +92,26 @@ final class XmppBackend implements GatewayBackend {
     private final XmppConnectionService.OnConversationUpdate conversationListener = this::scheduleSync;
     private final XmppConnectionService.OnRosterUpdate rosterListener = this::scheduleSync;
     private final ArrayList<Runnable> waiting = new ArrayList<>();
+    // Messages the engine deleted, which Telegram learns about with the next sync.
+    private final Set<Integer> pendingDeletes = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    // What Telegram last received of each message's text and reactions, so changes are sent as edits.
+    private final Map<Integer, String> snapshots = new HashMap<>();
+    // Called from the engine's threads, so it takes no lock of this class, which calls into the engine.
+    private final XmppConnectionService.OnMessageChange messageChange = new XmppConnectionService.OnMessageChange() {
+        @Override
+        public void onMessageReplaced(Message message, String previousUuid) {
+            ids.replaceUuid(previousUuid, message.getUuid());
+        }
+
+        @Override
+        public void onMessageDeleted(String uuid) {
+            int id = ids.findMessage(uuid);
+            if (id != 0) {
+                pendingDeletes.add(id);
+                scheduleSync();
+            }
+        }
+    };
     private final Map<Long, Integer> readOutboxMax = new HashMap<>();
     // Telegram knows photos by number, and the engine knows avatars by their hash.
     private final Map<Long, String> avatarsByPhotoId = new HashMap<>();
@@ -184,6 +206,7 @@ final class XmppBackend implements GatewayBackend {
         }
         connected.setOnConversationListChangedListener(conversationListener);
         connected.setOnRosterUpdateListener(rosterListener);
+        connected.setOnMessageChangeListener(messageChange);
         Account account;
         synchronized (this) {
             account = account();
@@ -212,12 +235,37 @@ final class XmppBackend implements GatewayBackend {
         UpdatesListener target;
         synchronized (this) {
             target = listener;
+            // A first sync after sign-in numbers the whole archive, which only one commit keeps fast.
+            ids.inTransaction(() -> {
+                collectUpdates(updates);
+                return null;
+            });
+        }
+        if (BuildVars.LOGS_ENABLED) {
+            FileLog.d("cogram: sync updates = " + updates.size() + " pts = " + pts + " listener = " + (target != null));
+        }
+        if (target != null) {
+            for (TLRPC.Updates update : updates) {
+                target.onUpdates(update);
+            }
+        }
+    }
+
+    private void collectUpdates(ArrayList<TLRPC.Updates> updates) {
+        {
             for (Conversation conversation : singleChats()) {
                 long peerId = peerId(conversation);
                 int readMax = 0;
                 for (Message message : loadedMessages(conversation)) {
-                    if (ids.findMessage(message.getUuid()) == 0 && !(isMedia(message) && isDownloading(message))) {
+                    int known = ids.findMessage(message.getUuid());
+                    if (known == 0 && !(isMedia(message) && isDownloading(message))) {
                         updates.add(createNewMessageUpdate(message, peerId));
+                        snapshots.put(ids.findMessage(message.getUuid()), snapshot(message));
+                    } else if (known != 0) {
+                        TLRPC.Updates change = changeUpdate(message, known, peerId);
+                        if (change != null) {
+                            updates.add(change);
+                        }
                     }
                     if (message.getStatus() == Message.STATUS_SEND_DISPLAYED) {
                         readMax = Math.max(readMax, ids.messageId(message.getUuid(), message.getTimeSent()));
@@ -227,7 +275,16 @@ final class XmppBackend implements GatewayBackend {
                 if (readMax > (known == null ? 0 : known)) {
                     readOutboxMax.put(peerId, readMax);
                     updates.add(createReadOutboxUpdate(peerId, readMax));
+                    if (known != null) {
+                        // Seen happening now, unlike reads found at start that happened while the app was closed.
+                        ids.addRead(peerId, readMax, now());
+                    }
                 }
+            }
+            if (!pendingDeletes.isEmpty()) {
+                ArrayList<Integer> deleted = new ArrayList<>(pendingDeletes);
+                pendingDeletes.removeAll(deleted);
+                updates.add(deleteUpdate(deleted));
             }
             for (Contact contact : pendingRequestsWithoutChat()) {
                 if (ids.findMessage(CONTACT_REQUEST_PREFIX + contact.getAddress().asBareJid()) == 0) {
@@ -244,14 +301,6 @@ final class XmppBackend implements GatewayBackend {
             }
             if (!changed.isEmpty()) {
                 updates.add(createUsersUpdate(changed));
-            }
-        }
-        if (BuildVars.LOGS_ENABLED) {
-            FileLog.d("cogram: sync updates = " + updates.size() + " pts = " + pts + " listener = " + (target != null));
-        }
-        if (target != null) {
-            for (TLRPC.Updates update : updates) {
-                target.onUpdates(update);
             }
         }
     }
@@ -301,6 +350,163 @@ final class XmppBackend implements GatewayBackend {
         TLRPC.TL_updateShort update = new TLRPC.TL_updateShort();
         update.update = read;
         return update;
+    }
+
+    /** The parts of a message an edit, a finished download or a reaction can change. */
+    private static String snapshot(Message message) {
+        StringBuilder snapshot = new StringBuilder(String.valueOf(message.getBody()));
+        for (eu.siacs.conversations.entities.Reaction reaction : message.getReactions()) {
+            snapshot.append('\u0000').append(reaction.normalizedReaction()).append(reaction.received);
+        }
+        return snapshot.toString();
+    }
+
+    /** Returns an edit or reactions update when the message changed since Telegram last got it. */
+    private TLRPC.Updates changeUpdate(Message message, int id, long peerId) {
+        String snapshot = snapshot(message);
+        String previous = snapshots.put(id, snapshot);
+        if (previous == null || previous.equals(snapshot)) {
+            return null;
+        }
+        String previousBody = previous.split("\u0000", -1)[0];
+        if (!previousBody.equals(String.valueOf(message.getBody()))) {
+            return editUpdate(toTl(message, peerId));
+        }
+        TL_update.TL_updateMessageReactions reactions = new TL_update.TL_updateMessageReactions();
+        reactions.peer = peerUser(peerId);
+        reactions.msg_id = id;
+        reactions.reactions = reactionsOf(message);
+        TLRPC.TL_updates updates = new TLRPC.TL_updates();
+        updates.updates.add(reactions);
+        updates.date = now();
+        return updates;
+    }
+
+    private TLRPC.Updates editUpdate(TLRPC.Message tl) {
+        pts++;
+        savePts();
+        TL_update.TL_updateEditMessage edit = new TL_update.TL_updateEditMessage();
+        edit.message = tl;
+        edit.pts = pts;
+        edit.pts_count = 1;
+        TLRPC.TL_updates updates = new TLRPC.TL_updates();
+        updates.updates.add(edit);
+        updates.date = now();
+        return updates;
+    }
+
+    private TLRPC.Updates deleteUpdate(List<Integer> deleted) {
+        pts += deleted.size();
+        savePts();
+        TL_update.TL_updateDeleteMessages delete = new TL_update.TL_updateDeleteMessages();
+        delete.messages.addAll(deleted);
+        delete.pts = pts;
+        delete.pts_count = deleted.size();
+        TLRPC.TL_updates updates = new TLRPC.TL_updates();
+        updates.updates.add(delete);
+        updates.date = now();
+        return updates;
+    }
+
+    /** Reactions counted by emoji, with ours marked chosen so Telegram lets us take them back. */
+    private static TLRPC.TL_messageReactions reactionsOf(Message message) {
+        LinkedHashMap<String, int[]> counts = new LinkedHashMap<>();
+        for (eu.siacs.conversations.entities.Reaction reaction : message.getReactions()) {
+            int[] count = counts.get(reaction.normalizedReaction());
+            if (count == null) {
+                count = new int[2];
+                counts.put(reaction.normalizedReaction(), count);
+            }
+            count[0]++;
+            if (!reaction.received) {
+                count[1] = 1;
+            }
+        }
+        TLRPC.TL_messageReactions reactions = new TLRPC.TL_messageReactions();
+        int order = 0;
+        for (Map.Entry<String, int[]> entry : counts.entrySet()) {
+            TLRPC.TL_reactionCount count = new TLRPC.TL_reactionCount();
+            TLRPC.TL_reactionEmoji emoji = new TLRPC.TL_reactionEmoji();
+            emoji.emoticon = entry.getKey();
+            count.reaction = emoji;
+            count.count = entry.getValue()[0];
+            if (entry.getValue()[1] != 0) {
+                count.chosen = true;
+                count.chosen_order = order++;
+                count.flags |= TLObject.FLAG_0;
+            }
+            reactions.results.add(count);
+        }
+        return reactions;
+    }
+
+    /**
+     * Conversations replies by quoting the message in "> " lines above the answer. The quote is
+     * matched to the message it came from, so Telegram shows a reply header instead of the quote.
+     */
+    private static final class Quote {
+        final String quoted;
+        final String text;
+
+        Quote(String quoted, String text) {
+            this.quoted = quoted;
+            this.text = text;
+        }
+
+        static Quote of(String body) {
+            if (body == null || !body.startsWith(">")) {
+                return null;
+            }
+            String[] lines = body.split("\n", -1);
+            StringBuilder quoted = new StringBuilder();
+            int line = 0;
+            while (line < lines.length && lines[line].startsWith(">")) {
+                String content = lines[line].substring(1);
+                if (content.startsWith(" ")) {
+                    content = content.substring(1);
+                }
+                if (quoted.length() > 0) {
+                    quoted.append('\n');
+                }
+                quoted.append(content);
+                line++;
+            }
+            StringBuilder text = new StringBuilder();
+            for (; line < lines.length; line++) {
+                if (text.length() > 0) {
+                    text.append('\n');
+                }
+                text.append(lines[line]);
+            }
+            String answer = text.toString().trim();
+            String quote = quoted.toString().trim();
+            return answer.isEmpty() || quote.isEmpty() ? null : new Quote(quote, answer);
+        }
+    }
+
+    /** The text Telegram shows for a message, without a quote it replies with. */
+    private static String shownText(Message message) {
+        Quote quote = Quote.of(message.getBody());
+        return quote == null ? message.getBody() : quote.text;
+    }
+
+    /** Finds the newest earlier message in the chat whose text the quote is taken from. */
+    private int quotedMessageId(Message message, Quote quote) {
+        if (!(message.getConversation() instanceof Conversation)) {
+            return 0;
+        }
+        List<Message> messages = loadedMessages((Conversation) message.getConversation());
+        for (int a = messages.size() - 1; a >= 0; a--) {
+            Message candidate = messages.get(a);
+            if (candidate.getTimeSent() >= message.getTimeSent() || candidate.getType() != Message.TYPE_TEXT) {
+                continue;
+            }
+            String text = shownText(candidate);
+            if (text != null && (text.trim().equals(quote.quoted) || text.trim().startsWith(quote.quoted))) {
+                return ids.messageId(candidate.getUuid(), candidate.getTimeSent());
+            }
+        }
+        return 0;
     }
 
     private void savePts() {
@@ -360,6 +566,10 @@ final class XmppBackend implements GatewayBackend {
             case Message.ENCRYPTION_AXOLOTL_FAILED:
                 return TEXT_UNREADABLE;
             default:
+                if (message.isOob() && message.getBody() != null && message.getBody().startsWith("null|")) {
+                    // An older engine lost the link of a file while checking its size.
+                    return TEXT_FILE;
+                }
                 return message.getType() == Message.TYPE_TEXT ? message.getBody() : TEXT_FILE;
         }
     }
@@ -382,6 +592,25 @@ final class XmppBackend implements GatewayBackend {
         if (isMedia(message)) {
             tl.message = "";
             tl.media = media(message, tl.id, tl.date);
+        } else if (message.getType() == Message.TYPE_TEXT && !TEXT_UNREADABLE.equals(tl.message)) {
+            Quote quote = Quote.of(message.getBody());
+            int replyTo = quote == null ? 0 : quotedMessageId(message, quote);
+            if (replyTo != 0) {
+                tl.message = quote.text;
+                TLRPC.TL_messageReplyHeader header = new TLRPC.TL_messageReplyHeader();
+                header.reply_to_msg_id = replyTo;
+                header.flags |= TLObject.FLAG_4;
+                tl.reply_to = header;
+                tl.flags |= TLObject.FLAG_3;
+            }
+        }
+        if (message.edited()) {
+            tl.edit_date = tl.date;
+            tl.flags |= TLObject.FLAG_15;
+        }
+        if (!message.getReactions().isEmpty()) {
+            tl.reactions = reactionsOf(message);
+            tl.flags |= TLObject.FLAG_20;
         }
         return tl;
     }
@@ -1338,12 +1567,15 @@ final class XmppBackend implements GatewayBackend {
         boolean aroundOffset = addOffset < 0;
         long before = offsetId == 0 || aroundOffset ? -1 : ids.messageTime(offsetId) + 1;
         int scan = aroundOffset ? HISTORY_AROUND_LIMIT : limit * HISTORY_SCAN_FACTOR;
-        ArrayList<TLRPC.Message> newestFirst = new ArrayList<>();
-        for (Message message : service.databaseBackend.getMessages(conversation, scan, before)) {
-            if (isShown(message)) {
-                newestFirst.add(toTl(message, userId));
+        ArrayList<TLRPC.Message> newestFirst = ids.inTransaction(() -> {
+            ArrayList<TLRPC.Message> converted = new ArrayList<>();
+            for (Message message : service.databaseBackend.getMessages(conversation, scan, before)) {
+                if (isShown(message)) {
+                    converted.add(toTl(message, userId));
+                }
             }
-        }
+            return converted;
+        });
         if (newestFirst.isEmpty() && hasPendingRequest(conversation.getContact())) {
             newestFirst.add(contactRequestMessage(conversation.getContact()));
         }
@@ -1378,8 +1610,26 @@ final class XmppBackend implements GatewayBackend {
 
     @Override
     public synchronized TLRPC.TL_updateShortSentMessage sendText(long userId, String text) {
+        return sendText(userId, text, 0);
+    }
+
+    /**
+     * A reply goes out the way Conversations writes one, with the replied text quoted above, which
+     * every XMPP client shows and which turns back into Telegram's reply header here.
+     */
+    @Override
+    public synchronized TLRPC.TL_updateShortSentMessage sendText(long userId, String text, int replyToId) {
         Conversation conversation = conversation(userId);
-        Message message = new Message(conversation, text, encryptionFor(conversation));
+        Message replied = replyToId == 0 ? null : engineMessage(replyToId);
+        String body = text;
+        if (replied != null && replied.getType() == Message.TYPE_TEXT && shownText(replied) != null) {
+            StringBuilder quoted = new StringBuilder();
+            for (String line : shownText(replied).split("\n")) {
+                quoted.append("> ").append(line).append('\n');
+            }
+            body = quoted + text;
+        }
+        Message message = new Message(conversation, body, encryptionFor(conversation));
         int id = ids.messageId(message.getUuid(), message.getTimeSent());
         pts++;
         savePts();
@@ -1393,6 +1643,211 @@ final class XmppBackend implements GatewayBackend {
         sent.pts_count = 1;
         sent.date = (int) (message.getTimeSent() / 1000);
         return sent;
+    }
+
+    /** The engine's message behind a Telegram id, from memory or else the engine's database. */
+    private Message engineMessage(int id) {
+        String uuid = ids.messageUuid(id);
+        if (uuid == null) {
+            return null;
+        }
+        Message message = findMessage(uuid);
+        if (message != null) {
+            return message;
+        }
+        for (Conversation conversation : singleChats()) {
+            message = service.databaseBackend.getMessageWithUuidOrRemoteId(conversation, uuid);
+            if (message != null && uuid.equals(message.getUuid())) {
+                return message;
+            }
+        }
+        return null;
+    }
+
+    private long peerOf(Message message) {
+        return ids.peerId(message.getConversation().getAddress().asBareJid().toString());
+    }
+
+    /** Corrects one of our text messages (XEP-0308), which the other side shows as edited. */
+    @Override
+    public synchronized TLRPC.Updates editText(long userId, int id, String text) {
+        Message message = engineMessage(id);
+        if (message == null || message.getStatus() == Message.STATUS_RECEIVED || message.getType() != Message.TYPE_TEXT
+                || !(message.getConversation() instanceof Conversation)) {
+            return null;
+        }
+        Conversation conversation = (Conversation) message.getConversation();
+        Quote quote = Quote.of(message.getBody());
+        String body = text;
+        if (quote != null && quotedMessageId(message, quote) != 0) {
+            // A reply keeps its quote, which is what marks it as a reply.
+            body = message.getBody().substring(0, message.getBody().length() - quote.text.length()) + text;
+        }
+        String previousUuid = message.getUuid();
+        message.putEdited(new Message.BodyVersion(body, encryptionFor(conversation), null));
+        service.updateMessage(message, previousUuid);
+        service.sendMessage(message);
+        snapshots.put(id, snapshot(message));
+        TLRPC.Message tl = toTl(message, userId);
+        tl.edit_date = now();
+        return editUpdate(tl);
+    }
+
+    /** Sets our reactions to a message (XEP-0444), replacing the ones we gave it before. */
+    @Override
+    public synchronized TLRPC.Updates react(long userId, int id, List<String> emojis) {
+        Message message = engineMessage(id);
+        Account account = account();
+        if (message == null || account == null) {
+            return null;
+        }
+        account.getXmppConnection().getManager(ReactionManager.class).sendReactions(message, emojis);
+        snapshots.put(id, snapshot(message));
+        TL_update.TL_updateMessageReactions reactions = new TL_update.TL_updateMessageReactions();
+        reactions.peer = peerUser(userId);
+        reactions.msg_id = id;
+        reactions.reactions = reactionsOf(message);
+        TLRPC.TL_updates updates = new TLRPC.TL_updates();
+        updates.updates.add(reactions);
+        updates.date = now();
+        return updates;
+    }
+
+    /**
+     * Deletes messages here, and for our own messages also on the other side when Telegram asks to
+     * delete for both (XEP-0424). XMPP lets no one retract a message someone else sent.
+     */
+    @Override
+    public synchronized TLRPC.TL_messages_affectedMessages deleteMessages(List<Integer> messageIds, boolean revoke) {
+        Account account = account();
+        ModerationManager moderation = account == null ? null : account.getXmppConnection().getManager(ModerationManager.class);
+        for (int id : messageIds) {
+            Message message = engineMessage(id);
+            if (message == null || moderation == null) {
+                continue;
+            }
+            if (revoke && message.getStatus() != Message.STATUS_RECEIVED) {
+                moderation.retractOwn(message);
+            } else {
+                moderation.deleteLocally(message);
+            }
+            snapshots.remove(id);
+        }
+        // Telegram removes them itself once this returns.
+        pendingDeletes.removeAll(messageIds);
+        pts += messageIds.size();
+        savePts();
+        TLRPC.TL_messages_affectedMessages affected = new TLRPC.TL_messages_affectedMessages();
+        affected.pts = pts;
+        affected.pts_count = messageIds.size();
+        return affected;
+    }
+
+    /**
+     * XMPP has no forwarding, so a forwarded message goes out as a copy. Telegram still shows it
+     * with the forward header, and a file keeps pointing at the original's copy on this device.
+     */
+    @Override
+    public synchronized TLRPC.Updates forward(List<Integer> messageIds, List<Long> randomIds, long toUserId) {
+        Conversation conversation = conversation(toUserId);
+        if (conversation == null) {
+            return null;
+        }
+        TLRPC.TL_updates updates = new TLRPC.TL_updates();
+        for (int a = 0; a < messageIds.size() && a < randomIds.size(); a++) {
+            Message original = engineMessage(messageIds.get(a));
+            if (original == null) {
+                continue;
+            }
+            TLRPC.Message originalTl = toTl(original, peerOf(original));
+            Message copy;
+            if (isMedia(original)) {
+                File source = service.getFileBackend().getFile(original);
+                if (!source.exists()) {
+                    continue;
+                }
+                File upload = new File(context.getCacheDir(), "forward_" + original.getUuid());
+                try {
+                    copyFile(source, upload);
+                } catch (Exception e) {
+                    FileLog.e(e);
+                    continue;
+                }
+                copy = new Message(conversation, "", encryptionFor(conversation));
+                copy.setCounterpart(conversation.getNextCounterpart());
+                copy.setType(original.getType() == Message.TYPE_IMAGE ? Message.TYPE_IMAGE : Message.TYPE_FILE);
+                ids.messageId(copy.getUuid(), copy.getTimeSent());
+                service.attachFile(copy, Uri.fromFile(upload), original.getMimeType(), upload::delete);
+            } else {
+                String text = shownText(original);
+                if (text == null || TEXT_UNREADABLE.equals(textOf(original))) {
+                    continue;
+                }
+                copy = new Message(conversation, text, encryptionFor(conversation));
+                ids.messageId(copy.getUuid(), copy.getTimeSent());
+                service.sendMessage(copy);
+            }
+            int id = ids.messageId(copy.getUuid(), copy.getTimeSent());
+            TLRPC.TL_message tl = new TLRPC.TL_message();
+            tl.id = id;
+            tl.out = true;
+            tl.date = (int) (copy.getTimeSent() / 1000);
+            tl.message = originalTl.message;
+            tl.media = originalTl.media;
+            tl.peer_id = peerUser(toUserId);
+            tl.from_id = peerUser(selfId);
+            tl.dialog_id = toUserId;
+            TLRPC.TL_messageFwdHeader header = new TLRPC.TL_messageFwdHeader();
+            header.from_id = originalTl.from_id;
+            header.date = originalTl.date;
+            header.flags |= TLObject.FLAG_0;
+            tl.fwd_from = header;
+            tl.flags = TLObject.FLAG_8 | TLObject.FLAG_9 | TLObject.FLAG_2;
+            snapshots.put(id, snapshot(copy));
+            pts++;
+            savePts();
+            ids.setMessagePts(id, pts);
+            TL_update.TL_updateMessageID messageId = new TL_update.TL_updateMessageID();
+            messageId.id = id;
+            messageId.random_id = randomIds.get(a);
+            TL_update.TL_updateNewMessage newMessage = new TL_update.TL_updateNewMessage();
+            newMessage.message = tl;
+            newMessage.pts = pts;
+            newMessage.pts_count = 1;
+            updates.updates.add(messageId);
+            updates.updates.add(newMessage);
+        }
+        updates.date = now();
+        return updates;
+    }
+
+    private static void copyFile(File source, File target) throws java.io.IOException {
+        try (java.io.InputStream in = new java.io.FileInputStream(source); java.io.OutputStream out = new FileOutputStream(target)) {
+            byte[] buffer = new byte[64 * 1024];
+            int read;
+            while ((read = in.read(buffer)) > 0) {
+                out.write(buffer, 0, read);
+            }
+        }
+    }
+
+    /** Returns when the contact read the message, or 0 when it happened while the app was closed. */
+    @Override
+    public synchronized int readDate(long userId, int id) {
+        return ids.readDate(userId, id);
+    }
+
+    /** Telegram fetches replied messages it has not loaded, to show them in reply headers. */
+    @Override
+    public synchronized List<TLRPC.Message> messages(List<Integer> messageIds) {
+        ArrayList<TLRPC.Message> result = new ArrayList<>();
+        for (int id : messageIds) {
+            Message message = engineMessage(id);
+            if (message != null && message.getConversation() instanceof Conversation) {
+                result.add(toTl(message, peerOf(message)));
+            }
+        }
+        return result;
     }
 
     @Override

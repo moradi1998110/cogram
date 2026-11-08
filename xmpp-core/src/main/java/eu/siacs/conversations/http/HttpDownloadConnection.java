@@ -391,8 +391,20 @@ public class HttpDownloadConnection implements Transferable {
         }
     }
 
+    private String downloadUrl() {
+        final String ref = mUrl.fragment();
+        if (ref != null && AesGcmURL.IV_KEY.matcher(ref).matches()) {
+            return AesGcmURL.toAesGcmUrl(mUrl);
+        }
+        return mUrl.toString();
+    }
+
     private void persistFileSize(final long size) {
-        final Message.FileParams fileParams = message.getFileParams();
+        final Message.FileParams params = message.getFileParams();
+        // The params may have been read before the body held the link, and a body of "null|size"
+        // would lose the file for good, so the link being downloaded is the one kept.
+        final Message.FileParams fileParams = new Message.FileParams();
+        fileParams.url = params.url != null ? params.url : downloadUrl();
         if (message.getEncryption() == Message.ENCRYPTION_AXOLOTL && transportSecurity != null) {
             // store the file size of the clear text file. If we resume the download we will add the
             // auth tag size again

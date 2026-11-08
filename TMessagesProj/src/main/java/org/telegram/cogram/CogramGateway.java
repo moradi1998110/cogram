@@ -172,7 +172,48 @@ public final class CogramGateway {
             return history((TLRPC.TL_messages_getHistory) request);
         } else if (request instanceof TLRPC.TL_messages_sendMessage) {
             TLRPC.TL_messages_sendMessage send = (TLRPC.TL_messages_sendMessage) request;
-            return backend.sendText(send.peer.user_id, send.message);
+            int replyTo = send.reply_to instanceof TLRPC.TL_inputReplyToMessage ? ((TLRPC.TL_inputReplyToMessage) send.reply_to).reply_to_msg_id : 0;
+            return backend.sendText(send.peer.user_id, send.message, replyTo);
+        } else if (request instanceof TLRPC.TL_messages_editMessage) {
+            TLRPC.TL_messages_editMessage edit = (TLRPC.TL_messages_editMessage) request;
+            if (edit.message == null || edit.media != null) {
+                throw new GatewayError("MESSAGE_EDIT_TIME_EXPIRED");
+            }
+            TLRPC.Updates updates = backend.editText(edit.peer.user_id, edit.id, edit.message);
+            if (updates == null) {
+                throw new GatewayError("MESSAGE_EDIT_TIME_EXPIRED");
+            }
+            return updates;
+        } else if (request instanceof TLRPC.TL_messages_sendReaction) {
+            TLRPC.TL_messages_sendReaction reaction = (TLRPC.TL_messages_sendReaction) request;
+            ArrayList<String> emojis = new ArrayList<>();
+            for (TLRPC.Reaction chosen : reaction.reaction) {
+                if (chosen instanceof TLRPC.TL_reactionEmoji) {
+                    emojis.add(((TLRPC.TL_reactionEmoji) chosen).emoticon);
+                }
+            }
+            return backend.react(reaction.peer.user_id, reaction.msg_id, emojis);
+        } else if (request instanceof TLRPC.TL_messages_deleteMessages) {
+            TLRPC.TL_messages_deleteMessages delete = (TLRPC.TL_messages_deleteMessages) request;
+            return backend.deleteMessages(delete.id, delete.revoke);
+        } else if (request instanceof TLRPC.TL_messages_forwardMessages) {
+            TLRPC.TL_messages_forwardMessages forward = (TLRPC.TL_messages_forwardMessages) request;
+            return backend.forward(forward.id, forward.random_id, forward.to_peer.user_id);
+        } else if (request instanceof TLRPC.TL_messages_getOutboxReadDate) {
+            TLRPC.TL_messages_getOutboxReadDate read = (TLRPC.TL_messages_getOutboxReadDate) request;
+            int date = backend.readDate(read.peer.user_id, read.msg_id);
+            if (date == 0) {
+                // Telegram then shows the message as read without a time.
+                throw new GatewayError("MESSAGE_TOO_OLD");
+            }
+            TLRPC.TL_outboxReadDate result = new TLRPC.TL_outboxReadDate();
+            result.date = date;
+            return result;
+        } else if (request instanceof TLRPC.TL_messages_getMessages) {
+            TLRPC.TL_messages_messages result = new TLRPC.TL_messages_messages();
+            result.messages.addAll(backend.messages(((TLRPC.TL_messages_getMessages) request).id));
+            result.users.addAll(backend.users());
+            return result;
         } else if (request instanceof TLRPC.TL_messages_sendMedia) {
             return sendMedia((TLRPC.TL_messages_sendMedia) request);
         } else if (request instanceof TLRPC.TL_messages_readHistory) {

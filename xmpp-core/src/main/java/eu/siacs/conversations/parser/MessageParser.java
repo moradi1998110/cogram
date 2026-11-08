@@ -814,6 +814,8 @@ public class MessageParser extends AbstractParser
                     && originalFrom != null
                     && originalFrom.isBareJid()) {
                 getManager(ModerationManager.class).handleRetraction(original);
+            } else if (packet.hasExtension(Retract.class) && !isTypeGroupChat) {
+                getManager(ModerationManager.class).handlePrivateRetraction(packet, counterpart);
             }
 
             // end no body

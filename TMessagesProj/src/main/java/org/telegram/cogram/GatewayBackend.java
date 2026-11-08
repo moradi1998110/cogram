@@ -118,6 +118,35 @@ public interface GatewayBackend {
         return Collections.emptyList();
     }
 
+    default TLRPC.TL_updateShortSentMessage sendText(long userId, String text, int replyToId) {
+        return sendText(userId, text);
+    }
+
+    default TLRPC.Updates editText(long userId, int id, String text) {
+        return null;
+    }
+
+    default TLRPC.Updates react(long userId, int id, List<String> emojis) {
+        return null;
+    }
+
+    default TLRPC.TL_messages_affectedMessages deleteMessages(List<Integer> ids, boolean revoke) {
+        return null;
+    }
+
+    default TLRPC.Updates forward(List<Integer> ids, List<Long> randomIds, long toUserId) {
+        return null;
+    }
+
+    /** Returns when the other side read a message of ours, or 0 when that is not known. */
+    default int readDate(long userId, int id) {
+        return 0;
+    }
+
+    default List<TLRPC.Message> messages(List<Integer> ids) {
+        return Collections.emptyList();
+    }
+
     /** Returns part of a file in a chat, or null when there is no such file. */
     default TLRPC.TL_upload_file mediaFile(long mediaId, long offset, int limit) {
         return null;
