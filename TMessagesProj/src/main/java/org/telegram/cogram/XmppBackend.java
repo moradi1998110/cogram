@@ -803,6 +803,8 @@ final class XmppBackend implements GatewayBackend {
         if (contact != null && (!contact.showInContactList() || hasPendingRequest(contact))) {
             settings.add_contact = true;
             settings.block_contact = true;
+            // Telegram decides whether to show the bar from the flags, which only serializing would set.
+            settings.flags = TLObject.FLAG_1 | TLObject.FLAG_2;
         }
         return settings;
     }
@@ -840,7 +842,8 @@ final class XmppBackend implements GatewayBackend {
     public synchronized TLRPC.UserFull fullUser(long userId) {
         TLRPC.TL_userFull full = new TLRPC.TL_userFull();
         full.id = userId;
-        full.settings = new TLRPC.TL_peerSettings();
+        // Telegram saves these over what it loaded for the chat's bar, so they must be the same.
+        full.settings = peerSettings(userId);
         full.notify_settings = new TLRPC.TL_peerNotifySettings();
         String avatar = avatarOf(userId);
         if (avatar != null && FileBackend.getAvatarFile(context, avatar).exists()) {
@@ -1074,10 +1077,23 @@ final class XmppBackend implements GatewayBackend {
         return result;
     }
 
+    /**
+     * OMEMO whenever the contact's client publishes OMEMO devices, as Conversations does, so its
+     * users don't see our messages flagged as unencrypted. New devices are trusted until verified.
+     */
+    private static int encryptionFor(Conversation conversation) {
+        int encryption = conversation.getNextEncryption();
+        if (encryption == Message.ENCRYPTION_AXOLOTL
+                && conversation.getAccount().getAxolotlService().hasEmptyDeviceList(conversation.getAddress().asBareJid())) {
+            return Message.ENCRYPTION_NONE;
+        }
+        return encryption;
+    }
+
     @Override
     public synchronized TLRPC.TL_updateShortSentMessage sendText(long userId, String text) {
         Conversation conversation = conversation(userId);
-        Message message = new Message(conversation, text, Message.ENCRYPTION_NONE);
+        Message message = new Message(conversation, text, encryptionFor(conversation));
         int id = ids.messageId(message.getUuid(), message.getTimeSent());
         pts++;
         savePts();
