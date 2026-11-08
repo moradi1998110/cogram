@@ -278,6 +278,9 @@ public final class CogramGateway {
             TLRPC.TL_messages_peerSettings result = new TLRPC.TL_messages_peerSettings();
             result.settings = backend.peerSettings(((TLRPC.TL_messages_getPeerSettings) request).peer.user_id);
             return result;
+        } else if (request instanceof TLRPC.TL_messages_hidePeerSettingsBar || request instanceof TLRPC.TL_messages_reportSpam) {
+            // Telegram remembers a closed bar itself, and XMPP has no spam reports, so blocking is all there is.
+            return new TLRPC.TL_boolTrue();
         } else if (request instanceof TL_phone.setCallRating) {
             return new TLRPC.TL_updates();
         } else if (request instanceof TL_phone.saveCallDebug || request instanceof TL_phone.sendSignalingData) {
