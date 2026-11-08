@@ -136,6 +136,13 @@ final class XmppIdMap extends SQLiteOpenHelper {
         return uuids;
     }
 
+    /** Returns the engine's id of a message, or null for an id Telegram was never given. */
+    synchronized String messageUuid(int id) {
+        try (Cursor cursor = getReadableDatabase().rawQuery("SELECT uuid FROM messages WHERE id = ?", new String[]{String.valueOf(id)})) {
+            return cursor.moveToFirst() ? cursor.getString(0) : null;
+        }
+    }
+
     /** Returns the time a message was sent, or -1 for an unknown id. */
     synchronized long messageTime(int id) {
         try (Cursor cursor = getReadableDatabase().rawQuery("SELECT time FROM messages WHERE id = ?", new String[]{String.valueOf(id)})) {

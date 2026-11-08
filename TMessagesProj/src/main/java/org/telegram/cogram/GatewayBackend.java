@@ -118,6 +118,17 @@ public interface GatewayBackend {
         return Collections.emptyList();
     }
 
+    /** Returns part of a file in a chat, or null when there is no such file. */
+    default TLRPC.TL_upload_file mediaFile(long mediaId, long offset, int limit) {
+        return null;
+    }
+
+    /** Sends a file Telegram uploaded, and returns the updates that tell Telegram it was sent. */
+    default TLRPC.Updates sendFile(long userId, java.io.File file, String mime, List<TLRPC.DocumentAttribute> attributes, boolean photo, long randomId) {
+        file.delete();
+        return null;
+    }
+
     /** Returns the engine's call handling, or null when the backend has no calls. */
     default XmppCalls calls() {
         return null;

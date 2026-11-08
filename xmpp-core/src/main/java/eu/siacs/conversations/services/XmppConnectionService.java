@@ -373,6 +373,27 @@ public class XmppConnectionService extends Service {
                 future, v -> encryptIfNeededAndSend(message), MoreExecutors.directExecutor());
     }
 
+    /**
+     * Sends a file as an already created message, for an app that needs the message's id before
+     * the file is copied. The file is sent as it is, and {@code done} runs once it has been copied.
+     */
+    public ListenableFuture<Void> attachFile(
+            final Message message, final Uri uri, final String type, final Runnable done) {
+        final var future =
+                Futures.submit(
+                        () -> {
+                            try {
+                                getFileBackend().copyFileToPrivateStorage(message, uri, type);
+                                getFileBackend().updateFileParams(message);
+                            } finally {
+                                done.run();
+                            }
+                        },
+                        FILE_ATTACHMENT_EXECUTOR);
+        return Futures.transformAsync(
+                future, v -> encryptIfNeededAndSend(message), MoreExecutors.directExecutor());
+    }
+
     private ListenableFuture<Void> submitAttachToConversation(
             final Uri uri, final String type, final Message message) {
         final AttachFileToConversationRunnable runnable =

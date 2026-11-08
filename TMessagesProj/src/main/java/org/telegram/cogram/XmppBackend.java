@@ -47,6 +47,7 @@ import eu.siacs.conversations.entities.Contact;
 import eu.siacs.conversations.entities.Conversation;
 import eu.siacs.conversations.entities.Message;
 import eu.siacs.conversations.entities.RtpSessionStatus;
+import eu.siacs.conversations.entities.Transferable;
 import eu.siacs.conversations.persistance.DatabaseBackend;
 import eu.siacs.conversations.persistance.FileBackend;
 import eu.siacs.conversations.services.XmppConnectionService;
@@ -75,6 +76,10 @@ final class XmppBackend implements GatewayBackend {
     private static final int CALL_HISTORY_SCAN = 500;
     private static final String CONTACT_REQUEST_PREFIX = "contact-request:";
     private static final String PREFERENCE_LAST_SEEN = "seen_";
+    // Avatars are numbered by their hash, which stays below this bit, so files never share a number with one.
+    private static final long MEDIA_ID_BASE = 1L << 62;
+    private static final long DOWNLOAD_TIMEOUT_MS = 5 * 60 * 1000L;
+    private static final long DOWNLOAD_POLL_MS = 250;
 
     private final Context context = ApplicationLoader.applicationContext;
     private final SharedPreferences preferences = context.getSharedPreferences("cogram_xmpp", Activity.MODE_PRIVATE);
@@ -211,7 +216,7 @@ final class XmppBackend implements GatewayBackend {
                 long peerId = peerId(conversation);
                 int readMax = 0;
                 for (Message message : loadedMessages(conversation)) {
-                    if (ids.findMessage(message.getUuid()) == 0) {
+                    if (ids.findMessage(message.getUuid()) == 0 && !(isMedia(message) && isDownloading(message))) {
                         updates.add(createNewMessageUpdate(message, peerId));
                     }
                     if (message.getStatus() == Message.STATUS_SEND_DISPLAYED) {
@@ -256,8 +261,8 @@ final class XmppBackend implements GatewayBackend {
         pts++;
         savePts();
         ids.setMessagePts(tl.id, pts);
-        if (tl instanceof TLRPC.TL_messageService) {
-            // A short update carries only text, so call entries travel as whole messages.
+        if (tl instanceof TLRPC.TL_messageService || !(tl.media instanceof TLRPC.TL_messageMediaEmpty)) {
+            // A short update carries only text, so call entries and files travel as whole messages.
             return wholeMessageUpdate(tl);
         }
         TLRPC.TL_updateShortMessage update = new TLRPC.TL_updateShortMessage();
@@ -374,7 +379,135 @@ final class XmppBackend implements GatewayBackend {
         tl.dialog_id = peerId;
         tl.media = new TLRPC.TL_messageMediaEmpty();
         tl.flags = TLObject.FLAG_8 | TLObject.FLAG_9;
+        if (isMedia(message)) {
+            tl.message = "";
+            tl.media = media(message, tl.id, tl.date);
+        }
         return tl;
+    }
+
+    /** A file or a link to one, which Conversations sends as the message's whole body. */
+    private static boolean isMedia(Message message) {
+        return !TEXT_UNREADABLE.equals(textOf(message)) && (message.isFileOrImage() || message.treatAsDownloadable());
+    }
+
+    /** The engine fetches small files on arrival, and a message shows once it can show the file too. */
+    private static boolean isDownloading(Message message) {
+        Transferable transferable = message.getTransferable();
+        if (transferable == null) {
+            return false;
+        }
+        int status = transferable.getStatus();
+        return status == Transferable.STATUS_CHECKING || status == Transferable.STATUS_DOWNLOADING;
+    }
+
+    private static long mediaId(int messageId) {
+        return MEDIA_ID_BASE | (messageId & 0xffffffffL);
+    }
+
+    static boolean isMediaId(long id) {
+        return (id & MEDIA_ID_BASE) != 0;
+    }
+
+    /**
+     * Files become Telegram documents, with voice messages and pictures marked so that Telegram's
+     * voice player and photo cells show them. Pictures not yet downloaded stay documents, since
+     * Telegram needs a picture's size before it can lay out a photo.
+     */
+    private TLRPC.MessageMedia media(Message message, int messageId, int date) {
+        File file = service.getFileBackend().getFile(message);
+        boolean local = file.exists() && !isDownloading(message);
+        Message.FileParams params = message.getFileParams();
+        String mime = message.getMimeType();
+        if (mime == null) {
+            mime = "application/octet-stream";
+        }
+        long size = local ? file.length() : params.getSize();
+        int width = params.width;
+        int height = params.height;
+        if (local && mime.startsWith("image/") && (width == 0 || height == 0)) {
+            BitmapFactory.Options bounds = new BitmapFactory.Options();
+            bounds.inJustDecodeBounds = true;
+            BitmapFactory.decodeFile(file.getAbsolutePath(), bounds);
+            width = bounds.outWidth;
+            height = bounds.outHeight;
+        }
+        long id = mediaId(messageId);
+        TLRPC.MessageMedia media;
+        if (local && width > 0 && height > 0 && (mime.equals("image/jpeg") || mime.equals("image/png") || mime.equals("image/webp"))) {
+            TLRPC.TL_photo photo = new TLRPC.TL_photo();
+            photo.id = id;
+            photo.access_hash = id;
+            photo.file_reference = new byte[0];
+            photo.date = date;
+            photo.dc_id = PHOTO_DC_ID;
+            TLRPC.TL_photoSize photoSize = new TLRPC.TL_photoSize();
+            photoSize.type = "y";
+            photoSize.w = width;
+            photoSize.h = height;
+            photoSize.size = (int) size;
+            photo.sizes.add(photoSize);
+            TLRPC.TL_messageMediaPhoto photoMedia = new TLRPC.TL_messageMediaPhoto();
+            photoMedia.photo = photo;
+            photoMedia.flags = TLObject.FLAG_0;
+            media = photoMedia;
+        } else {
+            TLRPC.TL_document document = new TLRPC.TL_document();
+            document.id = id;
+            document.access_hash = id;
+            document.file_reference = new byte[0];
+            document.date = date;
+            document.mime_type = mime;
+            document.size = size;
+            document.dc_id = PHOTO_DC_ID;
+            String name = fileName(message, file);
+            TLRPC.TL_documentAttributeFilename fileName = new TLRPC.TL_documentAttributeFilename();
+            fileName.file_name = name;
+            document.attributes.add(fileName);
+            int duration = (params.runtime + 999) / 1000;
+            if (mime.startsWith("audio/")) {
+                TLRPC.TL_documentAttributeAudio audio = new TLRPC.TL_documentAttributeAudio();
+                audio.voice = isVoice(name, mime);
+                audio.duration = duration;
+                audio.flags = audio.voice ? TLObject.FLAG_10 : 0;
+                document.attributes.add(audio);
+            } else if (mime.startsWith("video/")) {
+                TLRPC.TL_documentAttributeVideo video = new TLRPC.TL_documentAttributeVideo();
+                video.duration = duration;
+                video.w = width;
+                video.h = height;
+                document.attributes.add(video);
+            }
+            TLRPC.TL_messageMediaDocument documentMedia = new TLRPC.TL_messageMediaDocument();
+            documentMedia.document = document;
+            documentMedia.flags = TLObject.FLAG_0;
+            media = documentMedia;
+        }
+        // Telegram's parser fills in the file locations its loaders use.
+        SerializedData data = serialize(media);
+        return TLRPC.MessageMedia.TLdeserialize(data, data.readInt32(false), false);
+    }
+
+    private static String fileName(Message message, File file) {
+        if (file.exists()) {
+            return file.getName();
+        }
+        String url = message.getFileParams().url;
+        if (url != null) {
+            // The fragment of an aesgcm link is the file's key, which must never become its name.
+            String path = Uri.parse(url).getLastPathSegment();
+            if (!TextUtils.isEmpty(path)) {
+                return path;
+            }
+        }
+        return message.getUuid();
+    }
+
+    /** Conversations names its recordings this way, and other clients send voice as Ogg Opus. */
+    private static boolean isVoice(String name, String mime) {
+        String lower = name.toLowerCase(Locale.ROOT);
+        return lower.startsWith("recording") || lower.endsWith(".oga") || lower.endsWith(".opus")
+                || mime.equals("audio/ogg") || mime.equals("audio/opus");
     }
 
     /** The engine logs each call as a message, which Telegram shows as a call entry in the chat and the calls list. */
@@ -836,6 +969,159 @@ final class XmppBackend implements GatewayBackend {
             FileLog.e(e);
             return null;
         }
+    }
+
+    private synchronized Message findMessage(String uuid) {
+        if (service == null || uuid == null) {
+            return null;
+        }
+        for (Conversation conversation : singleChats()) {
+            Message message = conversation.findMessageWithUuid(uuid);
+            if (message != null) {
+                return message;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Serves part of a file in a chat, fetching it first when the engine has not, which can take a
+     * while. It is not synchronized, so the rest of the gateway keeps working meanwhile.
+     */
+    @Override
+    public TLRPC.TL_upload_file mediaFile(long mediaId, long offset, int limit) {
+        Message message = findMessage(ids.messageUuid((int) (mediaId & 0xffffffffL)));
+        if (message == null) {
+            return null;
+        }
+        File file = service.getFileBackend().getFile(message);
+        long deadline = System.currentTimeMillis() + DOWNLOAD_TIMEOUT_MS;
+        boolean requested = false;
+        while (!file.exists() || isDownloading(message)) {
+            if (!requested && !isDownloading(message)) {
+                service.getHttpConnectionManager().createNewDownloadConnection(message, true);
+                requested = true;
+            }
+            Transferable transferable = message.getTransferable();
+            if (System.currentTimeMillis() > deadline || requested && transferable != null
+                    && (transferable.getStatus() == Transferable.STATUS_FAILED || transferable.getStatus() == Transferable.STATUS_CANCELLED)) {
+                return null;
+            }
+            try {
+                Thread.sleep(DOWNLOAD_POLL_MS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return null;
+            }
+            file = service.getFileBackend().getFile(message);
+        }
+        try (RandomAccessFile input = new RandomAccessFile(file, "r")) {
+            int length = (int) Math.max(0, Math.min(limit, input.length() - offset));
+            byte[] bytes = new byte[length];
+            input.seek(offset);
+            input.readFully(bytes);
+            NativeByteBuffer buffer = new NativeByteBuffer(length);
+            buffer.buffer.put(bytes);
+            buffer.buffer.position(0);
+            TLRPC.TL_upload_file result = new TLRPC.TL_upload_file();
+            result.type = new TLRPC.TL_storage_fileUnknown();
+            result.mtime = (int) (file.lastModified() / 1000);
+            result.bytes = buffer;
+            return result;
+        } catch (Exception e) {
+            FileLog.e(e);
+            return null;
+        }
+    }
+
+    /**
+     * Sends a file Telegram uploaded through the engine's HTTP upload, encrypted with OMEMO when the
+     * chat's text would be. Telegram gets the message at once, with the file it already holds.
+     */
+    @Override
+    public synchronized TLRPC.Updates sendFile(long userId, File file, String mime, List<TLRPC.DocumentAttribute> attributes, boolean photo, long randomId) {
+        Conversation conversation = conversation(userId);
+        if (conversation == null) {
+            file.delete();
+            return null;
+        }
+        Message message = new Message(conversation, "", encryptionFor(conversation));
+        message.setCounterpart(conversation.getNextCounterpart());
+        message.setType(photo ? Message.TYPE_IMAGE : Message.TYPE_FILE);
+        int id = ids.messageId(message.getUuid(), message.getTimeSent());
+        int date = (int) (message.getTimeSent() / 1000);
+        // Read before the engine takes the file, since it deletes the upload once copied.
+        TLRPC.MessageMedia media = sentMedia(id, date, file, mime, attributes, photo);
+        service.attachFile(message, Uri.fromFile(file), mime, file::delete);
+
+        TLRPC.TL_message tl = new TLRPC.TL_message();
+        tl.id = id;
+        tl.out = true;
+        tl.date = date;
+        tl.message = "";
+        tl.peer_id = peerUser(userId);
+        tl.from_id = peerUser(selfId);
+        tl.dialog_id = userId;
+        tl.flags = TLObject.FLAG_8 | TLObject.FLAG_9;
+        tl.media = media;
+        pts++;
+        savePts();
+        ids.setMessagePts(id, pts);
+
+        TL_update.TL_updateMessageID messageId = new TL_update.TL_updateMessageID();
+        messageId.id = id;
+        messageId.random_id = randomId;
+        TL_update.TL_updateNewMessage newMessage = new TL_update.TL_updateNewMessage();
+        newMessage.message = tl;
+        newMessage.pts = pts;
+        newMessage.pts_count = 1;
+        TLRPC.TL_updates updates = new TLRPC.TL_updates();
+        updates.updates.add(messageId);
+        updates.updates.add(newMessage);
+        updates.date = now();
+        return updates;
+    }
+
+    private static TLRPC.MessageMedia sentMedia(int messageId, int date, File file, String mime, List<TLRPC.DocumentAttribute> attributes, boolean photo) {
+        long id = mediaId(messageId);
+        TLRPC.MessageMedia media;
+        if (photo) {
+            BitmapFactory.Options bounds = new BitmapFactory.Options();
+            bounds.inJustDecodeBounds = true;
+            BitmapFactory.decodeFile(file.getAbsolutePath(), bounds);
+            TLRPC.TL_photo tlPhoto = new TLRPC.TL_photo();
+            tlPhoto.id = id;
+            tlPhoto.access_hash = id;
+            tlPhoto.file_reference = new byte[0];
+            tlPhoto.date = date;
+            tlPhoto.dc_id = PHOTO_DC_ID;
+            TLRPC.TL_photoSize size = new TLRPC.TL_photoSize();
+            size.type = "y";
+            size.w = bounds.outWidth;
+            size.h = bounds.outHeight;
+            size.size = (int) file.length();
+            tlPhoto.sizes.add(size);
+            TLRPC.TL_messageMediaPhoto photoMedia = new TLRPC.TL_messageMediaPhoto();
+            photoMedia.photo = tlPhoto;
+            photoMedia.flags = TLObject.FLAG_0;
+            media = photoMedia;
+        } else {
+            TLRPC.TL_document document = new TLRPC.TL_document();
+            document.id = id;
+            document.access_hash = id;
+            document.file_reference = new byte[0];
+            document.date = date;
+            document.mime_type = mime;
+            document.size = file.length();
+            document.dc_id = PHOTO_DC_ID;
+            document.attributes.addAll(attributes);
+            TLRPC.TL_messageMediaDocument documentMedia = new TLRPC.TL_messageMediaDocument();
+            documentMedia.document = document;
+            documentMedia.flags = TLObject.FLAG_0;
+            media = documentMedia;
+        }
+        SerializedData data = serialize(media);
+        return TLRPC.MessageMedia.TLdeserialize(data, data.readInt32(false), false);
     }
 
     @Override

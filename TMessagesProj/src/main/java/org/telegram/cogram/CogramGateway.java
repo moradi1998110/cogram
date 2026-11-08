@@ -19,6 +19,7 @@ import org.telegram.tgnet.tl.TL_account;
 import org.telegram.tgnet.tl.TL_phone;
 import org.webrtc.VideoSink;
 
+import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -63,6 +64,7 @@ public final class CogramGateway {
 
     private final int account;
     private final DispatchQueue queue = new DispatchQueue("cogramGateway");
+    private final DispatchQueue mediaQueue = new DispatchQueue("cogramGatewayMedia");
     private final UploadParts uploads = new UploadParts();
     private volatile GatewayBackend backend;
 
@@ -115,7 +117,9 @@ public final class CogramGateway {
             replyUnsupported(request, reply);
             return;
         }
-        current.whenReady(() -> queue.postRunnable(() -> {
+        // A file may first have to be fetched, which must not hold up every other request.
+        DispatchQueue target = isMediaRequest(request) ? mediaQueue : queue;
+        current.whenReady(() -> target.postRunnable(() -> {
             TLObject response;
             try {
                 response = handle(request);
@@ -169,6 +173,8 @@ public final class CogramGateway {
         } else if (request instanceof TLRPC.TL_messages_sendMessage) {
             TLRPC.TL_messages_sendMessage send = (TLRPC.TL_messages_sendMessage) request;
             return backend.sendText(send.peer.user_id, send.message);
+        } else if (request instanceof TLRPC.TL_messages_sendMedia) {
+            return sendMedia((TLRPC.TL_messages_sendMedia) request);
         } else if (request instanceof TLRPC.TL_messages_readHistory) {
             TLRPC.TL_messages_readHistory read = (TLRPC.TL_messages_readHistory) request;
             return backend.markRead(read.peer.user_id, read.max_id);
@@ -362,7 +368,36 @@ public final class CogramGateway {
         return result;
     }
 
+    private static boolean isMediaRequest(TLObject request) {
+        if (!(request instanceof TLRPC.TL_upload_getFile)) {
+            return false;
+        }
+        TLRPC.InputFileLocation location = ((TLRPC.TL_upload_getFile) request).location;
+        return (location instanceof TLRPC.TL_inputDocumentFileLocation || location instanceof TLRPC.TL_inputPhotoFileLocation)
+                && XmppBackend.isMediaId(location.id);
+    }
+
+    private TLObject sendMedia(TLRPC.TL_messages_sendMedia request) {
+        TLRPC.InputMedia media = request.media;
+        boolean photo = media instanceof TLRPC.TL_inputMediaUploadedPhoto;
+        if (!photo && !(media instanceof TLRPC.TL_inputMediaUploadedDocument) || media.file == null) {
+            return null;
+        }
+        File file = uploads.takeFile(media.file.id);
+        if (file == null) {
+            return null;
+        }
+        String mime = photo ? "image/jpeg" : media.mime_type;
+        if (mime == null || mime.isEmpty()) {
+            mime = "application/octet-stream";
+        }
+        return backend.sendFile(request.peer.user_id, file, mime, photo ? new ArrayList<>() : media.attributes, photo, request.random_id);
+    }
+
     private TLObject file(TLRPC.TL_upload_getFile request) {
+        if (isMediaRequest(request)) {
+            return backend.mediaFile(request.location.id, request.offset, request.limit);
+        }
         long photoId;
         if (request.location instanceof TLRPC.TL_inputPeerPhotoFileLocation) {
             photoId = ((TLRPC.TL_inputPeerPhotoFileLocation) request.location).photo_id;
