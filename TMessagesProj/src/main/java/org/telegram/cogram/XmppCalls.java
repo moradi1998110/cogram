@@ -43,7 +43,9 @@ final class XmppCalls implements XmppConnectionService.OnJingleRtpConnectionUpda
 
     private static final class Call {
         final long id;
-        final Jid with;
+        // The engine keys a session by the full address of the device on the other end, which an
+        // outgoing call learns only when that device answers, so this follows the engine's updates.
+        Jid with;
         final long peerId;
         final boolean outgoing;
         final boolean video;
@@ -107,7 +109,15 @@ final class XmppCalls implements XmppConnectionService.OnJingleRtpConnectionUpda
             return null;
         }
         WeakReference<JingleRtpConnection> reference = jingle().findJingleRtpConnection(call.with, call.sessionId);
-        return reference == null ? null : reference.get();
+        JingleRtpConnection connection = reference == null ? null : reference.get();
+        if (connection == null) {
+            // Only one call runs at a time, so the ongoing one is ours when its session matches.
+            JingleRtpConnection ongoing = jingle().getOngoingRtpConnection();
+            if (ongoing != null && call.sessionId.equals(ongoing.getId().sessionId)) {
+                connection = ongoing;
+            }
+        }
+        return connection;
     }
 
     synchronized TL_phone.TL_phone_phoneCall requestCall(long peerId, boolean video) {
@@ -201,6 +211,9 @@ final class XmppCalls implements XmppConnectionService.OnJingleRtpConnectionUpda
             } else if (call.finished) {
                 return;
             } else {
+                if (with.getResource() != null) {
+                    call.with = with;
+                }
                 update = onState(call, state);
             }
             peerId = call.peerId;
@@ -226,7 +239,7 @@ final class XmppCalls implements XmppConnectionService.OnJingleRtpConnectionUpda
             return null;
         }
         boolean video = connection.getMedia().contains(Media.VIDEO);
-        Call call = new Call(callId(sessionId), with.asBareJid(), peers.peerId(with.asBareJid()), false, video);
+        Call call = new Call(callId(sessionId), with, peers.peerId(with.asBareJid()), false, video);
         call.sessionId = sessionId;
         calls.put(call.id, call);
         return call;
