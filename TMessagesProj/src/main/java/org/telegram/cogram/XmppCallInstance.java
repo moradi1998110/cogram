@@ -11,6 +11,7 @@ import org.webrtc.VideoTrack;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 
+import eu.siacs.conversations.xmpp.jingle.ContentAddition;
 import eu.siacs.conversations.xmpp.jingle.JingleRtpConnection;
 import eu.siacs.conversations.xmpp.jingle.Media;
 
@@ -22,6 +23,8 @@ final class XmppCallInstance extends NativeInstance {
 
     private static final int SIGNAL_BARS_CONNECTED = 4;
     private static final int AUTH_KEY_LENGTH = 256;
+    private static final int MAX_VIDEO_RETRIES = 10;
+    private static final long VIDEO_RETRY_DELAY_MS = 500;
 
     private final JingleRtpConnection connection;
     private final VideoSink remoteSink;
@@ -29,6 +32,9 @@ final class XmppCallInstance extends NativeInstance {
     private VideoTrack attachedLocalTrack;
     private VideoTrack attachedRemoteTrack;
     private boolean established;
+    private boolean stopped;
+    private boolean videoRequested;
+    private int videoRetries;
     private volatile boolean microphoneMuted;
     private volatile Boolean videoWanted;
 
@@ -52,14 +58,54 @@ final class XmppCallInstance extends NativeInstance {
         return key;
     }
 
+    /** Runs on every update of a connected call, since media can be added or changed while it lasts. */
     void onConnected() {
         AndroidUtilities.runOnUIThread(() -> {
-            established = true;
+            acceptRemoteVideo();
             applyMedia();
             attachVideo();
-            onSignalBarsUpdated(SIGNAL_BARS_CONNECTED);
-            onStateUpdated(Instance.STATE_ESTABLISHED);
+            if (!established) {
+                established = true;
+                onSignalBarsUpdated(SIGNAL_BARS_CONNECTED);
+                onStateUpdated(Instance.STATE_ESTABLISHED);
+            }
         });
+    }
+
+    /**
+     * Telegram shows the other side's video as soon as they turn their camera on, without asking,
+     * so their request to add video is accepted at once. Our own camera stays off until turned on.
+     */
+    private void acceptRemoteVideo() {
+        ContentAddition addition = connection.getPendingContentAddition();
+        if (addition == null || addition.direction != ContentAddition.Direction.INCOMING) {
+            return;
+        }
+        if (videoWanted == null) {
+            videoWanted = false;
+        }
+        try {
+            connection.acceptContentAdd(addition.summary);
+        } catch (IllegalStateException e) {
+            FileLog.e(e);
+        }
+    }
+
+    /** An audio call gains video through a Jingle content addition, which the other side accepts. */
+    private void addVideo() {
+        // Telegram turns the camera on through two calls in a row, and the first one already asked.
+        if (videoRequested || connection.getMedia().contains(Media.VIDEO) || !connection.isSwitchToVideoAvailable()) {
+            applyMedia();
+            return;
+        }
+        try {
+            videoRequested = true;
+            if (!connection.addMedia(Media.VIDEO)) {
+                FileLog.e("cogram: could not add video to the call");
+            }
+        } catch (IllegalStateException e) {
+            FileLog.e(e);
+        }
     }
 
     void onReconnecting() {
@@ -68,6 +114,9 @@ final class XmppCallInstance extends NativeInstance {
 
     /** Tracks appear once the peer connection exists, so sinks attach whenever they become available. */
     private void attachVideo() {
+        if (stopped) {
+            return;
+        }
         VideoTrack remote = connection.getRemoteVideoTrack().orNull();
         if (remote != null && remote != attachedRemoteTrack) {
             remote.addSink(remoteSink);
@@ -78,8 +127,16 @@ final class XmppCallInstance extends NativeInstance {
             local.addSink(localSink);
             attachedLocalTrack = local;
         }
-        boolean remoteVideo = remote != null && connection.getMedia().contains(Media.VIDEO);
+        boolean videoNegotiated = connection.getMedia().contains(Media.VIDEO);
+        boolean remoteVideo = remote != null && videoNegotiated;
         onRemoteMediaStateUpdated(Instance.AUDIO_STATE_ACTIVE, remoteVideo ? Instance.VIDEO_STATE_ACTIVE : Instance.VIDEO_STATE_INACTIVE);
+        if (videoNegotiated && (remote == null || localSink != null && local == null) && !stopped && videoRetries < MAX_VIDEO_RETRIES) {
+            // A track can arrive after the last state update that announced it.
+            videoRetries++;
+            AndroidUtilities.runOnUIThread(this::attachVideo, VIDEO_RETRY_DELAY_MS);
+        } else {
+            videoRetries = 0;
+        }
     }
 
     private void detachVideo() {
@@ -100,6 +157,7 @@ final class XmppCallInstance extends NativeInstance {
 
     @Override
     public Instance.FinalState stop() {
+        stopped = true;
         detachVideo();
         return new Instance.FinalState(null, "", new Instance.TrafficStats(0, 0, 0, 0), false);
     }
@@ -133,7 +191,11 @@ final class XmppCallInstance extends NativeInstance {
     public void setupOutgoingVideo(VideoSink localSink, int type) {
         this.localSink = localSink;
         videoWanted = true;
-        applyMedia();
+        if (established) {
+            addVideo();
+        } else {
+            applyMedia();
+        }
         if (established) {
             attachVideo();
         }
@@ -146,6 +208,10 @@ final class XmppCallInstance extends NativeInstance {
     @Override
     public void setVideoState(int videoState) {
         videoWanted = videoState == Instance.VIDEO_STATE_ACTIVE;
+        if (videoWanted && established) {
+            addVideo();
+            return;
+        }
         applyMedia();
     }
 

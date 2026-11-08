@@ -1284,6 +1284,13 @@ public class VoIPService extends Service implements SensorEventListener, AudioMa
 		if (tgVoip[CAPTURE_DEVICE_CAMERA] == null) {
 			return;
 		}
+		if (CogramGateway.ENABLED && groupCall == null && !screencast) {
+			// The XMPP call opens the camera itself, so the camera behind Telegram's preview lets go of it first.
+			clearCamera();
+			tgVoip[CAPTURE_DEVICE_CAMERA].setupOutgoingVideo(localSink[CAPTURE_DEVICE_CAMERA], isFrontFaceCamera ? 1 : 0);
+			isPrivateScreencast = false;
+			return;
+		}
 		if (!screencast && captureDevice[CAPTURE_DEVICE_CAMERA] != 0) {
 			tgVoip[CAPTURE_DEVICE_CAMERA].setupOutgoingVideoCreated(captureDevice[CAPTURE_DEVICE_CAMERA]);
 			destroyCaptureDevice[CAPTURE_DEVICE_CAMERA] = false;

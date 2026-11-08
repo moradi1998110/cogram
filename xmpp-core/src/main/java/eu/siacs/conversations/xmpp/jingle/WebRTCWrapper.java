@@ -584,7 +584,21 @@ public class WebRTCWrapper {
         final Optional<VideoTrack> videoTrack =
                 TrackWrapper.get(peerConnection, this.localVideoTrack);
         if (videoTrack.isPresent()) {
+            final boolean changed = videoTrack.get().enabled() != enabled;
             videoTrack.get().setEnabled(enabled);
+            // A disabled track still keeps the camera open, so its light would stay on.
+            final VideoSourceWrapper source = this.videoSourceWrapper;
+            if (changed && source != null && ExternalCallUi.isEnabled()) {
+                if (enabled) {
+                    source.startCapture();
+                } else {
+                    try {
+                        source.stopCapture();
+                    } catch (final InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+            }
             return;
         }
         throw new IllegalStateException("Local video track does not exist");
