@@ -153,11 +153,20 @@ final class XmppCalls implements XmppConnectionService.OnJingleRtpConnectionUpda
         return calls.containsKey(callId);
     }
 
-    /** Ends the call in whatever stage it is: retracts our ringing, declines theirs or hangs up. */
-    void discardCall(long callId, TLRPC.PhoneCallDiscardReason reason) {
+    /**
+     * Ends the call in whatever stage it is: retracts our ringing, declines theirs or hangs up.
+     * Returns the ended call, which Telegram must get back: declining from the incoming call
+     * notification leaves Telegram holding the call until it learns that it ended, and until then
+     * it answers every other call as busy and starts none.
+     */
+    TL_phone.PhoneCall discardCall(long callId, TLRPC.PhoneCallDiscardReason reason) {
         Call call = calls.get(callId);
         if (call == null) {
-            return;
+            TL_phone.TL_phoneCallDiscarded gone = new TL_phone.TL_phoneCallDiscarded();
+            gone.id = callId;
+            gone.access_hash = callId;
+            gone.reason = reason;
+            return gone;
         }
         call.finished = true;
         JingleRtpConnection connection = connection(call);
@@ -173,7 +182,7 @@ final class XmppCalls implements XmppConnectionService.OnJingleRtpConnectionUpda
             // The call may have ended on the other side at the same moment.
             FileLog.e(e);
         }
-        calls.remove(callId);
+        return discarded(call, reason);
     }
 
     XmppCallInstance createInstance(long callId, VideoSink remoteSink) {

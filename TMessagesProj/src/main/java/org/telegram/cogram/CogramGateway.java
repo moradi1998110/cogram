@@ -17,6 +17,7 @@ import org.telegram.tgnet.Vector;
 import org.telegram.messenger.voip.NativeInstance;
 import org.telegram.tgnet.tl.TL_account;
 import org.telegram.tgnet.tl.TL_phone;
+import org.telegram.tgnet.tl.TL_update;
 import org.webrtc.VideoSink;
 
 import java.io.File;
@@ -156,6 +157,10 @@ public final class CogramGateway {
     }
 
     private TLObject handle(TLObject request) {
+        TLObject stickers = noStickers(request);
+        if (stickers != null) {
+            return stickers;
+        }
         if (request instanceof TLRPC.TL_updates_getState) {
             return state();
         } else if (request instanceof TLRPC.TL_updates_getDifference) {
@@ -350,8 +355,12 @@ public final class CogramGateway {
             return calls.receivedCall(((TL_phone.receivedCall) request).peer.id) ? new TLRPC.TL_boolTrue() : null;
         }
         TL_phone.discardCall discard = (TL_phone.discardCall) request;
-        calls.discardCall(discard.peer.id, discard.reason);
-        return new TLRPC.TL_updates();
+        TL_update.TL_updatePhoneCall ended = new TL_update.TL_updatePhoneCall();
+        ended.phone_call = calls.discardCall(discard.peer.id, discard.reason);
+        TLRPC.TL_updates updates = new TLRPC.TL_updates();
+        updates.updates.add(ended);
+        updates.date = now();
+        return updates;
     }
 
     /** The user's full XMPP address, which Telegram's screens show only without the server. */
@@ -407,6 +416,37 @@ public final class CogramGateway {
             result.photos.addAll(backend.userPhotos(userId(request.user_id)));
         }
         return result;
+    }
+
+    /**
+     * XMPP has no stickers, and Telegram retries a failed sticker request every second for as long
+     * as the app runs, so these get empty answers that count as loaded instead of an error.
+     */
+    private static TLObject noStickers(TLObject request) {
+        if (request instanceof TLRPC.TL_messages_getFeaturedStickers || request instanceof TLRPC.TL_messages_getFeaturedEmojiStickers) {
+            return new TLRPC.TL_messages_featuredStickers();
+        } else if (request instanceof TLRPC.TL_messages_getArchivedStickers) {
+            return new TLRPC.TL_messages_archivedStickers();
+        } else if (request instanceof TLRPC.TL_messages_getAllStickers || request instanceof TLRPC.TL_messages_getEmojiStickers
+                || request instanceof TLRPC.TL_messages_getMaskStickers) {
+            return new TLRPC.TL_messages_allStickers();
+        } else if (request instanceof TLRPC.TL_messages_getStickerSet) {
+            TLRPC.InputStickerSet input = ((TLRPC.TL_messages_getStickerSet) request).stickerset;
+            TLRPC.TL_stickerSet set = new TLRPC.TL_stickerSet();
+            set.title = "";
+            if (input instanceof TLRPC.TL_inputStickerSetShortName) {
+                set.short_name = ((TLRPC.TL_inputStickerSetShortName) input).short_name;
+                set.id = set.short_name.hashCode();
+            } else {
+                set.short_name = "";
+                set.id = input == null ? 0 : input.id;
+                set.access_hash = input == null ? 0 : input.access_hash;
+            }
+            TLRPC.TL_messages_stickerSet result = new TLRPC.TL_messages_stickerSet();
+            result.set = set;
+            return result;
+        }
+        return null;
     }
 
     private static boolean isMediaRequest(TLObject request) {

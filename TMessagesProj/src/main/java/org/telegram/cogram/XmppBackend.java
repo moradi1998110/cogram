@@ -50,6 +50,7 @@ import eu.siacs.conversations.entities.RtpSessionStatus;
 import eu.siacs.conversations.entities.Transferable;
 import eu.siacs.conversations.persistance.DatabaseBackend;
 import eu.siacs.conversations.persistance.FileBackend;
+import eu.siacs.conversations.utils.MimeUtils;
 import eu.siacs.conversations.services.XmppConnectionService;
 import eu.siacs.conversations.ui.interfaces.OnAvatarPublication;
 import eu.siacs.conversations.xmpp.Jid;
@@ -612,12 +613,19 @@ final class XmppBackend implements GatewayBackend {
             tl.reactions = reactionsOf(message);
             tl.flags |= TLObject.FLAG_20;
         }
+        // What Telegram now holds, so a later download, edit or reaction reaches it as an edit.
+        snapshots.putIfAbsent(tl.id, snapshot(message));
         return tl;
     }
 
     /** A file or a link to one, which Conversations sends as the message's whole body. */
     private static boolean isMedia(Message message) {
-        return !TEXT_UNREADABLE.equals(textOf(message)) && (message.isFileOrImage() || message.treatAsDownloadable());
+        if (TEXT_UNREADABLE.equals(textOf(message))) {
+            return false;
+        }
+        // While a file downloads its body is "link|size", which no longer reads as a link.
+        return message.isFileOrImage() || message.treatAsDownloadable() || message.getTransferable() != null
+                || message.isOOb() && message.getFileParams().url != null;
     }
 
     /** The engine fetches small files on arrival, and a message shows once it can show the file too. */
@@ -648,6 +656,10 @@ final class XmppBackend implements GatewayBackend {
         boolean local = file.exists() && !isDownloading(message);
         Message.FileParams params = message.getFileParams();
         String mime = message.getMimeType();
+        if (mime == null && params.url != null) {
+            // A body of "link|size" hides the extension from the engine, but the link still has it.
+            mime = MimeUtils.guessMimeTypeFromExtension(MimeUtils.extractRelevantExtension(params.url));
+        }
         if (mime == null) {
             mime = "application/octet-stream";
         }
@@ -693,10 +705,14 @@ final class XmppBackend implements GatewayBackend {
             TLRPC.TL_documentAttributeFilename fileName = new TLRPC.TL_documentAttributeFilename();
             fileName.file_name = name;
             document.attributes.add(fileName);
-            int duration = (params.runtime + 999) / 1000;
+            int runtime = params.runtime;
+            if (runtime == 0 && local && (mime.startsWith("audio/") || mime.startsWith("video/"))) {
+                runtime = mediaRuntime(file);
+            }
+            int duration = (runtime + 999) / 1000;
             if (mime.startsWith("audio/")) {
                 TLRPC.TL_documentAttributeAudio audio = new TLRPC.TL_documentAttributeAudio();
-                audio.voice = isVoice(name, mime);
+                audio.voice = isVoice(message, mime);
                 audio.duration = duration;
                 audio.flags = audio.voice ? TLObject.FLAG_10 : 0;
                 document.attributes.add(audio);
@@ -733,10 +749,34 @@ final class XmppBackend implements GatewayBackend {
     }
 
     /** Conversations names its recordings this way, and other clients send voice as Ogg Opus. */
-    private static boolean isVoice(String name, String mime) {
-        String lower = name.toLowerCase(Locale.ROOT);
-        return lower.startsWith("recording") || lower.endsWith(".oga") || lower.endsWith(".opus")
-                || mime.equals("audio/ogg") || mime.equals("audio/opus");
+    private static boolean isVoice(Message message, String mime) {
+        // The name as sent, since a downloaded file is stored under the engine's own name.
+        String url = message.getFileParams().url;
+        String sent = url == null ? "" : String.valueOf(Uri.parse(url).getLastPathSegment()).toLowerCase(Locale.ROOT);
+        if (sent.startsWith("recording") || sent.startsWith("voice")) {
+            return true;
+        }
+        // Recorders write these formats, while music comes as mp3, flac or wav and keeps the player.
+        return mime.equals("audio/ogg") || mime.equals("audio/opus") || mime.equals("audio/mp4") || mime.equals("audio/m4a")
+                || mime.equals("audio/x-m4a") || mime.equals("audio/aac") || mime.equals("audio/amr")
+                || mime.equals("audio/3gpp") || mime.equals("audio/webm");
+    }
+
+    /** The length of a recording in milliseconds, for files sent without it. */
+    private static int mediaRuntime(File file) {
+        android.media.MediaMetadataRetriever retriever = new android.media.MediaMetadataRetriever();
+        try {
+            retriever.setDataSource(file.getAbsolutePath());
+            String duration = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION);
+            return duration == null ? 0 : Integer.parseInt(duration);
+        } catch (Exception e) {
+            return 0;
+        } finally {
+            try {
+                retriever.release();
+            } catch (Exception ignore) {
+            }
+        }
     }
 
     /** The engine logs each call as a message, which Telegram shows as a call entry in the chat and the calls list. */
