@@ -1339,7 +1339,8 @@ public class XmppConnectionService extends Service {
 
     private void toggleForegroundService(final boolean force) {
         final boolean status;
-        final OngoingCall ongoing = ongoingCall.get();
+        // An app showing calls itself has its own call service and notification.
+        final OngoingCall ongoing = ExternalCallUi.isEnabled() ? null : ongoingCall.get();
         final boolean ongoingVideoTranscoding = mOngoingVideoTranscoding.get();
         final int id;
         if (force
@@ -1388,7 +1389,11 @@ public class XmppConnectionService extends Service {
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                 final int foregroundServiceType;
-                if (requireMicrophone
+                if (ExternalCallUi.isEnabled()) {
+                    // The only type this service declares when embedded. Android 14 and newer
+                    // throw on any other, and the app's call service holds the microphone.
+                    foregroundServiceType = ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE;
+                } else if (requireMicrophone
                         && ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
                                 == PackageManager.PERMISSION_GRANTED) {
                     foregroundServiceType = ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE;
