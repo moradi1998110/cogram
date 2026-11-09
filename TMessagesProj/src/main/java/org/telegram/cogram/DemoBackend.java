@@ -186,7 +186,7 @@ final class DemoBackend implements GatewayBackend {
     }
 
     @Override
-    public synchronized TLRPC.TL_updateShortSentMessage sendText(long userId, String text) {
+    public synchronized TLRPC.TL_updateShortSentMessage sendText(long userId, String text, int replyToId, long randomId) {
         int date = (int) (System.currentTimeMillis() / 1000);
         int id = nextId++;
         pts++;

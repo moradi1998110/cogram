@@ -83,6 +83,8 @@ import org.telegram.ui.AspectRatioFrameLayout;
 import com.google.android.gms.cast.MediaMetadata;
 import com.google.android.gms.common.images.WebImage;
 
+import org.telegram.cogram.CogramGateway;
+import org.telegram.cogram.VoiceWaveform;
 import org.telegram.messenger.audioinfo.AudioInfo;
 import org.telegram.messenger.chromecast.ChromecastController;
 import org.telegram.messenger.chromecast.ChromecastFileServer;
@@ -5337,7 +5339,7 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
         Utilities.globalQueue.postRunnable(() -> {
             final byte[] waveform;
             try {
-                waveform = getWaveform(path);
+                waveform = CogramGateway.ENABLED ? VoiceWaveform.generate(path) : getWaveform(path);
             } catch (Exception e) {
                 FileLog.e(e);
                 return;

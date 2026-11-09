@@ -131,7 +131,9 @@ public final class CogramGateway {
                 reply.run(null, error);
                 return;
             }
-            if (response != null) {
+            if (response instanceof DeferredReply) {
+                ((DeferredReply) response).attach(reply);
+            } else if (response != null) {
                 reply.run(response, null);
             } else {
                 replyUnsupported(request, reply);
@@ -178,7 +180,7 @@ public final class CogramGateway {
         } else if (request instanceof TLRPC.TL_messages_sendMessage) {
             TLRPC.TL_messages_sendMessage send = (TLRPC.TL_messages_sendMessage) request;
             int replyTo = send.reply_to instanceof TLRPC.TL_inputReplyToMessage ? ((TLRPC.TL_inputReplyToMessage) send.reply_to).reply_to_msg_id : 0;
-            return backend.sendText(send.peer.user_id, send.message, replyTo);
+            return backend.sendText(send.peer.user_id, send.message, replyTo, send.random_id);
         } else if (request instanceof TLRPC.TL_messages_editMessage) {
             TLRPC.TL_messages_editMessage edit = (TLRPC.TL_messages_editMessage) request;
             if (edit.message == null || edit.media != null) {

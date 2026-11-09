@@ -1,5 +1,6 @@
 package org.telegram.cogram;
 
+import org.telegram.tgnet.TLObject;
 import org.telegram.tgnet.TLRPC;
 
 import java.util.Collections;
@@ -31,7 +32,8 @@ public interface GatewayBackend {
     /** Returns messages of a chat, newest first. A zero offsetId starts from the newest message. */
     List<TLRPC.Message> history(long userId, int offsetId, int addOffset, int limit, int maxId, int minId);
 
-    TLRPC.TL_updateShortSentMessage sendText(long userId, String text);
+    /** Returns the response, which may be a {@link DeferredReply} that completes once the message is really sent. */
+    TLObject sendText(long userId, String text, int replyToId, long randomId);
 
     TLRPC.TL_messages_affectedMessages markRead(long userId, int maxId);
 
@@ -118,10 +120,6 @@ public interface GatewayBackend {
         return Collections.emptyList();
     }
 
-    default TLRPC.TL_updateShortSentMessage sendText(long userId, String text, int replyToId) {
-        return sendText(userId, text);
-    }
-
     default TLRPC.Updates editText(long userId, int id, String text) {
         return null;
     }
@@ -153,7 +151,7 @@ public interface GatewayBackend {
     }
 
     /** Sends a file Telegram uploaded, and returns the updates that tell Telegram it was sent. */
-    default TLRPC.Updates sendFile(long userId, java.io.File file, String mime, List<TLRPC.DocumentAttribute> attributes, boolean photo, long randomId) {
+    default TLObject sendFile(long userId, java.io.File file, String mime, List<TLRPC.DocumentAttribute> attributes, boolean photo, long randomId) {
         file.delete();
         return null;
     }

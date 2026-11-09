@@ -26,7 +26,7 @@ final class XmppIdMap extends SQLiteOpenHelper {
     private final Map<String, Integer> messageIds = new HashMap<>();
 
     XmppIdMap(Context context) {
-        super(context, DATABASE, null, 3);
+        super(context, DATABASE, null, 4);
     }
 
     /** Forgets every id, so the next account starts with fresh message ids and pts. */
@@ -42,6 +42,7 @@ final class XmppIdMap extends SQLiteOpenHelper {
         db.execSQL("CREATE TABLE peers (id INTEGER PRIMARY KEY AUTOINCREMENT, jid TEXT UNIQUE NOT NULL)");
         db.execSQL("CREATE TABLE messages (id INTEGER PRIMARY KEY, uuid TEXT UNIQUE NOT NULL, time INTEGER NOT NULL, pts INTEGER NOT NULL DEFAULT 0)");
         createReads(db);
+        createSendTables(db);
     }
 
     @Override
@@ -52,6 +53,48 @@ final class XmppIdMap extends SQLiteOpenHelper {
         if (oldVersion < 3) {
             createReads(db);
         }
+        if (oldVersion < 4) {
+            createSendTables(db);
+        }
+    }
+
+    /**
+     * sent_media keeps a sent file as Telegram described it, with the waveform and name the engine
+     * does not know. sends lets a message Telegram resends after a restart find the original.
+     */
+    private static void createSendTables(SQLiteDatabase db) {
+        db.execSQL("CREATE TABLE sent_media (id INTEGER PRIMARY KEY, media BLOB NOT NULL)");
+        db.execSQL("CREATE TABLE sends (random_id INTEGER PRIMARY KEY, uuid TEXT NOT NULL)");
+    }
+
+    synchronized void putSentMedia(int id, byte[] media) {
+        ContentValues values = new ContentValues();
+        values.put("id", id);
+        values.put("media", media);
+        getWritableDatabase().insertWithOnConflict("sent_media", null, values, SQLiteDatabase.CONFLICT_REPLACE);
+    }
+
+    synchronized byte[] sentMedia(int id) {
+        try (Cursor cursor = getReadableDatabase().rawQuery("SELECT media FROM sent_media WHERE id = ?", new String[]{String.valueOf(id)})) {
+            return cursor.moveToFirst() ? cursor.getBlob(0) : null;
+        }
+    }
+
+    synchronized void rememberSend(long randomId, String uuid) {
+        ContentValues values = new ContentValues();
+        values.put("random_id", randomId);
+        values.put("uuid", uuid);
+        getWritableDatabase().insertWithOnConflict("sends", null, values, SQLiteDatabase.CONFLICT_REPLACE);
+    }
+
+    synchronized String sendUuid(long randomId) {
+        try (Cursor cursor = getReadableDatabase().rawQuery("SELECT uuid FROM sends WHERE random_id = ?", new String[]{String.valueOf(randomId)})) {
+            return cursor.moveToFirst() ? cursor.getString(0) : null;
+        }
+    }
+
+    synchronized void forgetSend(long randomId) {
+        getWritableDatabase().delete("sends", "random_id = ?", new String[]{String.valueOf(randomId)});
     }
 
     /** When a contact had read up to which message, which Telegram shows as a message's read time. */

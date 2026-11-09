@@ -375,16 +375,24 @@ public class XmppConnectionService extends Service {
 
     /**
      * Sends a file as an already created message, for an app that needs the message's id before
-     * the file is copied. The file is sent as it is, and {@code done} runs once it has been copied.
+     * the file is copied. The file is sent as it is, {@code done} runs once it has been copied and
+     * {@code failed} when it could not be.
      */
     public ListenableFuture<Void> attachFile(
-            final Message message, final Uri uri, final String type, final Runnable done) {
+            final Message message,
+            final Uri uri,
+            final String type,
+            final Runnable done,
+            final Runnable failed) {
         final var future =
                 Futures.submit(
                         () -> {
                             try {
                                 getFileBackend().copyFileToPrivateStorage(message, uri, type);
                                 getFileBackend().updateFileParams(message);
+                            } catch (final RuntimeException e) {
+                                failed.run();
+                                throw e;
                             } finally {
                                 done.run();
                             }
@@ -3431,7 +3439,10 @@ public class XmppConnectionService extends Service {
         message.setStatus(status);
         databaseBackend.updateMessage(message, includeBody);
         updateConversationUi();
-        if (oldStatus != status && status == Message.STATUS_SEND_FAILED) {
+        // An app that tracks messages shows a failed one in its own chat.
+        if (oldStatus != status
+                && status == Message.STATUS_SEND_FAILED
+                && this.onMessageChange == null) {
             mNotificationService.pushFailedDelivery(message);
         }
     }

@@ -38,6 +38,7 @@ import eu.siacs.conversations.xmpp.jingle.stanzas.OmemoVerifiedIceUdpTransportIn
 import eu.siacs.conversations.xmpp.jingle.stanzas.RtpDescription;
 import eu.siacs.conversations.xmpp.manager.PepManager;
 import eu.siacs.conversations.xmpp.pep.PublishOptions;
+import im.conversations.android.xmpp.model.error.Condition;
 import im.conversations.android.xmpp.model.stanza.Iq;
 import java.security.PrivateKey;
 import java.security.Security;
@@ -54,7 +55,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Random;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.whispersystems.libsignal.IdentityKey;
 import org.whispersystems.libsignal.IdentityKeyPair;
@@ -90,6 +95,8 @@ public class AxolotlService implements OnAdvancedStreamFeaturesLoaded {
     private final Map<String, XmppAxolotlMessage> messageCache;
     private final FetchStatusMap fetchStatusMap;
     private final Map<Jid, Boolean> fetchDeviceListStatus = new HashMap<>();
+    private final Set<Jid> jidsWithoutDeviceList = ConcurrentHashMap.newKeySet();
+    private static final long SESSION_POLL_MILLIS = 100;
     private final HashMap<Jid, List<OnDeviceIdsFetched>> fetchDeviceIdsMap = new HashMap<>();
     private final SerialSingleThreadExecutor executor;
     private final Set<SignalProtocolAddress> healingAttempts = new HashSet<>();
@@ -1157,6 +1164,7 @@ public class AxolotlService implements OnAdvancedStreamFeaturesLoaded {
                     response -> {
                         if (response.getType() == Iq.Type.RESULT) {
                             fetchDeviceListStatus.put(jid, true);
+                            jidsWithoutDeviceList.remove(jid);
                             // TODO use new API
                             final Element item = IqParser.getItem(response);
                             final Set<Integer> deviceIds = IqParser.deviceIds(item);
@@ -1175,6 +1183,10 @@ public class AxolotlService implements OnAdvancedStreamFeaturesLoaded {
                                 fetchDeviceListStatus.remove(jid);
                             } else {
                                 fetchDeviceListStatus.put(jid, false);
+                                final var error = response.getError();
+                                if (error != null && error.getCondition() instanceof Condition.ItemNotFound) {
+                                    jidsWithoutDeviceList.add(jid);
+                                }
                             }
                             final List<OnDeviceIdsFetched> callbacks;
                             synchronized (fetchDeviceIdsMap) {
@@ -1532,6 +1544,79 @@ public class AxolotlService implements OnAdvancedStreamFeaturesLoaded {
         }
 
         return newSessions;
+    }
+
+    public enum SessionReadiness {
+        READY,
+        NO_OMEMO,
+        FAILED
+    }
+
+    /**
+     * Gets a one-to-one chat ready to encrypt, for an app that has no screen waiting for keys the
+     * way Conversations' does: fetches the contact's device list and keys and builds the sessions.
+     * Blocks until that is done, so it must not be called on the engine's own threads.
+     */
+    public SessionReadiness prepareSessions(
+            final Conversation conversation, final long timeoutMillis) {
+        if (conversation.getContact().isSelf()) {
+            return SessionReadiness.READY;
+        }
+        final long deadline = System.currentTimeMillis() + timeoutMillis;
+        final Jid jid = conversation.getAddress().asBareJid();
+        try {
+            while (!account.isOnlineAndConnected()) {
+                // Existing sessions are enough, and the engine sends the message once online.
+                if (hasTrustedSession(conversation)) {
+                    return SessionReadiness.READY;
+                }
+                if (System.currentTimeMillis() > deadline) {
+                    return SessionReadiness.FAILED;
+                }
+                Thread.sleep(SESSION_POLL_MILLIS);
+            }
+            if (hasEmptyDeviceList(jid)) {
+                final CountDownLatch fetched = new CountDownLatch(1);
+                final AtomicReference<Set<Integer>> devices = new AtomicReference<>();
+                fetchDeviceIds(
+                        jid,
+                        (j, ids) -> {
+                            devices.set(ids);
+                            fetched.countDown();
+                        });
+                if (!fetched.await(
+                        deadline - System.currentTimeMillis(), TimeUnit.MILLISECONDS)) {
+                    return SessionReadiness.FAILED;
+                }
+                final Set<Integer> ids = devices.get();
+                if (ids == null) {
+                    return jidsWithoutDeviceList.contains(jid)
+                            ? SessionReadiness.NO_OMEMO
+                            : SessionReadiness.FAILED;
+                }
+                if (ids.isEmpty()) {
+                    return SessionReadiness.NO_OMEMO;
+                }
+            }
+            createSessionsIfNeededActual(conversation);
+            final var targets = getCryptoTargets(conversation);
+            while (hasPendingKeyFetches(targets) && System.currentTimeMillis() < deadline) {
+                Thread.sleep(SESSION_POLL_MILLIS);
+            }
+        } catch (final InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return SessionReadiness.FAILED;
+        }
+        return hasTrustedSession(conversation) ? SessionReadiness.READY : SessionReadiness.FAILED;
+    }
+
+    private boolean hasTrustedSession(final Conversation conversation) {
+        for (final XmppAxolotlSession session : findSessionsForConversation(conversation)) {
+            if (session.getTrust().isTrustedAndActive()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public boolean trustedSessionVerified(final Conversation conversation) {

@@ -30,6 +30,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -40,8 +41,10 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Supplier;
 
 import eu.siacs.conversations.Conversations;
+import eu.siacs.conversations.crypto.axolotl.AxolotlService;
 import eu.siacs.conversations.entities.Account;
 import eu.siacs.conversations.entities.Contact;
 import eu.siacs.conversations.entities.Conversation;
@@ -83,6 +86,8 @@ final class XmppBackend implements GatewayBackend {
     private static final long MEDIA_ID_BASE = 1L << 62;
     private static final long DOWNLOAD_TIMEOUT_MS = 5 * 60 * 1000L;
     private static final long DOWNLOAD_POLL_MS = 250;
+    private static final long SESSION_TIMEOUT_MS = 20000;
+    private static final String ERROR_SEND_FAILED = "COGRAM_SEND_FAILED";
 
     private final Context context = ApplicationLoader.applicationContext;
     private final SharedPreferences preferences = context.getSharedPreferences("cogram_xmpp", Activity.MODE_PRIVATE);
@@ -93,6 +98,9 @@ final class XmppBackend implements GatewayBackend {
     private final XmppConnectionService.OnConversationUpdate conversationListener = this::scheduleSync;
     private final XmppConnectionService.OnRosterUpdate rosterListener = this::scheduleSync;
     private final ArrayList<Runnable> waiting = new ArrayList<>();
+    // Waits for encryption keys one message at a time, so a chat's messages keep their order.
+    private final ExecutorService outbox = Executors.newSingleThreadExecutor();
+    private final Map<Long, PendingSend> pendingSends = new LinkedHashMap<>();
     // Messages the engine deleted, which Telegram learns about with the next sync.
     private final Set<Integer> pendingDeletes = java.util.concurrent.ConcurrentHashMap.newKeySet();
     // What Telegram last received of each message's text and reactions, so changes are sent as edits.
@@ -233,11 +241,13 @@ final class XmppBackend implements GatewayBackend {
     /** Passes on what the engine has that Telegram has not seen. */
     private void sync() {
         ArrayList<TLRPC.Updates> updates = new ArrayList<>();
+        ArrayList<Runnable> finishedSends = new ArrayList<>();
         UpdatesListener target;
         synchronized (this) {
             target = listener;
             // A first sync after sign-in numbers the whole archive, which only one commit keeps fast.
             ids.inTransaction(() -> {
+                collectFinishedSends(finishedSends);
                 collectUpdates(updates);
                 return null;
             });
@@ -245,11 +255,178 @@ final class XmppBackend implements GatewayBackend {
         if (BuildVars.LOGS_ENABLED) {
             FileLog.d("cogram: sync updates = " + updates.size() + " pts = " + pts + " listener = " + (target != null));
         }
+        for (Runnable finished : finishedSends) {
+            finished.run();
+        }
         if (target != null) {
             for (TLRPC.Updates update : updates) {
                 target.onUpdates(update);
             }
         }
+    }
+
+    /** A message Telegram shows as sending until the engine reports what became of it. */
+    private static final class PendingSend {
+        final Message message;
+        final long randomId;
+        final Supplier<TLObject> response;
+        final DeferredReply reply = new DeferredReply();
+        volatile boolean failed;
+
+        PendingSend(Message message, long randomId, Supplier<TLObject> response) {
+            this.message = message;
+            this.randomId = randomId;
+            this.response = response;
+        }
+    }
+
+    private PendingSend track(Message message, long randomId, Supplier<TLObject> response) {
+        PendingSend send = new PendingSend(message, randomId, response);
+        pendingSends.put(randomId, send);
+        ids.rememberSend(randomId, message.getUuid());
+        return send;
+    }
+
+    private void failSend(PendingSend send) {
+        send.failed = true;
+        scheduleSync();
+    }
+
+    /** Answers the sends that ended, first of all so their pts come before those of other updates. */
+    private void collectFinishedSends(List<Runnable> finished) {
+        for (Iterator<PendingSend> iterator = pendingSends.values().iterator(); iterator.hasNext(); ) {
+            PendingSend send = iterator.next();
+            int status = send.message.getStatus();
+            boolean delivered = status == Message.STATUS_SEND || status == Message.STATUS_SEND_RECEIVED
+                    || status == Message.STATUS_SEND_DISPLAYED;
+            boolean rejected = status == Message.STATUS_SEND_FAILED;
+            if (!delivered && !rejected && !send.failed) {
+                continue;
+            }
+            iterator.remove();
+            ids.forgetSend(send.randomId);
+            if (delivered) {
+                TLObject response = send.response.get();
+                finished.add(() -> send.reply.complete(response, null));
+                continue;
+            }
+            if (rejected) {
+                dropFailedMessage(send.message);
+            }
+            TLRPC.TL_error error = new TLRPC.TL_error();
+            error.code = 400;
+            error.text = ERROR_SEND_FAILED;
+            finished.add(() -> send.reply.complete(null, error));
+        }
+    }
+
+    /** Telegram keeps the failed message and offers to resend it, which makes a new one here. */
+    private void dropFailedMessage(Message message) {
+        Account account = account();
+        if (account != null) {
+            int id = ids.findMessage(message.getUuid());
+            account.getXmppConnection().getManager(ModerationManager.class).deleteLocally(message);
+            pendingDeletes.remove(id);
+        }
+    }
+
+    /** Finds a message Telegram is resending, usually because the app closed while it was going out. */
+    private PendingSend resumeSend(long userId, long randomId) {
+        PendingSend running = pendingSends.get(randomId);
+        if (running != null) {
+            return running;
+        }
+        Message message = findMessage(ids.sendUuid(randomId));
+        if (message == null || message.getStatus() == Message.STATUS_SEND_FAILED) {
+            return null;
+        }
+        int id = ids.findMessage(message.getUuid());
+        int date = (int) (message.getTimeSent() / 1000);
+        TLRPC.MessageMedia media = storedMedia(id);
+        PendingSend send = track(message, randomId, () -> media != null ? mediaSent(userId, id, date, media, randomId) : textSent(id, date));
+        scheduleSync();
+        return send;
+    }
+
+    /**
+     * Encrypts as Conversations does, with OMEMO unless the contact publishes none. Conversations
+     * first builds the sessions from its chat screen, so the first message needs that done here,
+     * and the wait is off the gateway's threads. A message is never sent bare because keys failed.
+     */
+    private void whenEncryptionDecided(Conversation conversation, Message message, Runnable failed, Runnable send) {
+        outbox.execute(() -> {
+            int encryption = conversation.getNextEncryption();
+            if (encryption == Message.ENCRYPTION_AXOLOTL) {
+                AxolotlService.SessionReadiness readiness = conversation.getAccount().getAxolotlService()
+                        .prepareSessions(conversation, SESSION_TIMEOUT_MS);
+                if (readiness == AxolotlService.SessionReadiness.FAILED) {
+                    failed.run();
+                    return;
+                }
+                if (readiness == AxolotlService.SessionReadiness.NO_OMEMO) {
+                    encryption = Message.ENCRYPTION_NONE;
+                }
+            }
+            message.setEncryption(encryption);
+            send.run();
+        });
+    }
+
+    private TLRPC.TL_updateShortSentMessage textSent(int id, int date) {
+        pts++;
+        savePts();
+        TLRPC.TL_updateShortSentMessage sent = new TLRPC.TL_updateShortSentMessage();
+        sent.flags = TLObject.FLAG_1;
+        sent.out = true;
+        sent.id = id;
+        sent.pts = pts;
+        sent.pts_count = 1;
+        sent.date = date;
+        return sent;
+    }
+
+    private TLRPC.Updates mediaSent(long userId, int id, int date, TLRPC.MessageMedia media, long randomId) {
+        TLRPC.TL_message tl = new TLRPC.TL_message();
+        tl.id = id;
+        tl.out = true;
+        tl.date = date;
+        tl.message = "";
+        tl.peer_id = peerUser(userId);
+        tl.from_id = peerUser(selfId);
+        tl.dialog_id = userId;
+        tl.flags = TLObject.FLAG_8 | TLObject.FLAG_9;
+        tl.media = media;
+        pts++;
+        savePts();
+        ids.setMessagePts(id, pts);
+
+        TL_update.TL_updateMessageID messageId = new TL_update.TL_updateMessageID();
+        messageId.id = id;
+        messageId.random_id = randomId;
+        TL_update.TL_updateNewMessage newMessage = new TL_update.TL_updateNewMessage();
+        newMessage.message = tl;
+        newMessage.pts = pts;
+        newMessage.pts_count = 1;
+        TLRPC.TL_updates updates = new TLRPC.TL_updates();
+        updates.updates.add(messageId);
+        updates.updates.add(newMessage);
+        updates.date = now();
+        return updates;
+    }
+
+    private void storeSentMedia(int id, TLRPC.MessageMedia media) {
+        SerializedData out = new SerializedData(media.getObjectSize());
+        media.serializeToStream(out);
+        ids.putSentMedia(id, out.toByteArray());
+    }
+
+    private TLRPC.MessageMedia storedMedia(int id) {
+        byte[] stored = ids.sentMedia(id);
+        if (stored == null) {
+            return null;
+        }
+        SerializedData data = new SerializedData(stored);
+        return TLRPC.MessageMedia.TLdeserialize(data, data.readInt32(false), false);
     }
 
     private void collectUpdates(ArrayList<TLRPC.Updates> updates) {
@@ -355,11 +532,26 @@ final class XmppBackend implements GatewayBackend {
 
     /** The parts of a message an edit, a finished download or a reaction can change. */
     private static String snapshot(Message message) {
-        StringBuilder snapshot = new StringBuilder(String.valueOf(message.getBody()));
+        StringBuilder snapshot = new StringBuilder(contentSnapshot(message));
         for (eu.siacs.conversations.entities.Reaction reaction : message.getReactions()) {
             snapshot.append('\u0000').append(reaction.normalizedReaction()).append(reaction.received);
         }
         return snapshot.toString();
+    }
+
+    /**
+     * The engine rewrites a file message's body while it moves the file. None of that concerns
+     * Telegram, which already holds a file we sent and only needs telling when one we received
+     * has arrived; another edit would replace Telegram's file with a copy to download again.
+     */
+    private static String contentSnapshot(Message message) {
+        if (!isMedia(message)) {
+            return String.valueOf(message.getBody());
+        }
+        if (message.getStatus() != Message.STATUS_RECEIVED) {
+            return "";
+        }
+        return message.isFileOrImage() && !isDownloading(message) ? "fetched" : "fetching";
     }
 
     /** Returns an edit or reactions update when the message changed since Telegram last got it. */
@@ -369,8 +561,7 @@ final class XmppBackend implements GatewayBackend {
         if (previous == null || previous.equals(snapshot)) {
             return null;
         }
-        String previousBody = previous.split("\u0000", -1)[0];
-        if (!previousBody.equals(String.valueOf(message.getBody()))) {
+        if (!previous.split("\u0000", -1)[0].equals(contentSnapshot(message))) {
             return editUpdate(toTl(message, peerId));
         }
         TL_update.TL_updateMessageReactions reactions = new TL_update.TL_updateMessageReactions();
@@ -592,7 +783,8 @@ final class XmppBackend implements GatewayBackend {
         tl.flags = TLObject.FLAG_8 | TLObject.FLAG_9;
         if (isMedia(message)) {
             tl.message = "";
-            tl.media = media(message, tl.id, tl.date);
+            TLRPC.MessageMedia sent = out ? storedMedia(tl.id) : null;
+            tl.media = sent != null ? sent : media(message, tl.id, tl.date);
         } else if (message.getType() == Message.TYPE_TEXT && !TEXT_UNREADABLE.equals(tl.message)) {
             Quote quote = Quote.of(message.getBody());
             int replyTo = quote == null ? 0 : quotedMessageId(message, quote);
@@ -733,10 +925,8 @@ final class XmppBackend implements GatewayBackend {
         return TLRPC.MessageMedia.TLdeserialize(data, data.readInt32(false), false);
     }
 
+    /** The name as sent comes first, since Telegram finds its copy of a file by the name's extension. */
     private static String fileName(Message message, File file) {
-        if (file.exists()) {
-            return file.getName();
-        }
         String url = message.getFileParams().url;
         if (url != null) {
             // The fragment of an aesgcm link is the file's key, which must never become its name.
@@ -745,7 +935,7 @@ final class XmppBackend implements GatewayBackend {
                 return path;
             }
         }
-        return message.getUuid();
+        return file.exists() ? file.getName() : message.getUuid();
     }
 
     /** Conversations names its recordings this way, and other clients send voice as Ogg Opus. */
@@ -1308,47 +1498,32 @@ final class XmppBackend implements GatewayBackend {
      * chat's text would be. Telegram gets the message at once, with the file it already holds.
      */
     @Override
-    public synchronized TLRPC.Updates sendFile(long userId, File file, String mime, List<TLRPC.DocumentAttribute> attributes, boolean photo, long randomId) {
+    public synchronized TLObject sendFile(long userId, File file, String mime, List<TLRPC.DocumentAttribute> attributes, boolean photo, long randomId) {
+        PendingSend resumed = resumeSend(userId, randomId);
+        if (resumed != null) {
+            file.delete();
+            return resumed.reply;
+        }
         Conversation conversation = conversation(userId);
         if (conversation == null) {
             file.delete();
             return null;
         }
-        Message message = new Message(conversation, "", encryptionFor(conversation));
+        Message message = new Message(conversation, "", Message.ENCRYPTION_NONE);
         message.setCounterpart(conversation.getNextCounterpart());
         message.setType(photo ? Message.TYPE_IMAGE : Message.TYPE_FILE);
         int id = ids.messageId(message.getUuid(), message.getTimeSent());
         int date = (int) (message.getTimeSent() / 1000);
         // Read before the engine takes the file, since it deletes the upload once copied.
         TLRPC.MessageMedia media = sentMedia(id, date, file, mime, attributes, photo);
-        service.attachFile(message, Uri.fromFile(file), mime, file::delete);
-
-        TLRPC.TL_message tl = new TLRPC.TL_message();
-        tl.id = id;
-        tl.out = true;
-        tl.date = date;
-        tl.message = "";
-        tl.peer_id = peerUser(userId);
-        tl.from_id = peerUser(selfId);
-        tl.dialog_id = userId;
-        tl.flags = TLObject.FLAG_8 | TLObject.FLAG_9;
-        tl.media = media;
-        pts++;
-        savePts();
-        ids.setMessagePts(id, pts);
-
-        TL_update.TL_updateMessageID messageId = new TL_update.TL_updateMessageID();
-        messageId.id = id;
-        messageId.random_id = randomId;
-        TL_update.TL_updateNewMessage newMessage = new TL_update.TL_updateNewMessage();
-        newMessage.message = tl;
-        newMessage.pts = pts;
-        newMessage.pts_count = 1;
-        TLRPC.TL_updates updates = new TLRPC.TL_updates();
-        updates.updates.add(messageId);
-        updates.updates.add(newMessage);
-        updates.date = now();
-        return updates;
+        storeSentMedia(id, media);
+        snapshots.put(id, snapshot(message));
+        PendingSend send = track(message, randomId, () -> mediaSent(userId, id, date, media, randomId));
+        whenEncryptionDecided(conversation, message, () -> {
+            file.delete();
+            failSend(send);
+        }, () -> service.attachFile(message, Uri.fromFile(file), mime, file::delete, () -> failSend(send)));
+        return send.reply;
     }
 
     private static TLRPC.MessageMedia sentMedia(int messageId, int date, File file, String mime, List<TLRPC.DocumentAttribute> attributes, boolean photo) {
@@ -1636,30 +1811,19 @@ final class XmppBackend implements GatewayBackend {
     }
 
     /**
-     * OMEMO whenever the contact's client publishes OMEMO devices, as Conversations does, so its
-     * users don't see our messages flagged as unencrypted. New devices are trusted until verified.
-     */
-    private static int encryptionFor(Conversation conversation) {
-        int encryption = conversation.getNextEncryption();
-        if (encryption == Message.ENCRYPTION_AXOLOTL
-                && conversation.getAccount().getAxolotlService().hasEmptyDeviceList(conversation.getAddress().asBareJid())) {
-            return Message.ENCRYPTION_NONE;
-        }
-        return encryption;
-    }
-
-    @Override
-    public synchronized TLRPC.TL_updateShortSentMessage sendText(long userId, String text) {
-        return sendText(userId, text, 0);
-    }
-
-    /**
      * A reply goes out the way Conversations writes one, with the replied text quoted above, which
      * every XMPP client shows and which turns back into Telegram's reply header here.
      */
     @Override
-    public synchronized TLRPC.TL_updateShortSentMessage sendText(long userId, String text, int replyToId) {
+    public synchronized TLObject sendText(long userId, String text, int replyToId, long randomId) {
+        PendingSend resumed = resumeSend(userId, randomId);
+        if (resumed != null) {
+            return resumed.reply;
+        }
         Conversation conversation = conversation(userId);
+        if (conversation == null) {
+            return null;
+        }
         Message replied = replyToId == 0 ? null : engineMessage(replyToId);
         String body = text;
         if (replied != null && replied.getType() == Message.TYPE_TEXT && shownText(replied) != null) {
@@ -1669,20 +1833,12 @@ final class XmppBackend implements GatewayBackend {
             }
             body = quoted + text;
         }
-        Message message = new Message(conversation, body, encryptionFor(conversation));
+        Message message = new Message(conversation, body, Message.ENCRYPTION_NONE);
         int id = ids.messageId(message.getUuid(), message.getTimeSent());
-        pts++;
-        savePts();
-        service.sendMessage(message);
-
-        TLRPC.TL_updateShortSentMessage sent = new TLRPC.TL_updateShortSentMessage();
-        sent.flags = TLObject.FLAG_1;
-        sent.out = true;
-        sent.id = id;
-        sent.pts = pts;
-        sent.pts_count = 1;
-        sent.date = (int) (message.getTimeSent() / 1000);
-        return sent;
+        int date = (int) (message.getTimeSent() / 1000);
+        PendingSend send = track(message, randomId, () -> textSent(id, date));
+        whenEncryptionDecided(conversation, message, () -> failSend(send), () -> service.sendMessage(message));
+        return send.reply;
     }
 
     /** The engine's message behind a Telegram id, from memory or else the engine's database. */
@@ -1716,7 +1872,6 @@ final class XmppBackend implements GatewayBackend {
                 || !(message.getConversation() instanceof Conversation)) {
             return null;
         }
-        Conversation conversation = (Conversation) message.getConversation();
         Quote quote = Quote.of(message.getBody());
         String body = text;
         if (quote != null && quotedMessageId(message, quote) != 0) {
@@ -1724,7 +1879,7 @@ final class XmppBackend implements GatewayBackend {
             body = message.getBody().substring(0, message.getBody().length() - quote.text.length()) + text;
         }
         String previousUuid = message.getUuid();
-        message.putEdited(new Message.BodyVersion(body, encryptionFor(conversation), null));
+        message.putEdited(new Message.BodyVersion(body, message.getEncryption(), null));
         service.updateMessage(message, previousUuid);
         service.sendMessage(message);
         snapshots.put(id, snapshot(message));
@@ -1813,19 +1968,24 @@ final class XmppBackend implements GatewayBackend {
                     FileLog.e(e);
                     continue;
                 }
-                copy = new Message(conversation, "", encryptionFor(conversation));
-                copy.setCounterpart(conversation.getNextCounterpart());
-                copy.setType(original.getType() == Message.TYPE_IMAGE ? Message.TYPE_IMAGE : Message.TYPE_FILE);
-                ids.messageId(copy.getUuid(), copy.getTimeSent());
-                service.attachFile(copy, Uri.fromFile(upload), original.getMimeType(), upload::delete);
+                Message file = new Message(conversation, "", Message.ENCRYPTION_NONE);
+                file.setCounterpart(conversation.getNextCounterpart());
+                file.setType(original.getType() == Message.TYPE_IMAGE ? Message.TYPE_IMAGE : Message.TYPE_FILE);
+                ids.messageId(file.getUuid(), file.getTimeSent());
+                String mime = original.getMimeType();
+                whenEncryptionDecided(conversation, file, upload::delete,
+                        () -> service.attachFile(file, Uri.fromFile(upload), mime, upload::delete, () -> FileLog.e("cogram: could not forward a file")));
+                copy = file;
             } else {
                 String text = shownText(original);
                 if (text == null || TEXT_UNREADABLE.equals(textOf(original))) {
                     continue;
                 }
-                copy = new Message(conversation, text, encryptionFor(conversation));
-                ids.messageId(copy.getUuid(), copy.getTimeSent());
-                service.sendMessage(copy);
+                Message message = new Message(conversation, text, Message.ENCRYPTION_NONE);
+                ids.messageId(message.getUuid(), message.getTimeSent());
+                whenEncryptionDecided(conversation, message, () -> FileLog.e("cogram: could not encrypt a forwarded message"),
+                        () -> service.sendMessage(message));
+                copy = message;
             }
             int id = ids.messageId(copy.getUuid(), copy.getTimeSent());
             TLRPC.TL_message tl = new TLRPC.TL_message();
@@ -1844,6 +2004,9 @@ final class XmppBackend implements GatewayBackend {
             tl.fwd_from = header;
             tl.flags = TLObject.FLAG_8 | TLObject.FLAG_9 | TLObject.FLAG_2;
             snapshots.put(id, snapshot(copy));
+            if (!(tl.media instanceof TLRPC.TL_messageMediaEmpty)) {
+                storeSentMedia(id, tl.media);
+            }
             pts++;
             savePts();
             ids.setMessagePts(id, pts);
