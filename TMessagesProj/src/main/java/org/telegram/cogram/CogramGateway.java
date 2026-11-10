@@ -42,6 +42,7 @@ public final class CogramGateway {
 
     private static final String PREFERENCES = "cogram_gateway";
     private static final String KEY_DEMO = "demo";
+    private static final long SLOW_REQUEST_MS = 300;
 
     private static final CogramGateway[] instances = new CogramGateway[UserConfig.MAX_ACCOUNT_COUNT];
 
@@ -123,17 +124,23 @@ public final class CogramGateway {
         }
         // A file may first have to be fetched, which must not hold up every other request.
         DispatchQueue target = isMediaRequest(request) ? mediaQueue : queue;
-        current.whenReady(() -> target.postRunnable(() -> {
+        final long received = System.currentTimeMillis();
+        current.whenReady(() -> {
+            final long ready = System.currentTimeMillis();
+            target.postRunnable(() -> {
+            final long started = System.currentTimeMillis();
             TLObject response;
             try {
                 response = handle(request);
             } catch (GatewayError e) {
+                logTiming(request, received, ready, started, "error " + e.getMessage());
                 TLRPC.TL_error error = new TLRPC.TL_error();
                 error.code = 400;
                 error.text = e.getMessage();
                 reply.run(null, error);
                 return;
             }
+            logTiming(request, received, ready, started, response instanceof DeferredReply ? "deferred" : response != null ? "done" : "unsupported");
             if (response instanceof DeferredReply) {
                 ((DeferredReply) response).attach(reply);
             } else if (response != null) {
@@ -141,7 +148,35 @@ public final class CogramGateway {
             } else {
                 replyUnsupported(request, reply);
             }
-        }));
+            });
+        });
+    }
+
+    /**
+     * Diagnostics for chats that keep loading: how long a request waited for the engine, then in
+     * the queue behind other requests, then inside the backend, which includes waiting for its lock.
+     * Requests a chat needs to open are always logged, others only when slow.
+     */
+    private static void logTiming(TLObject request, long received, long ready, long started, String outcome) {
+        if (!BuildVars.LOGS_ENABLED) {
+            return;
+        }
+        long finished = System.currentTimeMillis();
+        boolean important = request instanceof TLRPC.TL_messages_getHistory
+                || request instanceof TLRPC.TL_updates_getDifference
+                || request instanceof TLRPC.TL_updates_getState
+                || request instanceof TLRPC.TL_messages_getDialogs
+                || request instanceof TLRPC.TL_messages_getPeerDialogs
+                || request instanceof TLRPC.TL_channels_getMessages
+                || request instanceof TLRPC.TL_messages_getMessages;
+        if (!important && finished - received < SLOW_REQUEST_MS) {
+            return;
+        }
+        FileLog.d("cogram: timing " + request.getClass().getSimpleName()
+                + " engineWait=" + (ready - received)
+                + " queueWait=" + (started - ready)
+                + " handle=" + (finished - started)
+                + " " + outcome);
     }
 
     /** A request Telegram should see fail with one of its own error codes, which its screens explain to the user. */
@@ -656,6 +691,9 @@ public final class CogramGateway {
 
     /** An empty difference leaves the app's pts as it is, and a stale pts makes it drop every later update. */
     private TLObject difference(TLRPC.TL_updates_getDifference request) {
+        if (BuildVars.LOGS_ENABLED) {
+            FileLog.d("cogram: getDifference from pts=" + request.pts + " backend pts=" + backend.pts());
+        }
         if (request.pts == backend.pts()) {
             TLRPC.TL_updates_differenceEmpty empty = new TLRPC.TL_updates_differenceEmpty();
             empty.date = now();
@@ -706,6 +744,14 @@ public final class CogramGateway {
         result.messages.addAll(backend.history(peerId(request.peer), request.offset_id, request.add_offset, request.limit, request.max_id, request.min_id));
         result.users.addAll(backend.users());
         result.chats.addAll(backend.roomChats());
+        if (BuildVars.LOGS_ENABLED) {
+            int size = result.messages.size();
+            FileLog.d("cogram: history peer=" + peerId(request.peer)
+                    + " offset_id=" + request.offset_id + " add_offset=" + request.add_offset
+                    + " limit=" + request.limit + " max_id=" + request.max_id + " min_id=" + request.min_id
+                    + " returned=" + size
+                    + (size > 0 ? " newest=" + result.messages.get(0).id + " oldest=" + result.messages.get(size - 1).id : ""));
+        }
         return result;
     }
 }

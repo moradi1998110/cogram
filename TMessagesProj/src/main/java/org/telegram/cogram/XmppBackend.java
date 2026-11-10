@@ -256,6 +256,9 @@ final class XmppBackend implements GatewayBackend {
         if (account != null) {
             calls = new XmppCalls(connected, account, selfId, callPeers);
         }
+        if (BuildVars.LOGS_ENABLED) {
+            FileLog.d("cogram: engine ready, releasing " + ready.size() + " waiting requests");
+        }
         for (Runnable runnable : ready) {
             runnable.run();
         }
@@ -276,7 +279,12 @@ final class XmppBackend implements GatewayBackend {
         ArrayList<TLRPC.Updates> updates = new ArrayList<>();
         ArrayList<Runnable> finishedSends = new ArrayList<>();
         UpdatesListener target;
+        final long asked = System.currentTimeMillis();
+        long locked;
+        int ptsBefore;
         synchronized (this) {
+            locked = System.currentTimeMillis();
+            ptsBefore = pts;
             target = listener;
             // A first sync after sign-in numbers the whole archive, which only one commit keeps fast.
             ids.inTransaction(() -> {
@@ -286,7 +294,22 @@ final class XmppBackend implements GatewayBackend {
             });
         }
         if (BuildVars.LOGS_ENABLED) {
-            FileLog.d("cogram: sync updates = " + updates.size() + " pts = " + pts + " listener = " + (target != null));
+            long released = System.currentTimeMillis();
+            int newMessages = 0;
+            for (TLRPC.Updates update : updates) {
+                if (update instanceof TLRPC.TL_updateShortMessage) {
+                    newMessages++;
+                } else if (update instanceof TLRPC.TL_updates) {
+                    for (TLRPC.Update inner : ((TLRPC.TL_updates) update).updates) {
+                        if (inner instanceof TL_update.TL_updateNewMessage || inner instanceof TL_update.TL_updateNewChannelMessage) {
+                            newMessages++;
+                        }
+                    }
+                }
+            }
+            FileLog.d("cogram: sync updates = " + updates.size() + " new messages = " + newMessages
+                    + " pts " + ptsBefore + " -> " + pts + " lockWait=" + (locked - asked)
+                    + " lockHeld=" + (released - locked) + " listener = " + (target != null));
         }
         for (Runnable finished : finishedSends) {
             finished.run();
@@ -1559,6 +1582,9 @@ final class XmppBackend implements GatewayBackend {
     public synchronized void whenReady(Runnable runnable) {
         if (service == null) {
             waiting.add(runnable);
+            if (BuildVars.LOGS_ENABLED) {
+                FileLog.d("cogram: request waits for the engine, waiting = " + waiting.size());
+            }
         } else {
             runnable.run();
         }
@@ -2137,8 +2163,22 @@ final class XmppBackend implements GatewayBackend {
         ArrayList<TLRPC.Message> result = new ArrayList<>();
         Conversation conversation = conversation(userId);
         if (conversation == null) {
+            if (BuildVars.LOGS_ENABLED) {
+                FileLog.d("cogram: history has no chat for peer " + userId);
+            }
             return result;
         }
+        final long historyStarted = System.currentTimeMillis();
+        try {
+            return historyOf(conversation, userId, offsetId, addOffset, limit, maxId, minId, result);
+        } finally {
+            if (BuildVars.LOGS_ENABLED) {
+                FileLog.d("cogram: history inside backend took " + (System.currentTimeMillis() - historyStarted) + " ms");
+            }
+        }
+    }
+
+    private List<TLRPC.Message> historyOf(Conversation conversation, long userId, int offsetId, int addOffset, int limit, int maxId, int minId, ArrayList<TLRPC.Message> result) {
         boolean aroundOffset = addOffset < 0;
         long before = offsetId == 0 || aroundOffset ? -1 : ids.messageTime(offsetId) + 1;
         int scan = aroundOffset ? HISTORY_AROUND_LIMIT : limit * HISTORY_SCAN_FACTOR;
