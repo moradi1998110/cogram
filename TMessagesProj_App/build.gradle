@@ -88,8 +88,10 @@ android {
 
     buildTypes {
         debug {
-            debuggable true
-            jniDebuggable true
+            // R8 skips its optimizations for debuggable builds, so the build installed on phones is
+            // not debuggable. Logs are unaffected: they follow Telegram's own debug settings.
+            debuggable false
+            jniDebuggable false
             signingConfig signingConfigs.debug
             minifyEnabled true
             shrinkResources true
