@@ -1,9 +1,6 @@
 include ':TMessagesProj'
 include ':TMessagesProj_App'
-include ':TMessagesProj_AppHuawei'
-include ':TMessagesProj_AppHockeyApp'
-include ':TMessagesProj_AppStandalone'
-include ':TMessagesProj_AppTests'
+// Telegram's Huawei, HockeyApp, standalone and TL test apps are not built for Phogram.
 include ':xmpp-core'
 include ':xmpp-core:annotation'
 include ':xmpp-core:annotation-processor'
