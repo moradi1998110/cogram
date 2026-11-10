@@ -1415,7 +1415,9 @@ public class XmppConnectionService extends Service {
             } else {
                 startForeground(id, notification);
             }
-        } catch (final IllegalStateException | SecurityException e) {
+        } catch (final IllegalStateException
+                | IllegalArgumentException
+                | SecurityException e) {
             Log.e(Config.LOGTAG, "Could not start foreground service", e);
         }
     }

@@ -21,6 +21,7 @@ import android.util.SparseArray;
 import androidx.collection.LongSparseArray;
 
 import org.telegram.SQLite.SQLiteCursor;
+import org.telegram.cogram.CogramGateway;
 import org.telegram.SQLite.SQLitePreparedStatement;
 import org.telegram.tgnet.NativeByteBuffer;
 import org.telegram.tgnet.TLRPC;
@@ -685,7 +686,20 @@ public class DownloadController extends BaseController implements NotificationCe
         return canDownloadMediaInternal(messageObject, overrideSize);
     }
 
+    /**
+     * An XMPP file is a link its sender chose, so fetching one tells the sender's server our
+     * address. Files from strangers wait for a tap, whatever the auto-download settings say.
+     */
+    private boolean isFromStranger(TLRPC.Message message) {
+        if (!CogramGateway.ENABLED || message == null || message.out) {
+            return false;
+        }
+        long sender = message.from_id != null ? message.from_id.user_id : message.peer_id != null ? message.peer_id.user_id : 0;
+        return sender == 0 || !getContactsController().contactsDict.containsKey(sender);
+    }
+
     private int canDownloadMediaInternal(MessageObject message) {
+        if (isFromStranger(message == null ? null : message.messageOwner)) return 0;
         if (message == null || message.messageOwner == null) return 0;
         if (message.messageOwner.media instanceof TLRPC.TL_messageMediaStory) {
             return canPreloadStories() ? 2 : 0;
@@ -776,6 +790,7 @@ public class DownloadController extends BaseController implements NotificationCe
     }
 
     private int canDownloadMediaInternal(MessageObject message, long overrideSize) {
+        if (isFromStranger(message == null ? null : message.messageOwner)) return 0;
         if (message == null || message.messageOwner == null) return 0;
         if (message.messageOwner.media instanceof TLRPC.TL_messageMediaStory) {
             return canPreloadStories() ? 2 : 0;
@@ -859,6 +874,7 @@ public class DownloadController extends BaseController implements NotificationCe
     }
 
     public int canDownloadMedia(TLRPC.Message message) {
+        if (isFromStranger(message)) return 0;
         if (message == null || message.media instanceof TLRPC.TL_messageMediaStory) {
             return canPreloadStories() ? 2 : 0;
         }
@@ -940,6 +956,7 @@ public class DownloadController extends BaseController implements NotificationCe
     }
 
     public int canDownloadMedia(TLRPC.Message message, TLRPC.MessageMedia media) {
+        if (isFromStranger(message)) return 0;
         if (message == null || media instanceof TLRPC.TL_messageMediaStory) {
             return canPreloadStories() ? 2 : 0;
         }
