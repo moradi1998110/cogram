@@ -1563,6 +1563,10 @@ public class AxolotlService implements OnAdvancedStreamFeaturesLoaded {
             return SessionReadiness.READY;
         }
         final long deadline = System.currentTimeMillis() + timeoutMillis;
+        final boolean room = conversation.getMode() == Conversation.MODE_MULTI;
+        if (room) {
+            return prepareRoomSessions(conversation, deadline);
+        }
         final Jid jid = conversation.getAddress().asBareJid();
         try {
             while (!account.isOnlineAndConnected()) {
@@ -1608,6 +1612,73 @@ public class AxolotlService implements OnAdvancedStreamFeaturesLoaded {
             return SessionReadiness.FAILED;
         }
         return hasTrustedSession(conversation) ? SessionReadiness.READY : SessionReadiness.FAILED;
+    }
+
+    /**
+     * A room encrypts to whoever is a member now, so a removed member stops receiving keys and a
+     * new one gets them only from here on. Conversations' screen accepted the members; this does.
+     */
+    private SessionReadiness prepareRoomSessions(
+            final Conversation conversation, final long deadline) {
+        try {
+            while (!account.isOnlineAndConnected() || !conversation.getMucOptions().online()) {
+                if (System.currentTimeMillis() > deadline) {
+                    return SessionReadiness.FAILED;
+                }
+                Thread.sleep(SESSION_POLL_MILLIS);
+            }
+            final var members = getCryptoTargets(conversation);
+            if (!conversation.getAcceptedCryptoTargets().equals(members)) {
+                conversation.setAcceptedCryptoTargets(members);
+                mXmppConnectionService.databaseBackend.updateConversation(conversation);
+            }
+            if (members.isEmpty()) {
+                return SessionReadiness.READY;
+            }
+            for (final Jid member : members) {
+                if (hasEmptyDeviceList(member)) {
+                    fetchDevicesBlocking(member, deadline);
+                }
+            }
+            createSessionsIfNeededActual(conversation);
+            while (hasPendingKeyFetches(members) && System.currentTimeMillis() < deadline) {
+                Thread.sleep(SESSION_POLL_MILLIS);
+            }
+        } catch (final InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return SessionReadiness.FAILED;
+        }
+        return hasTrustedSession(conversation) ? SessionReadiness.READY : SessionReadiness.FAILED;
+    }
+
+    private Set<Integer> fetchDevicesBlocking(final Jid jid, final long deadline)
+            throws InterruptedException {
+        final CountDownLatch fetched = new CountDownLatch(1);
+        final AtomicReference<Set<Integer>> devices = new AtomicReference<>();
+        fetchDeviceIds(
+                jid,
+                (j, ids) -> {
+                    devices.set(ids);
+                    fetched.countDown();
+                });
+        fetched.await(deadline - System.currentTimeMillis(), TimeUnit.MILLISECONDS);
+        return devices.get();
+    }
+
+    /** Whether someone can receive OMEMO, asked before adding them to an encrypted room. */
+    public boolean publishesOmemo(final Jid jid, final long timeoutMillis) {
+        final Jid address = jid.asBareJid();
+        if (!hasEmptyDeviceList(address)) {
+            return true;
+        }
+        try {
+            final Set<Integer> ids =
+                    fetchDevicesBlocking(address, System.currentTimeMillis() + timeoutMillis);
+            return ids != null && !ids.isEmpty();
+        } catch (final InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
     }
 
     private boolean hasTrustedSession(final Conversation conversation) {

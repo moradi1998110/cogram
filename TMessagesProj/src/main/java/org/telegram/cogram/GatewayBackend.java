@@ -156,6 +156,67 @@ public interface GatewayBackend {
         return null;
     }
 
+    /** XMPP rooms, each shown as a supergroup. */
+    default List<TLRPC.Chat> roomChats() {
+        return Collections.emptyList();
+    }
+
+    default TLRPC.TL_messages_chatFull fullRoom(long channelId) {
+        return null;
+    }
+
+    default TLRPC.TL_channels_channelParticipants roomParticipants(long channelId, TLRPC.ChannelParticipantsFilter filter, int offset, int limit) {
+        return null;
+    }
+
+    default TLRPC.TL_channels_channelParticipant roomParticipant(long channelId, long userId) {
+        return null;
+    }
+
+    default TLObject roomDifference(long channelId, int fromPts) {
+        return null;
+    }
+
+    default TLRPC.TL_messages_affectedMessages deleteRoomMessages(long channelId, List<Integer> ids) {
+        return null;
+    }
+
+    default TLObject createRoom(String title, List<Long> userIds) {
+        return null;
+    }
+
+    default TLObject inviteToRoom(long channelId, List<Long> userIds) {
+        return null;
+    }
+
+    default TLObject banFromRoom(long channelId, long userId, boolean banned) {
+        return null;
+    }
+
+    default TLObject setRoomAdmin(long channelId, long userId, boolean admin) {
+        return null;
+    }
+
+    default TLObject leaveRoom(long channelId) {
+        return null;
+    }
+
+    default TLObject destroyRoom(long channelId) {
+        return null;
+    }
+
+    default TLObject renameRoom(long channelId, String title) {
+        return null;
+    }
+
+    default TLObject describeRoom(long channelId, String about) {
+        return null;
+    }
+
+    default TLObject setRoomPhoto(long channelId, java.io.File image) {
+        return null;
+    }
+
     /** Returns the engine's call handling, or null when the backend has no calls. */
     default XmppCalls calls() {
         return null;

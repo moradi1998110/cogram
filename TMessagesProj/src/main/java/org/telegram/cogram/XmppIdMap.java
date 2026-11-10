@@ -26,7 +26,7 @@ final class XmppIdMap extends SQLiteOpenHelper {
     private final Map<String, Integer> messageIds = new HashMap<>();
 
     XmppIdMap(Context context) {
-        super(context, DATABASE, null, 4);
+        super(context, DATABASE, null, 5);
     }
 
     /** Forgets every id, so the next account starts with fresh message ids and pts. */
@@ -40,7 +40,7 @@ final class XmppIdMap extends SQLiteOpenHelper {
     @Override
     public void onCreate(SQLiteDatabase db) {
         db.execSQL("CREATE TABLE peers (id INTEGER PRIMARY KEY AUTOINCREMENT, jid TEXT UNIQUE NOT NULL)");
-        db.execSQL("CREATE TABLE messages (id INTEGER PRIMARY KEY, uuid TEXT UNIQUE NOT NULL, time INTEGER NOT NULL, pts INTEGER NOT NULL DEFAULT 0)");
+        db.execSQL("CREATE TABLE messages (id INTEGER PRIMARY KEY, uuid TEXT UNIQUE NOT NULL, time INTEGER NOT NULL, pts INTEGER NOT NULL DEFAULT 0, channel INTEGER NOT NULL DEFAULT 0)");
         createReads(db);
         createSendTables(db);
     }
@@ -55,6 +55,9 @@ final class XmppIdMap extends SQLiteOpenHelper {
         }
         if (oldVersion < 4) {
             createSendTables(db);
+        }
+        if (oldVersion < 5) {
+            db.execSQL("ALTER TABLE messages ADD COLUMN channel INTEGER NOT NULL DEFAULT 0");
         }
     }
 
@@ -214,6 +217,31 @@ final class XmppIdMap extends SQLiteOpenHelper {
         }
     }
 
+    synchronized void setMessagePts(int id, int pts, long channel) {
+        ContentValues values = new ContentValues();
+        values.put("pts", pts);
+        values.put("channel", channel);
+        getWritableDatabase().update("messages", values, "id = ?", new String[]{String.valueOf(id)});
+    }
+
+    /** Returns the room a message was sent to Telegram in, or 0 for a one-to-one chat. */
+    synchronized long channelOf(int id) {
+        try (Cursor cursor = getReadableDatabase().rawQuery("SELECT channel FROM messages WHERE id = ?", new String[]{String.valueOf(id)})) {
+            return cursor.moveToFirst() ? cursor.getLong(0) : 0;
+        }
+    }
+
+    /** Returns a room's messages sent to Telegram after the room's own pts. */
+    synchronized Set<String> channelMessagesAfterPts(long channel, int pts) {
+        HashSet<String> uuids = new HashSet<>();
+        try (Cursor cursor = getReadableDatabase().rawQuery("SELECT uuid FROM messages WHERE channel = ? AND pts > ?", new String[]{String.valueOf(channel), String.valueOf(pts)})) {
+            while (cursor.moveToNext()) {
+                uuids.add(cursor.getString(0));
+            }
+        }
+        return uuids;
+    }
+
     synchronized void setMessagePts(int id, int pts) {
         ContentValues values = new ContentValues();
         values.put("pts", pts);
@@ -223,7 +251,7 @@ final class XmppIdMap extends SQLiteOpenHelper {
     /** Returns the messages sent to Telegram as updates after the given pts. */
     synchronized Set<String> messagesAfterPts(int pts) {
         HashSet<String> uuids = new HashSet<>();
-        try (Cursor cursor = getReadableDatabase().rawQuery("SELECT uuid FROM messages WHERE pts > ?", new String[]{String.valueOf(pts)})) {
+        try (Cursor cursor = getReadableDatabase().rawQuery("SELECT uuid FROM messages WHERE channel = 0 AND pts > ?", new String[]{String.valueOf(pts)})) {
             while (cursor.moveToNext()) {
                 uuids.add(cursor.getString(0));
             }

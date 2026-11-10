@@ -43,6 +43,7 @@ import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
 import org.telegram.messenger.AccountInstance;
+import org.telegram.cogram.CogramGateway;
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.BotWebViewVibrationEffect;
 import org.telegram.messenger.ChatObject;
@@ -653,6 +654,9 @@ public class ChatRightsEditActivity extends BaseFragment implements Notification
         });
 
         listView.setOnItemClickListener((view, position) -> {
+            if (CogramGateway.ENABLED && currentType == TYPE_ADMIN && position >= permissionsStartRow && position < permissionsEndRow) {
+                return;
+            }
             if (!canEdit && (!currentChat.creator || currentType != TYPE_ADMIN || position != anonymousRow)) {
                 return;
             }
@@ -1470,15 +1474,26 @@ public class ChatRightsEditActivity extends BaseFragment implements Notification
             untilSectionRow = rowCount++;
             untilDateRow = rowCount++;
         }
+        if (CogramGateway.ENABLED && currentType == TYPE_ADMIN) {
+            // XMPP has one admin role, so this page shows what an admin can do and nothing else.
+            pinMessagesRow = editTagsRow = manageWelcomeRow = startVoiceChatRow = anonymousRow = manageTopicsRow = guardBotRow = guardBotInfoRow = -1;
+            channelStoriesRow = channelPostStoriesRow = channelEditStoriesRow = channelDeleteStoriesRow = -1;
+            rowCount = permissionsStartRow;
+            changeInfoRow = rowCount++;
+            deleteMessagesRow = rowCount++;
+            banUsersRow = rowCount++;
+            addUsersRow = rowCount++;
+            addAdminsRow = rowCount++;
+        }
         permissionsEndRow = rowCount;
 
         if (canEdit) {
-            if (!isChannel && (currentType == TYPE_ADMIN || currentType == TYPE_ADD_BOT && asAdmin || currentType == TYPE_BANNED)) {
+            if (!CogramGateway.ENABLED && !isChannel && (currentType == TYPE_ADMIN || currentType == TYPE_ADD_BOT && asAdmin || currentType == TYPE_BANNED)) {
                 rightsShadowRow = rowCount++;
                 rankRow = rowCount++;
                 rankInfoRow = rowCount++;
             }
-            if (currentChat != null && currentChat.creator && currentType == TYPE_ADMIN && hasAllAdminRights() && !currentUser.bot && !isCommunity) {
+            if (!CogramGateway.ENABLED && currentChat != null && currentChat.creator && currentType == TYPE_ADMIN && hasAllAdminRights() && !currentUser.bot && !isCommunity) {
                 if (rightsShadowRow == -1) {
                     transferOwnerShadowRow = rowCount++;
                 }
@@ -1496,7 +1511,7 @@ public class ChatRightsEditActivity extends BaseFragment implements Notification
             }
         } else {
             if (currentType == TYPE_ADMIN) {
-                if (!isChannel && (!currentRank.isEmpty() || currentChat.creator && UserObject.isUserSelf(currentUser))) {
+                if (!CogramGateway.ENABLED && !isChannel && (!currentRank.isEmpty() || currentChat.creator && UserObject.isUserSelf(currentUser))) {
                     rightsShadowRow = rowCount++;
 //                    rankHeaderRow = rowCount++;
                     rankRow = rowCount++;

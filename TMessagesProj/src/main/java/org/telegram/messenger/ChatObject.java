@@ -20,6 +20,7 @@ import androidx.collection.LongSparseArray;
 
 
 
+import org.telegram.cogram.CogramGateway;
 import org.telegram.messenger.utils.tlutils.TlUtils;
 import org.telegram.messenger.voip.Instance;
 import org.telegram.messenger.voip.VoIPService;
@@ -1816,6 +1817,9 @@ public class ChatObject {
 
 
     public static boolean canUserDoAdminAction(TLRPC.Chat chat, int action) {
+        if (CogramGateway.ENABLED && (action == ACTION_PIN || action == ACTION_MANAGE_CALLS || action == ACTION_MANAGE_TOPICS)) {
+            return false;
+        }
         if (chat == null) {
             return false;
         }

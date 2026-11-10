@@ -20,6 +20,8 @@ import org.telegram.tgnet.tl.TL_phone;
 import org.telegram.tgnet.tl.TL_update;
 import org.webrtc.VideoSink;
 
+import eu.siacs.conversations.AppSettings;
+import eu.siacs.conversations.services.ExternalCallUi;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
@@ -85,6 +87,7 @@ public final class CogramGateway {
             instance.getMessagesController().putUsers(users, false);
             instance.getMessagesController().processUpdates(updates, false);
         }));
+        applyPrivacy();
         backend = selected;
     }
 
@@ -163,6 +166,10 @@ public final class CogramGateway {
         if (stickers != null) {
             return stickers;
         }
+        TLObject roomResponse = room(request);
+        if (roomResponse != null) {
+            return roomResponse;
+        }
         if (request instanceof TLRPC.TL_updates_getState) {
             return state();
         } else if (request instanceof TLRPC.TL_updates_getDifference) {
@@ -180,13 +187,13 @@ public final class CogramGateway {
         } else if (request instanceof TLRPC.TL_messages_sendMessage) {
             TLRPC.TL_messages_sendMessage send = (TLRPC.TL_messages_sendMessage) request;
             int replyTo = send.reply_to instanceof TLRPC.TL_inputReplyToMessage ? ((TLRPC.TL_inputReplyToMessage) send.reply_to).reply_to_msg_id : 0;
-            return backend.sendText(send.peer.user_id, send.message, replyTo, send.random_id);
+            return backend.sendText(peerId(send.peer), send.message, replyTo, send.random_id);
         } else if (request instanceof TLRPC.TL_messages_editMessage) {
             TLRPC.TL_messages_editMessage edit = (TLRPC.TL_messages_editMessage) request;
             if (edit.message == null || edit.media != null) {
                 throw new GatewayError("MESSAGE_EDIT_TIME_EXPIRED");
             }
-            TLRPC.Updates updates = backend.editText(edit.peer.user_id, edit.id, edit.message);
+            TLRPC.Updates updates = backend.editText(peerId(edit.peer), edit.id, edit.message);
             if (updates == null) {
                 throw new GatewayError("MESSAGE_EDIT_TIME_EXPIRED");
             }
@@ -199,16 +206,16 @@ public final class CogramGateway {
                     emojis.add(((TLRPC.TL_reactionEmoji) chosen).emoticon);
                 }
             }
-            return backend.react(reaction.peer.user_id, reaction.msg_id, emojis);
+            return backend.react(peerId(reaction.peer), reaction.msg_id, emojis);
         } else if (request instanceof TLRPC.TL_messages_deleteMessages) {
             TLRPC.TL_messages_deleteMessages delete = (TLRPC.TL_messages_deleteMessages) request;
             return backend.deleteMessages(delete.id, delete.revoke);
         } else if (request instanceof TLRPC.TL_messages_forwardMessages) {
             TLRPC.TL_messages_forwardMessages forward = (TLRPC.TL_messages_forwardMessages) request;
-            return backend.forward(forward.id, forward.random_id, forward.to_peer.user_id);
+            return backend.forward(forward.id, forward.random_id, peerId(forward.to_peer));
         } else if (request instanceof TLRPC.TL_messages_getOutboxReadDate) {
             TLRPC.TL_messages_getOutboxReadDate read = (TLRPC.TL_messages_getOutboxReadDate) request;
-            int date = backend.readDate(read.peer.user_id, read.msg_id);
+            int date = backend.readDate(peerId(read.peer), read.msg_id);
             if (date == 0) {
                 // Telegram then shows the message as read without a time.
                 throw new GatewayError("MESSAGE_TOO_OLD");
@@ -220,12 +227,13 @@ public final class CogramGateway {
             TLRPC.TL_messages_messages result = new TLRPC.TL_messages_messages();
             result.messages.addAll(backend.messages(((TLRPC.TL_messages_getMessages) request).id));
             result.users.addAll(backend.users());
+            result.chats.addAll(backend.roomChats());
             return result;
         } else if (request instanceof TLRPC.TL_messages_sendMedia) {
             return sendMedia((TLRPC.TL_messages_sendMedia) request);
         } else if (request instanceof TLRPC.TL_messages_readHistory) {
             TLRPC.TL_messages_readHistory read = (TLRPC.TL_messages_readHistory) request;
-            return backend.markRead(read.peer.user_id, read.max_id);
+            return backend.markRead(peerId(read.peer), read.max_id);
         } else if (request instanceof TLRPC.TL_messages_setTyping) {
             return new TLRPC.TL_boolTrue();
         } else if (request instanceof TLRPC.TL_auth_logOut) {
@@ -238,6 +246,10 @@ public final class CogramGateway {
             return userPhotos((TLRPC.TL_photos_getUserPhotos) request);
         } else if (request instanceof TLRPC.TL_upload_getFile) {
             return file((TLRPC.TL_upload_getFile) request);
+        } else if (request instanceof TL_account.getPrivacy) {
+            return privacyRules(((TL_account.getPrivacy) request).key);
+        } else if (request instanceof TL_account.setPrivacy) {
+            return setPrivacy((TL_account.setPrivacy) request);
         } else if (request instanceof TL_account.updateProfile) {
             TL_account.updateProfile update = (TL_account.updateProfile) request;
             TLRPC.User self = backend.selfUser();
@@ -263,6 +275,7 @@ public final class CogramGateway {
             TLRPC.TL_messages_messages result = new TLRPC.TL_messages_messages();
             result.messages.addAll(backend.callHistory(search.offset_id, search.limit));
             result.users.addAll(backend.users());
+            result.chats.addAll(backend.roomChats());
             return result;
         } else if (request instanceof TLRPC.TL_contacts_getContacts) {
             TLRPC.TL_contacts_contacts result = new TLRPC.TL_contacts_contacts();
@@ -451,6 +464,126 @@ public final class CogramGateway {
         return null;
     }
 
+    /** A user or a room, whose numbers are drawn from one sequence and so never collide. */
+    private static long peerId(TLRPC.InputPeer peer) {
+        return peer.channel_id != 0 ? peer.channel_id : peer.user_id;
+    }
+
+    private List<Long> userIds(List<TLRPC.InputUser> users) {
+        ArrayList<Long> ids = new ArrayList<>();
+        for (TLRPC.InputUser user : users) {
+            ids.add(userId(user));
+        }
+        return ids;
+    }
+
+    /** The requests of Telegram's supergroup screens, answered from the XMPP room behind each one. */
+    private TLObject room(TLObject request) {
+        if (request instanceof TLRPC.TL_messages_createChat) {
+            TLRPC.TL_messages_createChat create = (TLRPC.TL_messages_createChat) request;
+            return backend.createRoom(create.title, userIds(create.users));
+        } else if (request instanceof TLRPC.TL_channels_getFullChannel) {
+            return backend.fullRoom(((TLRPC.TL_channels_getFullChannel) request).channel.channel_id);
+        } else if (request instanceof TLRPC.TL_channels_getChannels) {
+            TLRPC.TL_messages_chats chats = new TLRPC.TL_messages_chats();
+            chats.chats.addAll(backend.roomChats());
+            return chats;
+        } else if (request instanceof TLRPC.TL_channels_getParticipants) {
+            TLRPC.TL_channels_getParticipants get = (TLRPC.TL_channels_getParticipants) request;
+            return backend.roomParticipants(get.channel.channel_id, get.filter, get.offset, get.limit);
+        } else if (request instanceof TLRPC.TL_channels_getParticipant) {
+            TLRPC.TL_channels_getParticipant get = (TLRPC.TL_channels_getParticipant) request;
+            return backend.roomParticipant(get.channel.channel_id, peerId(get.participant));
+        } else if (request instanceof TLRPC.TL_channels_getMessages) {
+            TLRPC.TL_messages_messages result = new TLRPC.TL_messages_messages();
+            result.messages.addAll(backend.messages(((TLRPC.TL_channels_getMessages) request).id));
+            result.users.addAll(backend.users());
+            result.chats.addAll(backend.roomChats());
+            return result;
+        } else if (request instanceof TLRPC.TL_channels_readHistory) {
+            TLRPC.TL_channels_readHistory read = (TLRPC.TL_channels_readHistory) request;
+            backend.markRead(read.channel.channel_id, read.max_id);
+            return new TLRPC.TL_boolTrue();
+        } else if (request instanceof TLRPC.TL_channels_deleteMessages) {
+            TLRPC.TL_channels_deleteMessages delete = (TLRPC.TL_channels_deleteMessages) request;
+            return backend.deleteRoomMessages(delete.channel.channel_id, delete.id);
+        } else if (request instanceof TLRPC.TL_updates_getChannelDifference) {
+            TLRPC.TL_updates_getChannelDifference difference = (TLRPC.TL_updates_getChannelDifference) request;
+            return backend.roomDifference(difference.channel.channel_id, difference.pts);
+        } else if (request instanceof TLRPC.TL_channels_inviteToChannel) {
+            TLRPC.TL_channels_inviteToChannel invite = (TLRPC.TL_channels_inviteToChannel) request;
+            return backend.inviteToRoom(invite.channel.channel_id, userIds(invite.users));
+        } else if (request instanceof TLRPC.TL_channels_editBanned) {
+            TLRPC.TL_channels_editBanned ban = (TLRPC.TL_channels_editBanned) request;
+            // XMPP has no partial restriction, and clearing one would remove the member's place in the room.
+            return ban.banned_rights.view_messages ? backend.banFromRoom(ban.channel.channel_id, peerId(ban.participant), true) : null;
+        } else if (request instanceof TLRPC.TL_channels_editAdmin) {
+            TLRPC.TL_channels_editAdmin admin = (TLRPC.TL_channels_editAdmin) request;
+            TLRPC.TL_chatAdminRights rights = admin.admin_rights;
+            boolean any = rights.change_info || rights.delete_messages || rights.ban_users || rights.invite_users
+                    || rights.pin_messages || rights.add_admins || rights.other;
+            return backend.setRoomAdmin(admin.channel.channel_id, userId(admin.user_id), any);
+        } else if (request instanceof TLRPC.TL_channels_leaveChannel) {
+            return backend.leaveRoom(((TLRPC.TL_channels_leaveChannel) request).channel.channel_id);
+        } else if (request instanceof TLRPC.TL_channels_deleteChannel) {
+            return backend.destroyRoom(((TLRPC.TL_channels_deleteChannel) request).channel.channel_id);
+        } else if (request instanceof TLRPC.TL_channels_editTitle) {
+            TLRPC.TL_channels_editTitle edit = (TLRPC.TL_channels_editTitle) request;
+            return backend.renameRoom(edit.channel.channel_id, edit.title);
+        } else if (request instanceof TLRPC.TL_messages_editChatAbout) {
+            TLRPC.TL_messages_editChatAbout edit = (TLRPC.TL_messages_editChatAbout) request;
+            return backend.describeRoom(peerId(edit.peer), edit.about);
+        } else if (request instanceof TLRPC.TL_channels_editPhoto) {
+            TLRPC.TL_channels_editPhoto edit = (TLRPC.TL_channels_editPhoto) request;
+            File image = edit.photo instanceof TLRPC.TL_inputChatUploadedPhoto ? uploads.takeFile(edit.photo.file.id) : null;
+            return image == null ? null : backend.setRoomPhoto(edit.channel.channel_id, image);
+        }
+        return null;
+    }
+
+    private static final String PRIVACY_PREFIX = "privacy_";
+    private static final int PRIVACY_EVERYBODY = 0;
+    private static final int PRIVACY_CONTACTS = 1;
+    private static final int PRIVACY_NOBODY = 2;
+
+    /** Being added to groups and being rung reach us from strangers, so both start at contacts only. */
+    private static int privacyMode(TLRPC.InputPrivacyKey key) {
+        boolean guarded = key instanceof TLRPC.TL_inputPrivacyKeyChatInvite || key instanceof TLRPC.TL_inputPrivacyKeyPhoneCall;
+        return preferences().getInt(PRIVACY_PREFIX + key.getClass().getSimpleName(), guarded ? PRIVACY_CONTACTS : PRIVACY_EVERYBODY);
+    }
+
+    /** Telegram's privacy screens decide what the engine accepts. */
+    private static void applyPrivacy() {
+        AppSettings settings = new AppSettings(ApplicationLoader.applicationContext);
+        settings.setAcceptInvitesFromStrangers(privacyMode(new TLRPC.TL_inputPrivacyKeyChatInvite()) == PRIVACY_EVERYBODY);
+        settings.setUseRelays(privacyMode(new TLRPC.TL_inputPrivacyKeyPhoneP2P()) == PRIVACY_NOBODY);
+        int calls = privacyMode(new TLRPC.TL_inputPrivacyKeyPhoneCall());
+        ExternalCallUi.setCallPolicy(calls == PRIVACY_EVERYBODY ? ExternalCallUi.CALLS_EVERYONE
+                : calls == PRIVACY_CONTACTS ? ExternalCallUi.CALLS_CONTACTS : ExternalCallUi.CALLS_NOBODY);
+    }
+
+    private static TL_account.privacyRules privacyRules(TLRPC.InputPrivacyKey key) {
+        int mode = privacyMode(key);
+        TL_account.privacyRules rules = new TL_account.privacyRules();
+        rules.rules.add(mode == PRIVACY_EVERYBODY ? new TLRPC.TL_privacyValueAllowAll()
+                : mode == PRIVACY_CONTACTS ? new TLRPC.TL_privacyValueAllowContacts() : new TLRPC.TL_privacyValueDisallowAll());
+        return rules;
+    }
+
+    private static TL_account.privacyRules setPrivacy(TL_account.setPrivacy request) {
+        int mode = PRIVACY_NOBODY;
+        for (TLRPC.InputPrivacyRule rule : request.rules) {
+            if (rule instanceof TLRPC.TL_inputPrivacyValueAllowAll) {
+                mode = PRIVACY_EVERYBODY;
+            } else if (rule instanceof TLRPC.TL_inputPrivacyValueAllowContacts && mode != PRIVACY_EVERYBODY) {
+                mode = PRIVACY_CONTACTS;
+            }
+        }
+        preferences().edit().putInt(PRIVACY_PREFIX + request.key.getClass().getSimpleName(), mode).apply();
+        applyPrivacy();
+        return privacyRules(request.key);
+    }
+
     private static boolean isMediaRequest(TLObject request) {
         if (!(request instanceof TLRPC.TL_upload_getFile)) {
             return false;
@@ -474,7 +607,7 @@ public final class CogramGateway {
         if (mime == null || mime.isEmpty()) {
             mime = "application/octet-stream";
         }
-        return backend.sendFile(request.peer.user_id, file, mime, photo ? new ArrayList<>() : media.attributes, photo, request.random_id);
+        return backend.sendFile(peerId(request.peer), file, mime, photo ? new ArrayList<>() : media.attributes, photo, request.random_id);
     }
 
     private TLObject file(TLRPC.TL_upload_getFile request) {
@@ -532,6 +665,7 @@ public final class CogramGateway {
         difference.state = state();
         difference.new_messages.addAll(backend.messagesAfter(request.pts));
         difference.users.addAll(backend.users());
+        difference.chats.addAll(backend.roomChats());
         return difference;
     }
 
@@ -541,6 +675,7 @@ public final class CogramGateway {
             result.dialogs.addAll(backend.dialogs());
             result.messages.addAll(backend.topMessages());
             result.users.addAll(backend.users());
+            result.chats.addAll(backend.roomChats());
         }
         result.count = result.dialogs.size();
         return result;
@@ -552,9 +687,9 @@ public final class CogramGateway {
         List<TLRPC.Dialog> dialogs = backend.dialogs();
         for (TLRPC.InputDialogPeer inputPeer : request.peers) {
             if (inputPeer instanceof TLRPC.TL_inputDialogPeer) {
-                long userId = ((TLRPC.TL_inputDialogPeer) inputPeer).peer.user_id;
+                long peer = peerId(((TLRPC.TL_inputDialogPeer) inputPeer).peer);
                 for (TLRPC.Dialog dialog : dialogs) {
-                    if (dialog.peer.user_id == userId) {
+                    if (dialog.peer.user_id == peer || dialog.peer.channel_id == peer) {
                         result.dialogs.add(dialog);
                     }
                 }
@@ -562,13 +697,15 @@ public final class CogramGateway {
         }
         result.messages.addAll(backend.topMessages());
         result.users.addAll(backend.users());
+        result.chats.addAll(backend.roomChats());
         return result;
     }
 
     private TLObject history(TLRPC.TL_messages_getHistory request) {
         TLRPC.TL_messages_messages result = new TLRPC.TL_messages_messages();
-        result.messages.addAll(backend.history(request.peer.user_id, request.offset_id, request.add_offset, request.limit, request.max_id, request.min_id));
+        result.messages.addAll(backend.history(peerId(request.peer), request.offset_id, request.add_offset, request.limit, request.max_id, request.min_id));
         result.users.addAll(backend.users());
+        result.chats.addAll(backend.roomChats());
         return result;
     }
 }

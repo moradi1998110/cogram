@@ -221,6 +221,20 @@ public class AppSettings {
         return getBooleanPreference(USE_RELAYS, R.bool.use_relays);
     }
 
+    public void setUseRelays(final boolean useRelays) {
+        PreferenceManager.getDefaultSharedPreferences(context)
+                .edit()
+                .putBoolean(USE_RELAYS, useRelays)
+                .apply();
+    }
+
+    public void setAcceptInvitesFromStrangers(final boolean accept) {
+        PreferenceManager.getDefaultSharedPreferences(context)
+                .edit()
+                .putBoolean(ACCEPT_INVITES_FROM_STRANGERS, accept)
+                .apply();
+    }
+
     public boolean isSendChatStates() {
         return getBooleanPreference(SEND_CHAT_STATES, R.bool.chat_states);
     }

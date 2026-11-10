@@ -48,6 +48,7 @@ import android.widget.ScrollView;
 
 import androidx.annotation.NonNull;
 
+import org.telegram.cogram.CogramGateway;
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.ApplicationLoader;
 import org.telegram.messenger.ChatObject;
@@ -461,6 +462,20 @@ public class ChatEditActivity extends BaseFragment implements ImageUpdater.Image
         AndroidUtilities.requestAdjustResize(getParentActivity(), classGuid);
         updateFields(true, true);
         imageUpdater.onResume();
+    }
+
+    /** Room settings with no XMPP counterpart disappear, leaving the rest of the page as it is. */
+    private void hideWhatXmppCannotDo() {
+        if (!CogramGateway.ENABLED) {
+            return;
+        }
+        View[] unsupported = {typeEditContainer, settingsTopSectionCell, blockCell, inviteLinksCell, reactionsCell,
+                welcomeMessagesCell, memberRequestsCell, logCell, statsAndBoosts, channelAffiliateProgramsCell};
+        for (View view : unsupported) {
+            if (view != null) {
+                view.setVisibility(View.GONE);
+            }
+        }
     }
 
     @Override
@@ -1615,6 +1630,7 @@ public class ChatEditActivity extends BaseFragment implements ImageUpdater.Image
         }
         setAvatar();
         updateFields(true, false);
+        hideWhatXmppCannotDo();
 
         return fragmentView;
     }

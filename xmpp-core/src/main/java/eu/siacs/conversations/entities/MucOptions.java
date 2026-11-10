@@ -244,6 +244,13 @@ public class MucOptions {
                 allowList);
     }
 
+    public String getDescription() {
+        final var roomInfo = getRoomInfoForm();
+        final var description =
+                roomInfo == null ? null : roomInfo.getFieldByName("muc#roominfo_description");
+        return description == null ? null : description.getValue();
+    }
+
     private Data getRoomInfoForm() {
         final var serviceDiscoveryResult = getServiceDiscoveryResult();
         return serviceDiscoveryResult == null

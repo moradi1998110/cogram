@@ -43,12 +43,17 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
 
+import com.google.common.util.concurrent.FutureCallback;
+import com.google.common.util.concurrent.Futures;
+import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.MoreExecutors;
 import eu.siacs.conversations.Conversations;
 import eu.siacs.conversations.crypto.axolotl.AxolotlService;
 import eu.siacs.conversations.entities.Account;
 import eu.siacs.conversations.entities.Contact;
 import eu.siacs.conversations.entities.Conversation;
 import eu.siacs.conversations.entities.Message;
+import eu.siacs.conversations.entities.MucOptions;
 import eu.siacs.conversations.entities.RtpSessionStatus;
 import eu.siacs.conversations.entities.Transferable;
 import eu.siacs.conversations.persistance.DatabaseBackend;
@@ -57,8 +62,10 @@ import eu.siacs.conversations.utils.MimeUtils;
 import eu.siacs.conversations.services.XmppConnectionService;
 import eu.siacs.conversations.ui.interfaces.OnAvatarPublication;
 import eu.siacs.conversations.xmpp.Jid;
+import im.conversations.android.xmpp.model.muc.Affiliation;
 import eu.siacs.conversations.xmpp.jingle.RtpCapability;
 import eu.siacs.conversations.xmpp.manager.ModerationManager;
+import eu.siacs.conversations.xmpp.manager.MultiUserChatManager;
 import eu.siacs.conversations.xmpp.manager.PresenceManager;
 import eu.siacs.conversations.xmpp.manager.ReactionManager;
 
@@ -82,6 +89,11 @@ final class XmppBackend implements GatewayBackend {
     private static final int CALL_HISTORY_SCAN = 500;
     private static final String CONTACT_REQUEST_PREFIX = "contact-request:";
     private static final String PREFERENCE_LAST_SEEN = "seen_";
+    private static final String PREFERENCE_CHANNEL_PTS = "channel_pts_";
+    private static final String ROOM_CREATED_PREFIX = "room-created:";
+    private static final String ERROR_NO_OMEMO = "USER_PRIVACY_RESTRICTED";
+    private static final String ERROR_ROOM_FAILED = "CHAT_INVALID";
+    private static final String ERROR_NOT_ADMIN = "CHAT_ADMIN_REQUIRED";
     // Avatars are numbered by their hash, which stays below this bit, so files never share a number with one.
     private static final long MEDIA_ID_BASE = 1L << 62;
     private static final long DOWNLOAD_TIMEOUT_MS = 5 * 60 * 1000L;
@@ -120,7 +132,28 @@ final class XmppBackend implements GatewayBackend {
                 scheduleSync();
             }
         }
+
+        @Override
+        public void onRoomMemberChanged(Conversation room, Jid member, boolean wasMember, boolean isMember) {
+            memberChanges.add(new RoomMemberChange(room, member, isMember));
+            scheduleSync();
+        }
     };
+
+    private static final class RoomMemberChange {
+        final Conversation room;
+        final Jid member;
+        final boolean joined;
+
+        RoomMemberChange(Conversation room, Jid member, boolean joined) {
+            this.room = room;
+            this.member = member;
+            this.joined = joined;
+        }
+    }
+    private final java.util.Queue<RoomMemberChange> memberChanges = new java.util.concurrent.ConcurrentLinkedQueue<>();
+    // Room members who are not contacts, so Telegram knows who wrote what.
+    private final Map<Long, TLRPC.User> roomUsers = new java.util.concurrent.ConcurrentHashMap<>();
     private final Map<Long, Integer> readOutboxMax = new HashMap<>();
     // Telegram knows photos by number, and the engine knows avatars by their hash.
     private final Map<Long, String> avatarsByPhotoId = new HashMap<>();
@@ -343,7 +376,9 @@ final class XmppBackend implements GatewayBackend {
         int id = ids.findMessage(message.getUuid());
         int date = (int) (message.getTimeSent() / 1000);
         TLRPC.MessageMedia media = storedMedia(id);
-        PendingSend send = track(message, randomId, () -> media != null ? mediaSent(userId, id, date, media, randomId) : textSent(id, date));
+        boolean room = isRoom(message);
+        PendingSend send = track(message, randomId, () -> room ? roomSent(message, userId, randomId)
+                : media != null ? mediaSent(userId, id, date, media, randomId) : textSent(id, date));
         scheduleSync();
         return send;
     }
@@ -431,9 +466,15 @@ final class XmppBackend implements GatewayBackend {
 
     private void collectUpdates(ArrayList<TLRPC.Updates> updates) {
         {
-            for (Conversation conversation : singleChats()) {
+            for (RoomMemberChange change = memberChanges.poll(); change != null; change = memberChanges.poll()) {
+                updates.add(channelMessageUpdate(memberChangeMessage(change)));
+            }
+            for (Conversation conversation : chats()) {
                 long peerId = peerId(conversation);
                 int readMax = 0;
+                if (isRoom(conversation) && ids.findMessage(ROOM_CREATED_PREFIX + conversation.getAddress().asBareJid()) == 0) {
+                    updates.add(channelMessageUpdate(roomCreatedMessage(conversation)));
+                }
                 for (Message message : loadedMessages(conversation)) {
                     int known = ids.findMessage(message.getUuid());
                     if (known == 0 && !(isMedia(message) && isDownloading(message))) {
@@ -452,7 +493,7 @@ final class XmppBackend implements GatewayBackend {
                 Integer known = readOutboxMax.get(peerId);
                 if (readMax > (known == null ? 0 : known)) {
                     readOutboxMax.put(peerId, readMax);
-                    updates.add(createReadOutboxUpdate(peerId, readMax));
+                    updates.add(createReadOutboxUpdate(peerId, readMax, isRoom(conversation)));
                     if (known != null) {
                         // Seen happening now, unlike reads found at start that happened while the app was closed.
                         ids.addRead(peerId, readMax, now());
@@ -462,7 +503,7 @@ final class XmppBackend implements GatewayBackend {
             if (!pendingDeletes.isEmpty()) {
                 ArrayList<Integer> deleted = new ArrayList<>(pendingDeletes);
                 pendingDeletes.removeAll(deleted);
-                updates.add(deleteUpdate(deleted));
+                updates.addAll(deleteUpdates(deleted));
             }
             for (Contact contact : pendingRequestsWithoutChat()) {
                 if (ids.findMessage(CONTACT_REQUEST_PREFIX + contact.getAddress().asBareJid()) == 0) {
@@ -485,6 +526,9 @@ final class XmppBackend implements GatewayBackend {
 
     private TLRPC.Updates createNewMessageUpdate(Message message, long peerId) {
         TLRPC.Message tl = toTl(message, peerId);
+        if (isRoom(message)) {
+            return channelMessageUpdate(tl);
+        }
         pts++;
         savePts();
         ids.setMessagePts(tl.id, pts);
@@ -521,7 +565,15 @@ final class XmppBackend implements GatewayBackend {
         return updates;
     }
 
-    private static TLRPC.Updates createReadOutboxUpdate(long peerId, int maxId) {
+    private static TLRPC.Updates createReadOutboxUpdate(long peerId, int maxId, boolean room) {
+        if (room) {
+            TL_update.TL_updateReadChannelOutbox read = new TL_update.TL_updateReadChannelOutbox();
+            read.channel_id = peerId;
+            read.max_id = maxId;
+            TLRPC.TL_updateShort update = new TLRPC.TL_updateShort();
+            update.update = read;
+            return update;
+        }
         TL_update.TL_updateReadHistoryOutbox read = new TL_update.TL_updateReadHistoryOutbox();
         read.peer = peerUser(peerId);
         read.max_id = maxId;
@@ -565,7 +617,7 @@ final class XmppBackend implements GatewayBackend {
             return editUpdate(toTl(message, peerId));
         }
         TL_update.TL_updateMessageReactions reactions = new TL_update.TL_updateMessageReactions();
-        reactions.peer = peerUser(peerId);
+        reactions.peer = peerOf(peerId, isRoom(message));
         reactions.msg_id = id;
         reactions.reactions = reactionsOf(message);
         TLRPC.TL_updates updates = new TLRPC.TL_updates();
@@ -575,6 +627,13 @@ final class XmppBackend implements GatewayBackend {
     }
 
     private TLRPC.Updates editUpdate(TLRPC.Message tl) {
+        if (tl.peer_id.channel_id != 0) {
+            TL_update.TL_updateEditChannelMessage edit = new TL_update.TL_updateEditChannelMessage();
+            edit.message = tl;
+            edit.pts = nextChannelPts(tl.peer_id.channel_id);
+            edit.pts_count = 1;
+            return roomUpdates(tl.peer_id.channel_id, edit);
+        }
         pts++;
         savePts();
         TL_update.TL_updateEditMessage edit = new TL_update.TL_updateEditMessage();
@@ -585,6 +644,29 @@ final class XmppBackend implements GatewayBackend {
         updates.updates.add(edit);
         updates.date = now();
         return updates;
+    }
+
+    private List<TLRPC.Updates> deleteUpdates(List<Integer> deleted) {
+        LinkedHashMap<Long, ArrayList<Integer>> byChannel = new LinkedHashMap<>();
+        for (int id : deleted) {
+            byChannel.computeIfAbsent(ids.channelOf(id), key -> new ArrayList<>()).add(id);
+        }
+        ArrayList<TLRPC.Updates> result = new ArrayList<>();
+        for (Map.Entry<Long, ArrayList<Integer>> entry : byChannel.entrySet()) {
+            if (entry.getKey() == 0) {
+                result.add(deleteUpdate(entry.getValue()));
+                continue;
+            }
+            TL_update.TL_updateDeleteChannelMessages delete = new TL_update.TL_updateDeleteChannelMessages();
+            delete.channel_id = entry.getKey();
+            delete.messages.addAll(entry.getValue());
+            for (int a = 0; a < entry.getValue().size(); a++) {
+                delete.pts = nextChannelPts(entry.getKey());
+            }
+            delete.pts_count = entry.getValue().size();
+            result.add(roomUpdates(entry.getKey(), delete));
+        }
+        return result;
     }
 
     private TLRPC.Updates deleteUpdate(List<Integer> deleted) {
@@ -710,16 +792,270 @@ final class XmppBackend implements GatewayBackend {
         return accounts.isEmpty() ? null : accounts.get(0);
     }
 
-    private List<Conversation> singleChats() {
+    private List<Conversation> chats() {
         ArrayList<Conversation> all = new ArrayList<>();
         service.populateWithOrderedConversations(all);
-        ArrayList<Conversation> single = new ArrayList<>();
-        for (Conversation conversation : all) {
-            if (conversation.getMode() == Conversation.MODE_SINGLE) {
-                single.add(conversation);
+        return all;
+    }
+
+    private static boolean isRoom(Conversation conversation) {
+        return conversation.getMode() == Conversation.MODE_MULTI;
+    }
+
+    private static boolean isRoom(Message message) {
+        return message.getConversation().getMode() == Conversation.MODE_MULTI;
+    }
+
+    private static TLRPC.Peer peerChannel(long channelId) {
+        TLRPC.TL_peerChannel peer = new TLRPC.TL_peerChannel();
+        peer.channel_id = channelId;
+        return peer;
+    }
+
+    private static TLRPC.Peer peerOf(long peerId, boolean room) {
+        return room ? peerChannel(peerId) : peerUser(peerId);
+    }
+
+    /** Each room counts its own updates, as Telegram expects of a supergroup. */
+    private int channelPts(long channelId) {
+        return preferences.getInt(PREFERENCE_CHANNEL_PTS + channelId, 1);
+    }
+
+    private int nextChannelPts(long channelId) {
+        int next = channelPts(channelId) + 1;
+        preferences.edit().putInt(PREFERENCE_CHANNEL_PTS + channelId, next).apply();
+        return next;
+    }
+
+    /**
+     * The sender of a room message as a Telegram user. A private room gives their real address; a
+     * public one only a nick, so they become a user that exists in that room alone and cannot be
+     * written to or linked to the same person elsewhere.
+     */
+    private long senderId(Message message) {
+        Jid real = message.getTrueCounterpart();
+        Jid counterpart = message.getCounterpart();
+        String nick = counterpart == null ? null : counterpart.getResource();
+        if (real != null) {
+            TLRPC.User user = memberUser(real.asBareJid(), nick, false);
+            roomUsers.put(user.id, user);
+            return user.id;
+        }
+        Jid address = counterpart != null ? counterpart : ((Conversation) message.getConversation()).getAddress();
+        return anonymousUser(address, nick).id;
+    }
+
+    private TLRPC.User anonymousUser(Jid address, String nick) {
+        long id = ids.peerId(address.toString());
+        TLRPC.User user = createUser(id, TextUtils.isEmpty(nick) ? address.getLocal() : nick, null, null, new TLRPC.TL_userStatusRecently(), false);
+        user.contact = false;
+        user.mutual_contact = false;
+        roomUsers.put(id, user);
+        return user;
+    }
+
+    /** A member who may be neither a contact nor anyone we ever wrote to. Nothing is added to the roster. */
+    private TLRPC.User memberUser(Jid real, String nick, boolean online) {
+        long id = ids.peerId(real.toString());
+        if (id == selfId) {
+            return selfUser();
+        }
+        Contact contact = account().getRoster().getContact(real);
+        TLRPC.User user = contactUser(contact);
+        if (!contact.showInContactList()) {
+            if (!TextUtils.isEmpty(nick)) {
+                user.first_name = distinctName(nick, real);
+            }
+            user.status = online ? onlineStatus() : new TLRPC.TL_userStatusRecently();
+        }
+        return user;
+    }
+
+    /** Anyone can pick any nick, so one matching a contact's name shows whose it really is. */
+    private String distinctName(String nick, Jid real) {
+        for (Contact contact : rosterContacts()) {
+            if (nick.equalsIgnoreCase(contact.getDisplayName())) {
+                return nick + " (" + real.getLocal() + ")";
             }
         }
-        return single;
+        return nick;
+    }
+
+    private TLRPC.User memberUser(MucOptions.User member) {
+        boolean online = member.getFullJid() != null;
+        String nick = member.resource();
+        if (member.getRealJid() != null) {
+            TLRPC.User user = memberUser(member.getRealJid(), nick, online);
+            roomUsers.put(user.id, user);
+            return user;
+        }
+        return anonymousUser(member.getFullJid(), nick);
+    }
+
+    private static boolean isSelf(MucOptions.User member) {
+        return member instanceof MucOptions.Self || member.realJidMatchesAccount();
+    }
+
+    private static boolean isAdmin(Affiliation affiliation) {
+        return affiliation == Affiliation.OWNER || affiliation == Affiliation.ADMIN;
+    }
+
+    /** XMPP has a single admin role, so an admin holds every right a room can actually enforce. */
+    private static TLRPC.TL_chatAdminRights adminRights(boolean owner) {
+        TLRPC.TL_chatAdminRights rights = new TLRPC.TL_chatAdminRights();
+        rights.change_info = true;
+        rights.delete_messages = true;
+        rights.ban_users = true;
+        rights.invite_users = true;
+        rights.add_admins = owner;
+        rights.other = true;
+        return rights;
+    }
+
+    private static TLRPC.TL_chatBannedRights roomDefaultRights() {
+        TLRPC.TL_chatBannedRights rights = new TLRPC.TL_chatBannedRights();
+        rights.send_polls = true;
+        rights.change_info = true;
+        rights.invite_users = true;
+        rights.pin_messages = true;
+        rights.manage_topics = true;
+        return rights;
+    }
+
+    private String roomTitle(Conversation room) {
+        String name = room.getMucOptions().getName();
+        return TextUtils.isEmpty(name) ? String.valueOf(room.getName()) : name;
+    }
+
+    /** A room as the supergroup Telegram's screens work with. */
+    private TLRPC.Chat roomChat(Conversation room) {
+        MucOptions options = room.getMucOptions();
+        Affiliation affiliation = options.getSelf().getAffiliation();
+        long id = peerId(room);
+        TLRPC.TL_channel chat = new TLRPC.TL_channel();
+        chat.id = id;
+        chat.access_hash = id;
+        chat.title = roomTitle(room);
+        int created = ids.findMessage(ROOM_CREATED_PREFIX + room.getAddress().asBareJid());
+        chat.date = created == 0 ? now() : (int) (ids.messageTime(created) / 1000);
+        chat.megagroup = true;
+        chat.creator = affiliation == Affiliation.OWNER;
+        // A lost connection also sets an error, but only these mean we are out of the room.
+        MucOptions.Error error = options.getError();
+        chat.left = error == MucOptions.Error.KICKED || error == MucOptions.Error.BANNED
+                || error == MucOptions.Error.MEMBERS_ONLY || error == MucOptions.Error.DESTROYED;
+        chat.participants_count = roomMembers(room).size();
+        chat.default_banned_rights = roomDefaultRights();
+        chat.flags = TLObject.FLAG_8 | TLObject.FLAG_13 | TLObject.FLAG_17 | TLObject.FLAG_18;
+        if (isAdmin(affiliation)) {
+            chat.admin_rights = adminRights(chat.creator);
+            chat.flags |= TLObject.FLAG_14;
+        }
+        String avatar = options.getAvatar();
+        if (avatar != null && FileBackend.getAvatarFile(context, avatar).exists()) {
+            TLRPC.TL_chatPhoto photo = new TLRPC.TL_chatPhoto();
+            photo.photo_id = photoId(avatar);
+            photo.dc_id = PHOTO_DC_ID;
+            SerializedData data = serialize(photo);
+            chat.photo = TLRPC.ChatPhoto.TLdeserialize(data, data.readInt32(false), false);
+        } else {
+            chat.photo = new TLRPC.TL_chatPhotoEmpty();
+        }
+        return chat;
+    }
+
+    /** Everyone in a room once, including us and members who are offline right now. */
+    private List<MucOptions.User> roomMembers(Conversation room) {
+        LinkedHashMap<String, MucOptions.User> members = new LinkedHashMap<>();
+        MucOptions options = room.getMucOptions();
+        members.put("self", options.getSelf());
+        for (MucOptions.User user : options.getUsers()) {
+            Jid real = user.getRealJid();
+            if (user.realJidMatchesAccount()) {
+                continue;
+            }
+            if (real != null) {
+                members.put(real.toString(), user);
+            } else if (user.getFullJid() != null) {
+                members.put(user.getFullJid().toString(), user);
+            }
+        }
+        return new ArrayList<>(members.values());
+    }
+
+    /** The message that starts a room's chat, since Telegram shows no dialog without a top message. */
+    private TLRPC.Message roomCreatedMessage(Conversation room) {
+        long peerId = peerId(room);
+        List<Message> messages = loadedMessages(room);
+        long time = messages.isEmpty() ? System.currentTimeMillis() : messages.get(0).getTimeSent() - 1;
+        int id = ids.messageId(ROOM_CREATED_PREFIX + room.getAddress().asBareJid(), time);
+        TLRPC.TL_messageActionChannelCreate action = new TLRPC.TL_messageActionChannelCreate();
+        action.title = roomTitle(room);
+        return roomServiceMessage(id, (int) (ids.messageTime(id) / 1000), peerId, action);
+    }
+
+    private TLRPC.Message roomServiceMessage(int id, int date, long channelId, TLRPC.MessageAction action) {
+        TLRPC.TL_messageService tl = new TLRPC.TL_messageService();
+        tl.id = id;
+        tl.date = date;
+        tl.peer_id = peerChannel(channelId);
+        tl.from_id = peerUser(selfId);
+        tl.dialog_id = -channelId;
+        tl.action = action;
+        tl.flags = TLObject.FLAG_8;
+        return tl;
+    }
+
+    private TLRPC.Message memberChangeMessage(RoomMemberChange change) {
+        long channelId = peerId(change.room);
+        TLRPC.User member = memberUser(change.member, null, false);
+        roomUsers.put(member.id, member);
+        long time = System.currentTimeMillis();
+        int id = ids.messageId("room-member:" + java.util.UUID.randomUUID(), time);
+        TLRPC.MessageAction action;
+        if (change.joined) {
+            action = new TLRPC.TL_messageActionChatAddUser();
+            action.users.add(member.id);
+        } else {
+            action = new TLRPC.TL_messageActionChatDeleteUser();
+            action.user_id = member.id;
+        }
+        TLRPC.Message tl = roomServiceMessage(id, (int) (time / 1000), channelId, action);
+        tl.from_id = peerUser(member.id);
+        return tl;
+    }
+
+    private TLRPC.TL_updates roomUpdates(long channelId, TLRPC.Update update) {
+        TLRPC.TL_updates updates = new TLRPC.TL_updates();
+        updates.updates.add(update);
+        updates.date = now();
+        Conversation room = conversation(channelId);
+        if (room != null) {
+            updates.chats.add(roomChat(room));
+        }
+        return updates;
+    }
+
+    private TLRPC.TL_updates channelMessageUpdate(TLRPC.Message tl) {
+        long channelId = tl.peer_id.channel_id;
+        int channelPts = nextChannelPts(channelId);
+        ids.setMessagePts(tl.id, channelPts, channelId);
+        TL_update.TL_updateNewChannelMessage update = new TL_update.TL_updateNewChannelMessage();
+        update.message = tl;
+        update.pts = channelPts;
+        update.pts_count = 1;
+        return roomUpdates(channelId, update);
+    }
+
+    /** The answer to a send in a room, which unlike a one-to-one send carries the whole message. */
+    private TLRPC.Updates roomSent(Message message, long channelId, long randomId) {
+        TLRPC.TL_updates updates = channelMessageUpdate(toTl(message, channelId));
+        TL_update.TL_updateMessageID messageId = new TL_update.TL_updateMessageID();
+        messageId.id = updates.updates.get(0) instanceof TL_update.TL_updateNewChannelMessage
+                ? ((TL_update.TL_updateNewChannelMessage) updates.updates.get(0)).message.id : 0;
+        messageId.random_id = randomId;
+        updates.updates.add(0, messageId);
+        return updates;
     }
 
     private long peerId(Conversation conversation) {
@@ -728,7 +1064,8 @@ final class XmppBackend implements GatewayBackend {
 
     private Conversation conversation(long peerId) {
         String jid = ids.peerJid(peerId);
-        if (jid == null || account() == null) {
+        // An address with a resource is an anonymous room member, who cannot be written to.
+        if (jid == null || account() == null || Jid.of(jid).getResource() != null) {
             return null;
         }
         return service.findOrCreateConversation(account(), Jid.of(jid), false, false);
@@ -776,9 +1113,10 @@ final class XmppBackend implements GatewayBackend {
         tl.out = out;
         tl.date = (int) (message.getTimeSent() / 1000);
         tl.message = textOf(message);
-        tl.peer_id = peerUser(peerId);
-        tl.from_id = peerUser(out ? selfId : peerId);
-        tl.dialog_id = peerId;
+        boolean room = isRoom(message);
+        tl.peer_id = peerOf(peerId, room);
+        tl.from_id = peerUser(out ? selfId : room ? senderId(message) : peerId);
+        tl.dialog_id = room ? -peerId : peerId;
         tl.media = new TLRPC.TL_messageMediaEmpty();
         tl.flags = TLObject.FLAG_8 | TLObject.FLAG_9;
         if (isMedia(message)) {
@@ -1040,7 +1378,7 @@ final class XmppBackend implements GatewayBackend {
     private Contact contact(long peerId) {
         String jid = ids.peerJid(peerId);
         Account account = service == null ? null : account();
-        if (jid == null || account == null) {
+        if (jid == null || account == null || Jid.of(jid).getResource() != null) {
             return null;
         }
         return account.getRoster().getContact(Jid.of(jid));
@@ -1246,10 +1584,19 @@ final class XmppBackend implements GatewayBackend {
         TLRPC.User me = selfUser();
         users.put(me.id, me);
         if (service != null) {
-            for (Conversation conversation : singleChats()) {
+            for (Conversation conversation : chats()) {
+                if (isRoom(conversation)) {
+                    for (MucOptions.User member : roomMembers(conversation)) {
+                        if (!isSelf(member)) {
+                            memberUser(member);
+                        }
+                    }
+                    continue;
+                }
                 TLRPC.User user = contactUser(conversation);
                 users.put(user.id, user);
             }
+            users.putAll(roomUsers);
             for (Contact contact : rosterContacts()) {
                 TLRPC.User user = contactUser(contact);
                 users.put(user.id, user);
@@ -1262,6 +1609,10 @@ final class XmppBackend implements GatewayBackend {
     public synchronized TLRPC.User user(long userId) {
         if (userId == selfId) {
             return selfUser();
+        }
+        TLRPC.User member = roomUsers.get(userId);
+        if (member != null) {
+            return member;
         }
         Contact contact = contact(userId);
         return contact == null ? null : contactUser(contact);
@@ -1434,7 +1785,7 @@ final class XmppBackend implements GatewayBackend {
         if (service == null || uuid == null) {
             return null;
         }
-        for (Conversation conversation : singleChats()) {
+        for (Conversation conversation : chats()) {
             Message message = conversation.findMessageWithUuid(uuid);
             if (message != null) {
                 return message;
@@ -1518,7 +1869,8 @@ final class XmppBackend implements GatewayBackend {
         TLRPC.MessageMedia media = sentMedia(id, date, file, mime, attributes, photo);
         storeSentMedia(id, media);
         snapshots.put(id, snapshot(message));
-        PendingSend send = track(message, randomId, () -> mediaSent(userId, id, date, media, randomId));
+        boolean room = isRoom(conversation);
+        PendingSend send = track(message, randomId, () -> room ? roomSent(message, userId, randomId) : mediaSent(userId, id, date, media, randomId));
         whenEncryptionDecided(conversation, message, () -> {
             file.delete();
             failSend(send);
@@ -1601,7 +1953,7 @@ final class XmppBackend implements GatewayBackend {
         if (service == null) {
             return history;
         }
-        for (Conversation conversation : singleChats()) {
+        for (Conversation conversation : chats()) {
             long peerId = peerId(conversation);
             for (Message message : service.databaseBackend.getMessages(conversation, CALL_HISTORY_SCAN, -1)) {
                 if (message.getType() == Message.TYPE_RTP_SESSION) {
@@ -1701,13 +2053,15 @@ final class XmppBackend implements GatewayBackend {
     @Override
     public synchronized List<TLRPC.Dialog> dialogs() {
         ArrayList<TLRPC.Dialog> dialogs = new ArrayList<>();
-        for (Conversation conversation : singleChats()) {
+        for (Conversation conversation : chats()) {
             List<Message> messages = loadedMessages(conversation);
-            if (messages.isEmpty()) {
+            boolean room = isRoom(conversation);
+            if (messages.isEmpty() && !room) {
                 continue;
             }
             long peerId = peerId(conversation);
-            int top = ids.messageId(messages.get(messages.size() - 1).getUuid(), messages.get(messages.size() - 1).getTimeSent());
+            int top = messages.isEmpty() ? roomCreatedMessage(conversation).id
+                    : ids.messageId(messages.get(messages.size() - 1).getUuid(), messages.get(messages.size() - 1).getTimeSent());
             int readOutbox = 0;
             for (Message message : messages) {
                 if (message.getStatus() == Message.STATUS_SEND_DISPLAYED) {
@@ -1716,8 +2070,12 @@ final class XmppBackend implements GatewayBackend {
             }
             Message firstUnread = conversation.getFirstUnreadMessage();
             TLRPC.TL_dialog dialog = new TLRPC.TL_dialog();
-            dialog.id = peerId;
-            dialog.peer = peerUser(peerId);
+            dialog.id = room ? -peerId : peerId;
+            dialog.peer = peerOf(peerId, room);
+            if (room) {
+                dialog.pts = channelPts(peerId);
+                dialog.flags |= TLObject.FLAG_0;
+            }
             dialog.top_message = top;
             dialog.read_inbox_max_id = firstUnread == null ? top : ids.messageId(firstUnread.getUuid(), firstUnread.getTimeSent()) - 1;
             dialog.read_outbox_max_id = readOutbox;
@@ -1760,10 +2118,12 @@ final class XmppBackend implements GatewayBackend {
     @Override
     public synchronized List<TLRPC.Message> topMessages() {
         ArrayList<TLRPC.Message> tops = new ArrayList<>();
-        for (Conversation conversation : singleChats()) {
+        for (Conversation conversation : chats()) {
             List<Message> messages = loadedMessages(conversation);
             if (!messages.isEmpty()) {
                 tops.add(toTl(messages.get(messages.size() - 1), peerId(conversation)));
+            } else if (isRoom(conversation)) {
+                tops.add(roomCreatedMessage(conversation));
             }
         }
         for (Contact contact : pendingRequestsWithoutChat()) {
@@ -1791,7 +2151,9 @@ final class XmppBackend implements GatewayBackend {
             }
             return converted;
         });
-        if (newestFirst.isEmpty() && hasPendingRequest(conversation.getContact())) {
+        if (newestFirst.isEmpty() && isRoom(conversation)) {
+            newestFirst.add(roomCreatedMessage(conversation));
+        } else if (newestFirst.isEmpty() && hasPendingRequest(conversation.getContact())) {
             newestFirst.add(contactRequestMessage(conversation.getContact()));
         }
         int start = 0;
@@ -1836,7 +2198,8 @@ final class XmppBackend implements GatewayBackend {
         Message message = new Message(conversation, body, Message.ENCRYPTION_NONE);
         int id = ids.messageId(message.getUuid(), message.getTimeSent());
         int date = (int) (message.getTimeSent() / 1000);
-        PendingSend send = track(message, randomId, () -> textSent(id, date));
+        boolean room = isRoom(conversation);
+        PendingSend send = track(message, randomId, () -> room ? roomSent(message, userId, randomId) : textSent(id, date));
         whenEncryptionDecided(conversation, message, () -> failSend(send), () -> service.sendMessage(message));
         return send.reply;
     }
@@ -1851,7 +2214,7 @@ final class XmppBackend implements GatewayBackend {
         if (message != null) {
             return message;
         }
-        for (Conversation conversation : singleChats()) {
+        for (Conversation conversation : chats()) {
             message = service.databaseBackend.getMessageWithUuidOrRemoteId(conversation, uuid);
             if (message != null && uuid.equals(message.getUuid())) {
                 return message;
@@ -1899,7 +2262,7 @@ final class XmppBackend implements GatewayBackend {
         account.getXmppConnection().getManager(ReactionManager.class).sendReactions(message, emojis);
         snapshots.put(id, snapshot(message));
         TL_update.TL_updateMessageReactions reactions = new TL_update.TL_updateMessageReactions();
-        reactions.peer = peerUser(userId);
+        reactions.peer = peerOf(userId, isRoom(message));
         reactions.msg_id = id;
         reactions.reactions = reactionsOf(message);
         TLRPC.TL_updates updates = new TLRPC.TL_updates();
@@ -1914,6 +2277,16 @@ final class XmppBackend implements GatewayBackend {
      */
     @Override
     public synchronized TLRPC.TL_messages_affectedMessages deleteMessages(List<Integer> messageIds, boolean revoke) {
+        deleteEngineMessages(messageIds, revoke);
+        pts += messageIds.size();
+        savePts();
+        TLRPC.TL_messages_affectedMessages affected = new TLRPC.TL_messages_affectedMessages();
+        affected.pts = pts;
+        affected.pts_count = messageIds.size();
+        return affected;
+    }
+
+    private void deleteEngineMessages(List<Integer> messageIds, boolean revoke) {
         Account account = account();
         ModerationManager moderation = account == null ? null : account.getXmppConnection().getManager(ModerationManager.class);
         for (int id : messageIds) {
@@ -1923,6 +2296,9 @@ final class XmppBackend implements GatewayBackend {
             }
             if (revoke && message.getStatus() != Message.STATUS_RECEIVED) {
                 moderation.retractOwn(message);
+            } else if (revoke && isRoom(message) && canModerate((Conversation) message.getConversation())
+                    && message.getServerMsgId() != null) {
+                moderation.moderate(message);
             } else {
                 moderation.deleteLocally(message);
             }
@@ -1930,12 +2306,423 @@ final class XmppBackend implements GatewayBackend {
         }
         // Telegram removes them itself once this returns.
         pendingDeletes.removeAll(messageIds);
-        pts += messageIds.size();
-        savePts();
+    }
+
+    private static boolean canModerate(Conversation room) {
+        MucOptions options = room.getMucOptions();
+        return options.moderation() && isAdmin(options.getSelf().getAffiliation());
+    }
+
+    @Override
+    public synchronized TLRPC.TL_messages_affectedMessages deleteRoomMessages(long channelId, List<Integer> messageIds) {
+        deleteEngineMessages(messageIds, true);
+        int channelPts = channelPts(channelId);
+        for (int a = 0; a < messageIds.size(); a++) {
+            channelPts = nextChannelPts(channelId);
+        }
         TLRPC.TL_messages_affectedMessages affected = new TLRPC.TL_messages_affectedMessages();
-        affected.pts = pts;
+        affected.pts = channelPts;
         affected.pts_count = messageIds.size();
         return affected;
+    }
+
+    @Override
+    public synchronized List<TLRPC.Chat> roomChats() {
+        ArrayList<TLRPC.Chat> rooms = new ArrayList<>();
+        if (service != null) {
+            for (Conversation conversation : chats()) {
+                if (isRoom(conversation)) {
+                    rooms.add(roomChat(conversation));
+                }
+            }
+        }
+        return rooms;
+    }
+
+    private Conversation room(long channelId) {
+        Conversation conversation = conversation(channelId);
+        return conversation != null && isRoom(conversation) ? conversation : null;
+    }
+
+    @Override
+    public synchronized TLRPC.TL_messages_chatFull fullRoom(long channelId) {
+        Conversation room = room(channelId);
+        if (room == null) {
+            return null;
+        }
+        MucOptions options = room.getMucOptions();
+        List<MucOptions.User> members = roomMembers(room);
+        int admins = 0;
+        for (MucOptions.User member : members) {
+            if (isAdmin(member.getAffiliation())) {
+                admins++;
+            }
+        }
+        List<Message> messages = loadedMessages(room);
+        int top = messages.isEmpty() ? 0 : ids.messageId(messages.get(messages.size() - 1).getUuid(), messages.get(messages.size() - 1).getTimeSent());
+        Message firstUnread = room.getFirstUnreadMessage();
+        TLRPC.TL_channelFull full = new TLRPC.TL_channelFull();
+        full.id = channelId;
+        String about = options.getDescription();
+        full.about = about == null ? "" : about;
+        full.participants_count = members.size();
+        full.admins_count = admins;
+        full.read_inbox_max_id = firstUnread == null ? top : ids.messageId(firstUnread.getUuid(), firstUnread.getTimeSent()) - 1;
+        full.read_outbox_max_id = top;
+        full.unread_count = room.unreadCount();
+        full.chat_photo = new TLRPC.TL_photoEmpty();
+        String avatar = options.getAvatar();
+        if (avatar != null && FileBackend.getAvatarFile(context, avatar).exists()) {
+            full.chat_photo = photo(avatar);
+        }
+        full.notify_settings = new TLRPC.TL_peerNotifySettings();
+        full.pts = channelPts(channelId);
+        full.can_view_participants = true;
+        full.available_reactions = new TLRPC.TL_chatReactionsAll();
+        full.flags = TLObject.FLAG_0 | TLObject.FLAG_1 | TLObject.FLAG_3 | TLObject.FLAG_30;
+        TLRPC.TL_messages_chatFull result = new TLRPC.TL_messages_chatFull();
+        result.full_chat = full;
+        result.chats.add(roomChat(room));
+        result.users.addAll(users());
+        return result;
+    }
+
+    private TLRPC.ChannelParticipant participant(MucOptions.User member, boolean selfOwner) {
+        boolean self = isSelf(member);
+        long id = self ? selfId : memberUser(member).id;
+        TLRPC.ChannelParticipant participant;
+        if (member.getAffiliation() == Affiliation.OWNER) {
+            participant = new TLRPC.TL_channelParticipantCreator();
+            participant.admin_rights = adminRights(true);
+        } else if (member.getAffiliation() == Affiliation.ADMIN) {
+            participant = new TLRPC.TL_channelParticipantAdmin();
+            participant.admin_rights = adminRights(false);
+            participant.can_edit = selfOwner;
+            participant.promoted_by = selfId;
+            participant.self = self;
+            participant.date = now();
+        } else if (self) {
+            participant = new TLRPC.TL_channelParticipantSelf();
+            participant.date = now();
+        } else {
+            participant = new TLRPC.TL_channelParticipant();
+            participant.date = now();
+        }
+        participant.user_id = id;
+        participant.peer = peerUser(id);
+        return participant;
+    }
+
+    @Override
+    public synchronized TLRPC.TL_channels_channelParticipants roomParticipants(long channelId, TLRPC.ChannelParticipantsFilter filter, int offset, int limit) {
+        TLRPC.TL_channels_channelParticipants result = new TLRPC.TL_channels_channelParticipants();
+        Conversation room = room(channelId);
+        // XMPP gives no list of banned members to page through.
+        if (room == null || filter instanceof TLRPC.TL_channelParticipantsKicked || filter instanceof TLRPC.TL_channelParticipantsBanned) {
+            return result;
+        }
+        String query = filter instanceof TLRPC.TL_channelParticipantsSearch ? filter.q.toLowerCase(Locale.ROOT) : null;
+        boolean selfOwner = room.getMucOptions().getSelf().getAffiliation() == Affiliation.OWNER;
+        ArrayList<TLRPC.ChannelParticipant> matching = new ArrayList<>();
+        for (MucOptions.User member : roomMembers(room)) {
+            if (filter instanceof TLRPC.TL_channelParticipantsAdmins && !isAdmin(member.getAffiliation())) {
+                continue;
+            }
+            TLRPC.ChannelParticipant participant = participant(member, selfOwner);
+            if (query != null) {
+                TLRPC.User user = user(participant.user_id);
+                if (user == null || !(user.first_name + " " + user.username).toLowerCase(Locale.ROOT).contains(query)) {
+                    continue;
+                }
+            }
+            matching.add(participant);
+        }
+        result.count = matching.size();
+        result.participants.addAll(matching.subList(Math.min(offset, matching.size()), Math.min(offset + limit, matching.size())));
+        result.users.addAll(users());
+        return result;
+    }
+
+    @Override
+    public synchronized TLRPC.TL_channels_channelParticipant roomParticipant(long channelId, long userId) {
+        Conversation room = room(channelId);
+        if (room == null) {
+            return null;
+        }
+        boolean selfOwner = room.getMucOptions().getSelf().getAffiliation() == Affiliation.OWNER;
+        for (MucOptions.User member : roomMembers(room)) {
+            TLRPC.ChannelParticipant participant = participant(member, selfOwner);
+            if (participant.user_id == userId) {
+                TLRPC.TL_channels_channelParticipant result = new TLRPC.TL_channels_channelParticipant();
+                result.participant = participant;
+                result.users.addAll(users());
+                return result;
+            }
+        }
+        return null;
+    }
+
+    @Override
+    public synchronized TLObject roomDifference(long channelId, int fromPts) {
+        Conversation room = room(channelId);
+        int current = channelPts(channelId);
+        if (room == null || fromPts >= current) {
+            TLRPC.TL_updates_channelDifferenceEmpty empty = new TLRPC.TL_updates_channelDifferenceEmpty();
+            empty.pts = current;
+            empty.flags = TLObject.FLAG_0;
+            empty.isFinal = true;
+            return empty;
+        }
+        TLRPC.TL_updates_channelDifference difference = new TLRPC.TL_updates_channelDifference();
+        difference.pts = current;
+        difference.flags = TLObject.FLAG_0;
+        difference.isFinal = true;
+        Set<String> uuids = ids.channelMessagesAfterPts(channelId, fromPts);
+        for (Message message : loadedMessages(room)) {
+            if (uuids.contains(message.getUuid())) {
+                difference.new_messages.add(toTl(message, channelId));
+            }
+        }
+        difference.chats.add(roomChat(room));
+        difference.users.addAll(users());
+        return difference;
+    }
+
+    private static TLRPC.TL_error roomError(String text) {
+        TLRPC.TL_error error = new TLRPC.TL_error();
+        error.code = 400;
+        error.text = text;
+        return error;
+    }
+
+    private Jid addressOf(long userId) {
+        String jid = ids.peerJid(userId);
+        return jid == null ? null : Jid.of(jid);
+    }
+
+    /** An encrypted room can't include someone who has no keys, or they would read nothing. */
+    private boolean allHaveOmemo(Account account, List<Jid> members) {
+        AxolotlService axolotl = account.getAxolotlService();
+        for (Jid member : members) {
+            if (!axolotl.publishesOmemo(member, SESSION_TIMEOUT_MS)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static <T> void whenDone(ListenableFuture<T> future, java.util.function.Consumer<T> done, Runnable failed) {
+        Futures.addCallback(future, new FutureCallback<T>() {
+            @Override
+            public void onSuccess(T result) {
+                done.accept(result);
+            }
+
+            @Override
+            public void onFailure(Throwable t) {
+                FileLog.e(t);
+                failed.run();
+            }
+        }, MoreExecutors.directExecutor());
+    }
+
+    private void finishWithRoom(DeferredReply reply, long channelId) {
+        events.execute(() -> {
+            TLRPC.TL_updates updates;
+            synchronized (this) {
+                updates = emptyRoomUpdates(channelId);
+            }
+            reply.complete(updates, null);
+        });
+    }
+
+    private TLRPC.TL_updates emptyRoomUpdates(long channelId) {
+        TL_update.TL_updateChannel update = new TL_update.TL_updateChannel();
+        update.channel_id = channelId;
+        TLRPC.TL_updates updates = roomUpdates(channelId, update);
+        updates.users.addAll(users());
+        return updates;
+    }
+
+    @Override
+    public synchronized TLObject createRoom(String title, List<Long> userIds) {
+        DeferredReply reply = new DeferredReply();
+        Account account = account();
+        if (account == null) {
+            return null;
+        }
+        ArrayList<Jid> members = new ArrayList<>();
+        for (long userId : userIds) {
+            Jid address = addressOf(userId);
+            if (address != null) {
+                members.add(address.asBareJid());
+            }
+        }
+        outbox.execute(() -> {
+            if (!allHaveOmemo(account, members)) {
+                reply.complete(null, roomError(ERROR_NO_OMEMO));
+                return;
+            }
+            whenDone(account.getXmppConnection().getManager(MultiUserChatManager.class).createPrivateGroupChat(title, members),
+                    created -> events.execute(() -> {
+                        TLRPC.TL_messages_invitedUsers result = new TLRPC.TL_messages_invitedUsers();
+                        synchronized (this) {
+                            long channelId = peerId(created);
+                            boolean announced = ids.findMessage(ROOM_CREATED_PREFIX + created.getAddress().asBareJid()) != 0;
+                            result.updates = announced ? emptyRoomUpdates(channelId) : channelMessageUpdate(roomCreatedMessage(created));
+                            result.updates.users.addAll(users());
+                        }
+                        reply.complete(result, null);
+                    }),
+                    () -> reply.complete(null, roomError(ERROR_ROOM_FAILED)));
+        });
+        return reply;
+    }
+
+    @Override
+    public synchronized TLObject inviteToRoom(long channelId, List<Long> userIds) {
+        Conversation room = room(channelId);
+        Account account = account();
+        if (room == null || account == null) {
+            return null;
+        }
+        DeferredReply reply = new DeferredReply();
+        ArrayList<Jid> members = new ArrayList<>();
+        for (long userId : userIds) {
+            Jid address = addressOf(userId);
+            if (address != null) {
+                members.add(address.asBareJid());
+            }
+        }
+        outbox.execute(() -> {
+            if (room.getNextEncryption() == Message.ENCRYPTION_AXOLOTL && !allHaveOmemo(account, members)) {
+                reply.complete(null, roomError(ERROR_NO_OMEMO));
+                return;
+            }
+            for (Jid member : members) {
+                service.invite(room, member);
+            }
+            events.execute(() -> {
+                TLRPC.TL_messages_invitedUsers result = new TLRPC.TL_messages_invitedUsers();
+                synchronized (this) {
+                    result.updates = emptyRoomUpdates(channelId);
+                }
+                reply.complete(result, null);
+            });
+        });
+        return reply;
+    }
+
+    private TLObject changeAffiliation(long channelId, long userId, Affiliation affiliation) {
+        Conversation room = room(channelId);
+        Jid address = addressOf(userId);
+        Account account = account();
+        if (room == null || address == null || account == null) {
+            return null;
+        }
+        DeferredReply reply = new DeferredReply();
+        whenDone(account.getXmppConnection().getManager(MultiUserChatManager.class).setAffiliation(room, affiliation, address.asBareJid()),
+                done -> finishWithRoom(reply, channelId),
+                () -> reply.complete(null, roomError(ERROR_NOT_ADMIN)));
+        return reply;
+    }
+
+    /** XMPP can only remove someone or let them back, so finer restrictions have no meaning here. */
+    @Override
+    public synchronized TLObject banFromRoom(long channelId, long userId, boolean banned) {
+        return changeAffiliation(channelId, userId, banned ? Affiliation.OUTCAST : Affiliation.NONE);
+    }
+
+    @Override
+    public synchronized TLObject setRoomAdmin(long channelId, long userId, boolean admin) {
+        return changeAffiliation(channelId, userId, admin ? Affiliation.ADMIN : Affiliation.MEMBER);
+    }
+
+    @Override
+    public synchronized TLObject leaveRoom(long channelId) {
+        Conversation room = room(channelId);
+        if (room == null) {
+            return null;
+        }
+        TLRPC.TL_updates updates = emptyRoomUpdates(channelId);
+        for (TLRPC.Chat chat : updates.chats) {
+            chat.left = true;
+        }
+        service.archiveConversation(room);
+        return updates;
+    }
+
+    @Override
+    public synchronized TLObject destroyRoom(long channelId) {
+        Conversation room = room(channelId);
+        Account account = account();
+        if (room == null || account == null) {
+            return null;
+        }
+        DeferredReply reply = new DeferredReply();
+        TLRPC.TL_updates updates = emptyRoomUpdates(channelId);
+        whenDone(account.getXmppConnection().getManager(MultiUserChatManager.class).destroy(room.getAddress().asBareJid()),
+                done -> {
+                    service.archiveConversation(room);
+                    reply.complete(updates, null);
+                },
+                () -> reply.complete(null, roomError(ERROR_NOT_ADMIN)));
+        return reply;
+    }
+
+    private TLObject configureRoom(long channelId, String field, String value, TLObject success) {
+        Conversation room = room(channelId);
+        Account account = account();
+        if (room == null || account == null) {
+            return null;
+        }
+        DeferredReply reply = new DeferredReply();
+        Map<String, Object> configuration = new HashMap<>();
+        configuration.put(field, value);
+        whenDone(account.getXmppConnection().getManager(MultiUserChatManager.class).pushConfiguration(room, configuration),
+                done -> {
+                    if (success != null) {
+                        reply.complete(success, null);
+                    } else {
+                        finishWithRoom(reply, channelId);
+                    }
+                },
+                () -> reply.complete(null, roomError(ERROR_NOT_ADMIN)));
+        return reply;
+    }
+
+    @Override
+    public synchronized TLObject renameRoom(long channelId, String title) {
+        return configureRoom(channelId, "muc#roomconfig_roomname", title, null);
+    }
+
+    @Override
+    public synchronized TLObject describeRoom(long channelId, String about) {
+        return configureRoom(channelId, "muc#roomconfig_roomdesc", about, new TLRPC.TL_boolTrue());
+    }
+
+    @Override
+    public synchronized TLObject setRoomPhoto(long channelId, File image) {
+        Conversation room = room(channelId);
+        if (room == null) {
+            image.delete();
+            return null;
+        }
+        DeferredReply reply = new DeferredReply();
+        service.publishMucAvatar(room, Uri.fromFile(image), new OnAvatarPublication() {
+            @Override
+            public void onAvatarPublicationSucceeded() {
+                image.delete();
+                finishWithRoom(reply, channelId);
+            }
+
+            @Override
+            public void onAvatarPublicationFailed(int res) {
+                image.delete();
+                reply.complete(null, roomError(ERROR_NOT_ADMIN));
+            }
+        });
+        return reply;
     }
 
     /**
@@ -1994,9 +2781,10 @@ final class XmppBackend implements GatewayBackend {
             tl.date = (int) (copy.getTimeSent() / 1000);
             tl.message = originalTl.message;
             tl.media = originalTl.media;
-            tl.peer_id = peerUser(toUserId);
+            boolean room = isRoom(conversation);
+            tl.peer_id = peerOf(toUserId, room);
             tl.from_id = peerUser(selfId);
-            tl.dialog_id = toUserId;
+            tl.dialog_id = room ? -toUserId : toUserId;
             TLRPC.TL_messageFwdHeader header = new TLRPC.TL_messageFwdHeader();
             header.from_id = originalTl.from_id;
             header.date = originalTl.date;
@@ -2007,12 +2795,21 @@ final class XmppBackend implements GatewayBackend {
             if (!(tl.media instanceof TLRPC.TL_messageMediaEmpty)) {
                 storeSentMedia(id, tl.media);
             }
-            pts++;
-            savePts();
-            ids.setMessagePts(id, pts);
             TL_update.TL_updateMessageID messageId = new TL_update.TL_updateMessageID();
             messageId.id = id;
             messageId.random_id = randomIds.get(a);
+            if (room) {
+                TLRPC.TL_updates channelUpdates = channelMessageUpdate(tl);
+                updates.updates.add(messageId);
+                updates.updates.addAll(channelUpdates.updates);
+                if (updates.chats.isEmpty()) {
+                    updates.chats.addAll(channelUpdates.chats);
+                }
+                continue;
+            }
+            pts++;
+            savePts();
+            ids.setMessagePts(id, pts);
             TL_update.TL_updateNewMessage newMessage = new TL_update.TL_updateNewMessage();
             newMessage.message = tl;
             newMessage.pts = pts;
@@ -2071,7 +2868,7 @@ final class XmppBackend implements GatewayBackend {
     public synchronized List<TLRPC.Message> messagesAfter(int afterPts) {
         ArrayList<TLRPC.Message> result = new ArrayList<>();
         Set<String> uuids = ids.messagesAfterPts(afterPts);
-        for (Conversation conversation : singleChats()) {
+        for (Conversation conversation : chats()) {
             for (Message message : loadedMessages(conversation)) {
                 if (uuids.contains(message.getUuid())) {
                     result.add(toTl(message, peerId(conversation)));

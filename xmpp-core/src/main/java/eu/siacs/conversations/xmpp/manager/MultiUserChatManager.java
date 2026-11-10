@@ -793,6 +793,13 @@ public class MultiUserChatManager extends AbstractManager {
         final var mucOptions = getOrCreateState(conversation);
         final var previousMembers = mucOptions.getMembers();
         mucOptions.updateUser(user);
+        if (user.getRealJid() != null) {
+            this.service.notifyRoomMemberChanged(
+                    conversation,
+                    user.getRealJid(),
+                    previousMembers.contains(user.getRealJid()),
+                    user.ranks(Affiliation.MEMBER));
+        }
         final var avatarService = this.service.getAvatarService();
         if (Strings.isNullOrEmpty(mucOptions.getAvatar())) {
             avatarService.clear(mucOptions);

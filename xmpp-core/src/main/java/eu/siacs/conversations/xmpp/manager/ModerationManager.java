@@ -138,10 +138,17 @@ public class ModerationManager extends AbstractManager {
         if (!(message.getConversation() instanceof Conversation conversation)) {
             return;
         }
-        final var packet = new Message(Message.Type.CHAT);
+        final boolean room = conversation.getMode() == Conversation.MODE_MULTI;
+        // A room knows a message by the id it gave it, and one it never confirmed can't be retracted.
+        final var id = room ? message.getServerMsgId() : message.getMessageId();
+        if (id == null) {
+            deleteLocally(message);
+            return;
+        }
+        final var packet = new Message(room ? Message.Type.GROUPCHAT : Message.Type.CHAT);
         packet.setTo(conversation.getAddress().asBareJid());
         final var retract = packet.addExtension(new Retract());
-        retract.setId(message.getMessageId());
+        retract.setId(id);
         final var fallback = packet.addExtension(new Fallback());
         fallback.setAttribute("for", Namespace.RETRACTION);
         packet.setBody(RETRACTION_FALLBACK);
@@ -161,6 +168,31 @@ public class ModerationManager extends AbstractManager {
         }
         this.service.notifyMessageDeleted(message.getUuid());
         this.service.updateConversationUi();
+    }
+
+    /** A member deleting their own message in a room. Nobody else's can be retracted this way. */
+    public void handleRoomRetraction(
+            final Message packet, final MultiUserChatManager rooms, final Jid room) {
+        final var retraction = packet.getExtension(Retract.class);
+        final var id = retraction == null ? null : retraction.getId();
+        final var conversation = this.service.find(getAccount(), room.asBareJid());
+        if (id == null || conversation == null || conversation.getMode() != Conversation.MODE_MULTI) {
+            return;
+        }
+        final var sender = rooms.getMucUser(packet, null);
+        var message = conversation.findMessageWithServerMsgId(id);
+        if (message == null) {
+            message = getDatabase().getMessageWithServerMsgId(conversation, id);
+        }
+        if (sender == null || sender.getRealJid() == null || message == null) {
+            return;
+        }
+        final var author = message.getTrueCounterpart();
+        if (author == null || !author.asBareJid().equals(sender.getRealJid())) {
+            Log.d(Config.LOGTAG, "ignored retraction of a message by someone else");
+            return;
+        }
+        deleteLocally(message);
     }
 
     /** A contact, or another device of ours, deleting a message in a one-to-one chat. */

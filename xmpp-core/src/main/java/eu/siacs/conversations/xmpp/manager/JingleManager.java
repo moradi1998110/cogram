@@ -24,6 +24,7 @@ import eu.siacs.conversations.entities.RtpSessionStatus;
 import eu.siacs.conversations.entities.Transferable;
 import eu.siacs.conversations.services.CallIntegration;
 import eu.siacs.conversations.services.CallIntegrationConnectionService;
+import eu.siacs.conversations.services.ExternalCallUi;
 import eu.siacs.conversations.services.XmppConnectionService;
 import eu.siacs.conversations.utils.CryptoHelper;
 import eu.siacs.conversations.utils.NetworkManager;
@@ -535,6 +536,12 @@ public class JingleManager extends AbstractManager {
     }
 
     private boolean isWithStrangerAndStrangerNotificationsAreOff(final Jid with) {
+        if (ExternalCallUi.isEnabled()) {
+            final int policy = ExternalCallUi.callPolicy();
+            return policy == ExternalCallUi.CALLS_NOBODY
+                    || (policy == ExternalCallUi.CALLS_CONTACTS
+                            && !getManager(RosterManager.class).getContact(with).showInContactList());
+        }
         final boolean notifyForStrangers = new AppSettings(context).isNotificationsFromStrangers();
         if (notifyForStrangers) {
             return false;

@@ -3178,12 +3178,26 @@ public class XmppConnectionService extends Service {
         void onMessageReplaced(Message message, String previousUuid);
 
         void onMessageDeleted(String uuid);
+
+        /** Membership really changed, unlike presence, which only says who is connected now. */
+        void onRoomMemberChanged(Conversation room, Jid member, boolean wasMember, boolean isMember);
     }
 
     private volatile OnMessageChange onMessageChange;
 
     public void setOnMessageChangeListener(final OnMessageChange listener) {
         this.onMessageChange = listener;
+    }
+
+    public void notifyRoomMemberChanged(
+            final Conversation room,
+            final Jid member,
+            final boolean wasMember,
+            final boolean isMember) {
+        final OnMessageChange listener = this.onMessageChange;
+        if (listener != null && wasMember != isMember) {
+            listener.onRoomMemberChanged(room, member, wasMember, isMember);
+        }
     }
 
     public void notifyMessageDeleted(final String uuid) {

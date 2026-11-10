@@ -38,6 +38,7 @@ import androidx.recyclerview.widget.DiffUtil;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
+import org.telegram.cogram.CogramGateway;
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.AnimationNotificationsLocker;
 import org.telegram.messenger.BotWebViewVibrationEffect;
@@ -530,8 +531,10 @@ public class ChatUsersActivity extends BaseFragment implements NotificationCente
             if (!transfer && ChatObject.isChannel(currentChat) && currentChat.megagroup && !currentChat.gigagroup && (info == null || info.participants_count <= 200 || !isChannel && info.can_set_stickers)) {
 //                recentActionsRow = rowCount++;
                 if (ChatObject.hasAdminRights(currentChat)) {
-                    antiSpamRow = rowCount++;
-                    antiSpamInfoRow = rowCount++;
+                    if (!CogramGateway.ENABLED) {
+                        antiSpamRow = rowCount++;
+                        antiSpamInfoRow = rowCount++;
+                    }
                 } else {
                     addNewSectionRow = rowCount++;
                 }
@@ -563,7 +566,7 @@ public class ChatUsersActivity extends BaseFragment implements NotificationCente
             }
         } else if (type == TYPE_USERS) {
             if (ChatObject.isChannel(currentChat)) {
-                if (!ChatObject.isChannelAndNotMegaGroup(currentChat) && !needOpenSearch) {
+                if (!CogramGateway.ENABLED && !ChatObject.isChannelAndNotMegaGroup(currentChat) && !needOpenSearch) {
                     hideMembersRow = rowCount++;
                     hideMembersInfoRow = rowCount++;
                 }
@@ -575,7 +578,7 @@ public class ChatUsersActivity extends BaseFragment implements NotificationCente
             if (selectType == SELECT_TYPE_MEMBERS && ChatObject.canAddUsers(currentChat)) {
                 addNewRow = rowCount++;
             }
-            if (selectType == SELECT_TYPE_MEMBERS && ChatObject.canUserDoAdminAction(currentChat, ChatObject.ACTION_INVITE)) {
+            if (!CogramGateway.ENABLED && selectType == SELECT_TYPE_MEMBERS && ChatObject.canUserDoAdminAction(currentChat, ChatObject.ACTION_INVITE)) {
                 addNew2Row = rowCount++;
             }
             if (!(loadingUsers && !firstLoaded)) {
@@ -1914,7 +1917,7 @@ public class ChatUsersActivity extends BaseFragment implements NotificationCente
             ItemOptions.makeOptions(this, view)
                 .setScrimViewBackground(listView.getClipBackground(view))
                 .addIf(allowSetAdmin, R.drawable.msg_admins, editingAdmin ? getString(R.string.EditAdminRights) : getString(R.string.SetAsAdmin), () -> openRightsFor.run(0))
-                .addIf(canChangePermission, R.drawable.msg_permissions, getString("ChangePermissions", R.string.ChangePermissions), () -> {
+                .addIf(canChangePermission && !CogramGateway.ENABLED, R.drawable.msg_permissions, getString("ChangePermissions", R.string.ChangePermissions), () -> {
                     if (participant instanceof TLRPC.TL_channelParticipantAdmin || participant instanceof TLRPC.TL_chatParticipantAdmin) {
                         showDialog(
                             new AlertDialog.Builder(getParentActivity())
