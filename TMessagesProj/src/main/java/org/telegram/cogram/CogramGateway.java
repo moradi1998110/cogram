@@ -535,7 +535,7 @@ public final class CogramGateway {
             return backend.describeRoom(peerId(edit.peer), edit.about);
         } else if (request instanceof TLRPC.TL_channels_editPhoto) {
             TLRPC.TL_channels_editPhoto edit = (TLRPC.TL_channels_editPhoto) request;
-            File image = edit.photo instanceof TLRPC.TL_inputChatUploadedPhoto ? uploads.takeFile(edit.photo.file.id) : null;
+            File image = edit.photo instanceof TLRPC.TL_inputChatUploadedPhoto ? uploads.takeFile(((TLRPC.TL_inputChatUploadedPhoto) edit.photo).file.id) : null;
             return image == null ? null : backend.setRoomPhoto(edit.channel.channel_id, image);
         }
         return null;
