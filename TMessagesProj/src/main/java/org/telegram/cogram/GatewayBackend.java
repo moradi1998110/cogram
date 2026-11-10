@@ -221,4 +221,19 @@ public interface GatewayBackend {
     default XmppCalls calls() {
         return null;
     }
+
+    /** Runs once a chat's history is there to read, which may first need fetching from the server. */
+    default void whenHistoryReady(long peerId, Runnable ready) {
+        ready.run();
+    }
+
+    /** Whether this peer is someone Telegram may open a chat with even before any message exists. */
+    default boolean isKnownUser(long peerId) {
+        return false;
+    }
+
+    /** People banned from a room, shown as the room's removed users. */
+    default TLObject roomBanned(long channelId, int offset, int limit) {
+        return new TLRPC.TL_channels_channelParticipants();
+    }
 }

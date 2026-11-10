@@ -476,6 +476,17 @@ public class ChatEditActivity extends BaseFragment implements ImageUpdater.Image
                 view.setVisibility(View.GONE);
             }
         }
+        // In XMPP only the owner sets a room's name and photo, while admins may still change the
+        // description, so others see these the way Telegram shows what they cannot edit.
+        if (currentChat != null && !currentChat.creator) {
+            if (nameTextView != null) {
+                nameTextView.setEnabled(false);
+                nameTextView.setFocusable(false);
+            }
+            if (setAvatarCell != null) {
+                setAvatarCell.setVisibility(View.GONE);
+            }
+        }
     }
 
     @Override

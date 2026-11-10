@@ -64,6 +64,7 @@ import eu.siacs.conversations.ui.interfaces.OnAvatarPublication;
 import eu.siacs.conversations.xmpp.Jid;
 import im.conversations.android.xmpp.model.muc.Affiliation;
 import eu.siacs.conversations.xmpp.jingle.RtpCapability;
+import eu.siacs.conversations.xmpp.manager.MessageArchiveManager;
 import eu.siacs.conversations.xmpp.manager.ModerationManager;
 import eu.siacs.conversations.xmpp.manager.MultiUserChatManager;
 import eu.siacs.conversations.xmpp.manager.PresenceManager;
@@ -77,6 +78,9 @@ final class XmppBackend implements GatewayBackend {
 
     private static final int HISTORY_SCAN_FACTOR = 2;
     private static final int HISTORY_AROUND_LIMIT = 2000;
+    private static final long ARCHIVE_WAIT_MS = 8000;
+    private static final long ARCHIVE_POLL_MS = 200;
+    private static final long ARCHIVE_RELEASE_FALLBACK_MS = 30000;
     private static final String TEXT_FILE = "📎";
     private static final String TEXT_UNREADABLE = "🔒";
     private static final int PHOTO_DC_ID = 1;
@@ -105,6 +109,9 @@ final class XmppBackend implements GatewayBackend {
     private final SharedPreferences preferences = context.getSharedPreferences("cogram_xmpp", Activity.MODE_PRIVATE);
     private final XmppIdMap ids = new XmppIdMap(context);
     private final ExecutorService events = Executors.newSingleThreadExecutor();
+    // Chats whose server archive is being fetched for a history answer; see whenHistoryReady.
+    private final Set<Long> awaitingArchive = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private final java.util.concurrent.ScheduledExecutorService archiveWaits = Executors.newSingleThreadScheduledExecutor();
     private final AtomicBoolean syncPending = new AtomicBoolean();
     // The engine holds its listeners weakly, so a listener nothing else refers to stops being called.
     private final XmppConnectionService.OnConversationUpdate conversationListener = this::scheduleSync;
@@ -494,6 +501,10 @@ final class XmppBackend implements GatewayBackend {
             }
             for (Conversation conversation : chats()) {
                 long peerId = peerId(conversation);
+                if (awaitingArchive.contains(peerId)) {
+                    // Its archive is arriving for a history answer still to come; see whenHistoryReady.
+                    continue;
+                }
                 int readMax = 0;
                 if (isRoom(conversation) && ids.findMessage(ROOM_CREATED_PREFIX + conversation.getAddress().asBareJid()) == 0) {
                     updates.add(channelMessageUpdate(roomCreatedMessage(conversation)));
@@ -923,11 +934,15 @@ final class XmppBackend implements GatewayBackend {
         return affiliation == Affiliation.OWNER || affiliation == Affiliation.ADMIN;
     }
 
-    /** XMPP has a single admin role, so an admin holds every right a room can actually enforce. */
-    private static TLRPC.TL_chatAdminRights adminRights(boolean owner) {
+    /**
+     * XMPP has a single admin role. Telegram's "change info" stands for the description, which is
+     * the room's subject and admins may change; the name and photo stay the owner's, as the edit
+     * screen shows. Deleting others' messages needs the server to support moderation.
+     */
+    private static TLRPC.TL_chatAdminRights adminRights(boolean owner, boolean moderation) {
         TLRPC.TL_chatAdminRights rights = new TLRPC.TL_chatAdminRights();
         rights.change_info = true;
-        rights.delete_messages = true;
+        rights.delete_messages = moderation;
         rights.ban_users = true;
         rights.invite_users = true;
         rights.add_admins = owner;
@@ -935,11 +950,12 @@ final class XmppBackend implements GatewayBackend {
         return rights;
     }
 
-    private static TLRPC.TL_chatBannedRights roomDefaultRights() {
+    /** What every member may do, which the room's own settings decide. */
+    private static TLRPC.TL_chatBannedRights roomDefaultRights(MucOptions options) {
         TLRPC.TL_chatBannedRights rights = new TLRPC.TL_chatBannedRights();
         rights.send_polls = true;
-        rights.change_info = true;
-        rights.invite_users = true;
+        rights.change_info = !options.participantsCanChangeSubject();
+        rights.invite_users = !options.allowInvites();
         rights.pin_messages = true;
         rights.manage_topics = true;
         return rights;
@@ -968,10 +984,10 @@ final class XmppBackend implements GatewayBackend {
         chat.left = error == MucOptions.Error.KICKED || error == MucOptions.Error.BANNED
                 || error == MucOptions.Error.MEMBERS_ONLY || error == MucOptions.Error.DESTROYED;
         chat.participants_count = roomMembers(room).size();
-        chat.default_banned_rights = roomDefaultRights();
+        chat.default_banned_rights = roomDefaultRights(options);
         chat.flags = TLObject.FLAG_8 | TLObject.FLAG_13 | TLObject.FLAG_17 | TLObject.FLAG_18;
         if (isAdmin(affiliation)) {
-            chat.admin_rights = adminRights(chat.creator);
+            chat.admin_rights = adminRights(chat.creator, options.moderation());
             chat.flags |= TLObject.FLAG_14;
         }
         String avatar = options.getAvatar();
@@ -1083,6 +1099,66 @@ final class XmppBackend implements GatewayBackend {
 
     private long peerId(Conversation conversation) {
         return ids.peerId(conversation.getAddress().asBareJid().toString());
+    }
+
+    @Override
+    public synchronized boolean isKnownUser(long peerId) {
+        String jid = ids.peerJid(peerId);
+        if (jid == null || account() == null) {
+            return false;
+        }
+        Jid address = Jid.of(jid);
+        if (address.getResource() != null) {
+            return false;
+        }
+        Conversation existing = service.find(account(), address.asBareJid());
+        return existing == null || !isRoom(existing);
+    }
+
+    /**
+     * Opening a chat the engine did not have yet starts fetching its archive from the server.
+     * Telegram's answer waits for that, so the chat opens with its messages, and meanwhile those
+     * messages are kept from reaching Telegram as new ones, which would ring and count as unread.
+     */
+    @Override
+    public void whenHistoryReady(long peerId, Runnable ready) {
+        Conversation conversation;
+        MessageArchiveManager archive;
+        synchronized (this) {
+            Account account = account();
+            conversation = service == null || account == null ? null : conversation(peerId);
+            archive = conversation == null || isRoom(conversation) ? null
+                    : account.getXmppConnection().getManager(MessageArchiveManager.class);
+        }
+        if (archive == null || !archive.queryInProgress(conversation)) {
+            ready.run();
+            return;
+        }
+        awaitingArchive.add(peerId);
+        long deadline = System.currentTimeMillis() + ARCHIVE_WAIT_MS;
+        if (BuildVars.LOGS_ENABLED) {
+            FileLog.d("cogram: history waits for the archive of peer " + peerId);
+        }
+        archiveWaits.schedule(new Runnable() {
+            @Override
+            public void run() {
+                if (archive.queryInProgress(conversation) && System.currentTimeMillis() < deadline) {
+                    archiveWaits.schedule(this, ARCHIVE_POLL_MS, TimeUnit.MILLISECONDS);
+                    return;
+                }
+                if (BuildVars.LOGS_ENABLED) {
+                    FileLog.d("cogram: archive of peer " + peerId + (archive.queryInProgress(conversation) ? " still loading, answering anyway" : " loaded"));
+                }
+                // History releases the hold once its answer has numbered the messages, so only
+                // ones it did not cover reach Telegram as new. This is a fallback if it never runs.
+                archiveWaits.schedule(() -> {
+                    if (awaitingArchive.remove(peerId)) {
+                        scheduleSync();
+                    }
+                }, ARCHIVE_RELEASE_FALLBACK_MS, TimeUnit.MILLISECONDS);
+                ready.run();
+            }
+        }, ARCHIVE_POLL_MS, TimeUnit.MILLISECONDS);
     }
 
     private Conversation conversation(long peerId) {
@@ -2172,6 +2248,19 @@ final class XmppBackend implements GatewayBackend {
         try {
             return historyOf(conversation, userId, offsetId, addOffset, limit, maxId, minId, result);
         } finally {
+            if (awaitingArchive.remove(userId)) {
+                // The archive just fetched is old history, which Telegram reads through history
+                // like this answer, never as new messages that ring and count as unread.
+                ids.inTransaction(() -> {
+                    for (Message message : loadedMessages(conversation)) {
+                        if (ids.findMessage(message.getUuid()) == 0) {
+                            snapshots.put(ids.messageId(message.getUuid(), message.getTimeSent()), snapshot(message));
+                        }
+                    }
+                    return null;
+                });
+                scheduleSync();
+            }
             if (BuildVars.LOGS_ENABLED) {
                 FileLog.d("cogram: history inside backend took " + (System.currentTimeMillis() - historyStarted) + " ms");
             }
@@ -2403,7 +2492,8 @@ final class XmppBackend implements GatewayBackend {
         Message firstUnread = room.getFirstUnreadMessage();
         TLRPC.TL_channelFull full = new TLRPC.TL_channelFull();
         full.id = channelId;
-        String about = options.getDescription();
+        // The subject is what XMPP clients show atop a room, and admins may change it.
+        String about = options.getSubject();
         full.about = about == null ? "" : about;
         full.participants_count = members.size();
         full.admins_count = admins;
@@ -2427,16 +2517,16 @@ final class XmppBackend implements GatewayBackend {
         return result;
     }
 
-    private TLRPC.ChannelParticipant participant(MucOptions.User member, boolean selfOwner) {
+    private TLRPC.ChannelParticipant participant(MucOptions.User member, boolean selfOwner, boolean moderation) {
         boolean self = isSelf(member);
         long id = self ? selfId : memberUser(member).id;
         TLRPC.ChannelParticipant participant;
         if (member.getAffiliation() == Affiliation.OWNER) {
             participant = new TLRPC.TL_channelParticipantCreator();
-            participant.admin_rights = adminRights(true);
+            participant.admin_rights = adminRights(true, moderation);
         } else if (member.getAffiliation() == Affiliation.ADMIN) {
             participant = new TLRPC.TL_channelParticipantAdmin();
-            participant.admin_rights = adminRights(false);
+            participant.admin_rights = adminRights(false, moderation);
             participant.can_edit = selfOwner;
             participant.promoted_by = selfId;
             participant.self = self;
@@ -2457,7 +2547,7 @@ final class XmppBackend implements GatewayBackend {
     public synchronized TLRPC.TL_channels_channelParticipants roomParticipants(long channelId, TLRPC.ChannelParticipantsFilter filter, int offset, int limit) {
         TLRPC.TL_channels_channelParticipants result = new TLRPC.TL_channels_channelParticipants();
         Conversation room = room(channelId);
-        // XMPP gives no list of banned members to page through.
+        // Banned people come from roomBanned, which asks the server.
         if (room == null || filter instanceof TLRPC.TL_channelParticipantsKicked || filter instanceof TLRPC.TL_channelParticipantsBanned) {
             return result;
         }
@@ -2468,7 +2558,7 @@ final class XmppBackend implements GatewayBackend {
             if (filter instanceof TLRPC.TL_channelParticipantsAdmins && !isAdmin(member.getAffiliation())) {
                 continue;
             }
-            TLRPC.ChannelParticipant participant = participant(member, selfOwner);
+            TLRPC.ChannelParticipant participant = participant(member, selfOwner, room.getMucOptions().moderation());
             if (query != null) {
                 TLRPC.User user = user(participant.user_id);
                 if (user == null || !(user.first_name + " " + user.username).toLowerCase(Locale.ROOT).contains(query)) {
@@ -2491,7 +2581,7 @@ final class XmppBackend implements GatewayBackend {
         }
         boolean selfOwner = room.getMucOptions().getSelf().getAffiliation() == Affiliation.OWNER;
         for (MucOptions.User member : roomMembers(room)) {
-            TLRPC.ChannelParticipant participant = participant(member, selfOwner);
+            TLRPC.ChannelParticipant participant = participant(member, selfOwner, room.getMucOptions().moderation());
             if (participant.user_id == userId) {
                 TLRPC.TL_channels_channelParticipant result = new TLRPC.TL_channels_channelParticipant();
                 result.participant = participant;
@@ -2564,6 +2654,46 @@ final class XmppBackend implements GatewayBackend {
                 failed.run();
             }
         }, MoreExecutors.directExecutor());
+    }
+
+    /** The room's banned people as Telegram's removed users, which an admin can unban there. */
+    @Override
+    public synchronized TLObject roomBanned(long channelId, int offset, int limit) {
+        Conversation room = room(channelId);
+        Account account = account();
+        if (room == null || account == null || !isAdmin(room.getMucOptions().getSelf().getAffiliation())) {
+            return new TLRPC.TL_channels_channelParticipants();
+        }
+        DeferredReply reply = new DeferredReply();
+        whenDone(account.getXmppConnection().getManager(MultiUserChatManager.class).fetchOutcasts(room),
+                outcasts -> events.execute(() -> {
+                    TLRPC.TL_channels_channelParticipants result = new TLRPC.TL_channels_channelParticipants();
+                    synchronized (this) {
+                        ArrayList<TLRPC.ChannelParticipant> banned = new ArrayList<>();
+                        for (MucOptions.User outcast : outcasts) {
+                            Jid real = outcast.getRealJid();
+                            if (real == null) {
+                                continue;
+                            }
+                            TLRPC.User user = memberUser(real.asBareJid(), null, false);
+                            roomUsers.put(user.id, user);
+                            TLRPC.TL_channelParticipantBanned participant = new TLRPC.TL_channelParticipantBanned();
+                            participant.peer = peerUser(user.id);
+                            participant.kicked_by = selfId;
+                            participant.date = now();
+                            participant.left = true;
+                            participant.banned_rights = new TLRPC.TL_chatBannedRights();
+                            participant.banned_rights.view_messages = true;
+                            banned.add(participant);
+                        }
+                        result.count = banned.size();
+                        result.participants.addAll(banned.subList(Math.min(offset, banned.size()), Math.min(offset + limit, banned.size())));
+                        result.users.addAll(users());
+                    }
+                    reply.complete(result, null);
+                }),
+                () -> reply.complete(new TLRPC.TL_channels_channelParticipants(), null));
+        return reply;
     }
 
     private void finishWithRoom(DeferredReply reply, long channelId) {
@@ -2670,6 +2800,20 @@ final class XmppBackend implements GatewayBackend {
     /** XMPP can only remove someone or let them back, so finer restrictions have no meaning here. */
     @Override
     public synchronized TLObject banFromRoom(long channelId, long userId, boolean banned) {
+        if (!banned) {
+            Conversation room = room(channelId);
+            Jid address = addressOf(userId);
+            if (room == null || address == null) {
+                return null;
+            }
+            for (MucOptions.User member : roomMembers(room)) {
+                Jid real = member.getRealJid();
+                if (real != null && real.asBareJid().equals(address.asBareJid()) && member.getAffiliation() != Affiliation.OUTCAST) {
+                    // Lifting a ban sets no affiliation, which for a member would end their membership.
+                    return emptyRoomUpdates(channelId);
+                }
+            }
+        }
         return changeAffiliation(channelId, userId, banned ? Affiliation.OUTCAST : Affiliation.NONE);
     }
 
@@ -2738,7 +2882,18 @@ final class XmppBackend implements GatewayBackend {
 
     @Override
     public synchronized TLObject describeRoom(long channelId, String about) {
-        return configureRoom(channelId, "muc#roomconfig_roomdesc", about, new TLRPC.TL_boolTrue());
+        Conversation room = room(channelId);
+        if (room == null) {
+            return null;
+        }
+        DeferredReply reply = new DeferredReply();
+        if (room.getMucOptions().canChangeSubject()) {
+            service.pushSubjectToConference(room, about);
+            reply.complete(new TLRPC.TL_boolTrue(), null);
+        } else {
+            reply.complete(null, roomError(ERROR_NOT_ADMIN));
+        }
+        return reply;
     }
 
     @Override
@@ -2896,9 +3051,16 @@ final class XmppBackend implements GatewayBackend {
         if (conversation != null) {
             service.sendReadMarker(conversation, null);
         }
+        TLRPC.TL_messages_affectedMessages affected = new TLRPC.TL_messages_affectedMessages();
+        if (conversation != null && isRoom(conversation)) {
+            // Telegram answers a group read with no pts, so moving the chats' pts here left a gap
+            // that held back every later message until something asked for the difference.
+            affected.pts = pts;
+            affected.pts_count = 0;
+            return affected;
+        }
         pts++;
         savePts();
-        TLRPC.TL_messages_affectedMessages affected = new TLRPC.TL_messages_affectedMessages();
         affected.pts = pts;
         affected.pts_count = 1;
         return affected;

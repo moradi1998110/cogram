@@ -1079,6 +1079,12 @@ public class MultiUserChatManager extends AbstractManager {
         this.service.updateConversationUi();
     }
 
+    /** The room's banned people, which an app that lists them asks for itself. */
+    public ListenableFuture<Collection<MucOptions.User>> fetchOutcasts(
+            final Conversation conversation) {
+        return fetchAffiliations(conversation, Affiliation.OUTCAST);
+    }
+
     private ListenableFuture<Collection<MucOptions.User>> fetchAffiliations(
             final Conversation conversation, final Affiliation affiliation) {
         final var iq = new Iq(Iq.Type.GET);

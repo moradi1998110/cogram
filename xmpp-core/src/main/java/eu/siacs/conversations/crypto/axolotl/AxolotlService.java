@@ -1622,6 +1622,12 @@ public class AxolotlService implements OnAdvancedStreamFeaturesLoaded {
             final Conversation conversation, final long deadline) {
         try {
             while (!account.isOnlineAndConnected() || !conversation.getMucOptions().online()) {
+                // With sessions to the members already there, the message can wait in the engine,
+                // which sends it once the room is joined again, instead of here.
+                if (!conversation.getAcceptedCryptoTargets().isEmpty()
+                        && hasTrustedSession(conversation)) {
+                    return SessionReadiness.READY;
+                }
                 if (System.currentTimeMillis() > deadline) {
                     return SessionReadiness.FAILED;
                 }

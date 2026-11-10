@@ -43,6 +43,7 @@ public final class CogramGateway {
     private static final String PREFERENCES = "cogram_gateway";
     private static final String KEY_DEMO = "demo";
     private static final long SLOW_REQUEST_MS = 300;
+    private static final long UPDATE_TICK_MS = 1000;
 
     private static final CogramGateway[] instances = new CogramGateway[UserConfig.MAX_ACCOUNT_COUNT];
 
@@ -90,6 +91,30 @@ public final class CogramGateway {
         }));
         applyPrivacy();
         backend = selected;
+        startUpdateTimer();
+    }
+
+    private java.util.concurrent.ScheduledExecutorService updateTimer;
+
+    /**
+     * Telegram's native network layer calls {@link ConnectionsManager#onUpdate} every second, and
+     * that tick is what fetches the difference when an update arrives after a gap, ends typing and
+     * online states, and runs other timed work. The native layer is off here, so the gateway ticks.
+     */
+    private synchronized void startUpdateTimer() {
+        if (updateTimer != null) {
+            return;
+        }
+        updateTimer = java.util.concurrent.Executors.newSingleThreadScheduledExecutor(runnable -> {
+            Thread thread = new Thread(runnable, "cogramUpdateTimer");
+            thread.setDaemon(true);
+            return thread;
+        });
+        updateTimer.scheduleWithFixedDelay(() -> {
+            if (backend != null) {
+                ConnectionsManager.onUpdate(account);
+            }
+        }, UPDATE_TICK_MS, UPDATE_TICK_MS, java.util.concurrent.TimeUnit.MILLISECONDS);
     }
 
     /** Signs the first account in locally, so the app opens on the chat list. */
@@ -266,6 +291,11 @@ public final class CogramGateway {
             return result;
         } else if (request instanceof TLRPC.TL_messages_sendMedia) {
             return sendMedia((TLRPC.TL_messages_sendMedia) request);
+        } else if (request instanceof TL_account.updateStatus) {
+            // The engine keeps our presence itself, from whether the app is in the foreground.
+            return new TLRPC.TL_boolTrue();
+        } else if (request instanceof TLRPC.TL_messages_getMessagesViews) {
+            return new TLRPC.TL_messages_messageViews();
         } else if (request instanceof TLRPC.TL_messages_readHistory) {
             TLRPC.TL_messages_readHistory read = (TLRPC.TL_messages_readHistory) request;
             return backend.markRead(peerId(read.peer), read.max_id);
@@ -525,6 +555,9 @@ public final class CogramGateway {
             return chats;
         } else if (request instanceof TLRPC.TL_channels_getParticipants) {
             TLRPC.TL_channels_getParticipants get = (TLRPC.TL_channels_getParticipants) request;
+            if (get.filter instanceof TLRPC.TL_channelParticipantsKicked || get.filter instanceof TLRPC.TL_channelParticipantsBanned) {
+                return backend.roomBanned(get.channel.channel_id, get.offset, get.limit);
+            }
             return backend.roomParticipants(get.channel.channel_id, get.filter, get.offset, get.limit);
         } else if (request instanceof TLRPC.TL_channels_getParticipant) {
             TLRPC.TL_channels_getParticipant get = (TLRPC.TL_channels_getParticipant) request;
@@ -550,8 +583,16 @@ public final class CogramGateway {
             return backend.inviteToRoom(invite.channel.channel_id, userIds(invite.users));
         } else if (request instanceof TLRPC.TL_channels_editBanned) {
             TLRPC.TL_channels_editBanned ban = (TLRPC.TL_channels_editBanned) request;
-            // XMPP has no partial restriction, and clearing one would remove the member's place in the room.
-            return ban.banned_rights.view_messages ? backend.banFromRoom(ban.channel.channel_id, peerId(ban.participant), true) : null;
+            // XMPP has no partial restriction. Clearing every right is how Telegram unbans someone
+            // from the removed users, and the backend only lifts a ban for someone not a member.
+            TLRPC.TL_chatBannedRights rights = ban.banned_rights;
+            if (rights.view_messages) {
+                return backend.banFromRoom(ban.channel.channel_id, peerId(ban.participant), true);
+            }
+            boolean cleared = !(rights.send_messages || rights.send_media || rights.send_stickers || rights.send_gifs
+                    || rights.send_games || rights.send_inline || rights.embed_links || rights.send_polls
+                    || rights.change_info || rights.invite_users || rights.pin_messages);
+            return cleared ? backend.banFromRoom(ban.channel.channel_id, peerId(ban.participant), false) : null;
         } else if (request instanceof TLRPC.TL_channels_editAdmin) {
             TLRPC.TL_channels_editAdmin admin = (TLRPC.TL_channels_editAdmin) request;
             TLRPC.TL_chatAdminRights rights = admin.admin_rights;
@@ -725,11 +766,25 @@ public final class CogramGateway {
         List<TLRPC.Dialog> dialogs = backend.dialogs();
         for (TLRPC.InputDialogPeer inputPeer : request.peers) {
             if (inputPeer instanceof TLRPC.TL_inputDialogPeer) {
-                long peer = peerId(((TLRPC.TL_inputDialogPeer) inputPeer).peer);
+                TLRPC.InputPeer input = ((TLRPC.TL_inputDialogPeer) inputPeer).peer;
+                long peer = peerId(input);
+                boolean found = false;
                 for (TLRPC.Dialog dialog : dialogs) {
                     if (dialog.peer.user_id == peer || dialog.peer.channel_id == peer) {
                         result.dialogs.add(dialog);
+                        found = true;
                     }
+                }
+                // After a fresh sign-in the engine has no chat yet with someone whose messages are
+                // only on the server. With no dialog Telegram never asks for the history and keeps
+                // loading, while an empty one makes it ask, and asking fetches the server's archive.
+                if (!found && input instanceof TLRPC.TL_inputPeerUser && backend.isKnownUser(peer)) {
+                    TLRPC.TL_dialog empty = new TLRPC.TL_dialog();
+                    empty.id = peer;
+                    empty.peer = new TLRPC.TL_peerUser();
+                    empty.peer.user_id = peer;
+                    empty.notify_settings = new TLRPC.TL_peerNotifySettings();
+                    result.dialogs.add(empty);
                 }
             }
         }
@@ -739,7 +794,19 @@ public final class CogramGateway {
         return result;
     }
 
+    /** Answers once the chat's history is on the device, which the first time can mean fetching it. */
     private TLObject history(TLRPC.TL_messages_getHistory request) {
+        DeferredReply reply = new DeferredReply();
+        GatewayBackend current = backend;
+        current.whenHistoryReady(peerId(request.peer), () -> queue.postRunnable(() -> {
+            if (backend == current) {
+                reply.complete(historyNow(request), null);
+            }
+        }));
+        return reply;
+    }
+
+    private TLObject historyNow(TLRPC.TL_messages_getHistory request) {
         TLRPC.TL_messages_messages result = new TLRPC.TL_messages_messages();
         result.messages.addAll(backend.history(peerId(request.peer), request.offset_id, request.add_offset, request.limit, request.max_id, request.min_id));
         result.users.addAll(backend.users());

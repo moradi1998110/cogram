@@ -33,6 +33,10 @@ public class ChannelBoostsController {
     }
 
     public void getBoostsStats(long dialogId, Utilities.Callback<TL_stories.TL_premium_boostsStatus> consumer) {
+        if (org.telegram.cogram.CogramGateway.ENABLED) {
+            // XMPP rooms have no boosts, and the failed request showed an error on every group.
+            return;
+        }
         TL_stories.TL_premium_getBoostsStatus req = new TL_stories.TL_premium_getBoostsStatus();
         req.peer = messagesController.getInputPeer(dialogId);
         connectionsManager.sendRequest(req, (response, error) -> AndroidUtilities.runOnUIThread(() -> {
