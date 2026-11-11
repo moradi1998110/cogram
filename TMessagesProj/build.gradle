@@ -111,6 +111,10 @@ dependencies {
     // OsmAnd's map engine for the Maps tab, when its sources are in the build (see settings.gradle).
     if (gradle.ext.has('osmand')) {
         implementation project(':OsmAnd')
+        // The map view's types come from OsmAnd's core library, which OsmAnd's own module keeps to itself.
+        implementation project(path: ':OsmAnd-java', configuration: 'android')
+        implementation project(':OsmAnd-shared')
+        implementation 'androidx.multidex:multidex:2.0.1'
     }
 }
 
