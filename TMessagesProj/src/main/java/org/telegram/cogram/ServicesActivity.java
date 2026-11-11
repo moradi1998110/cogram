@@ -459,7 +459,7 @@ public class ServicesActivity extends BaseFragment implements MainTabsActivity.T
 
         void scheduleRotation() {
             cancelRotation();
-            if (!userDragging && SAMPLE_ADVERTS.length > 1 && LiteMode.isEnabled(LiteMode.FLAGS_ANIMATED_STICKERS)) {
+            if (!userDragging && SAMPLE_ADVERTS.length > 1) {
                 AndroidUtilities.runOnUIThread(rotate, ADS_ROTATE_MS);
             }
         }
