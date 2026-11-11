@@ -71,6 +71,11 @@ if (gradle.ext.has('osmand')) {
     // OsmAnd's native renderer is built for the device's ABI only, not for all four.
     project(':OsmAnd') {
         tasks.configureEach { t ->
+            // OsmAnd's script (written for Android plugin 8.10) orders its icon copy before the resource tasks
+            // it knows; newer resource tasks, such as navigation resources, read those icons too.
+            if (t.name != 'copyIcons' && t.name.endsWith('Resources') && !t.name.startsWith('collect')) {
+                t.dependsOn('copyIcons')
+            }
             if (t.name == 'buildOsmAndCore') {
                 if (injectedAbi.contains('arm64')) t.environment('ARM64_ONLY', '1')
                 else if (injectedAbi.contains('x86_64')) t.environment('X86_64_ONLY', '1')
