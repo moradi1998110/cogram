@@ -6,7 +6,6 @@ import de.gultsch.common.MiniUri;
 import eu.siacs.conversations.R;
 import eu.siacs.conversations.entities.Message;
 import eu.siacs.conversations.ui.ShowLocationActivity;
-import org.osmdroid.util.GeoPoint;
 
 public class GeoHelper {
 

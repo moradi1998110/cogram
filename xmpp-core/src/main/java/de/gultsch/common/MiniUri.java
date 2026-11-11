@@ -34,7 +34,7 @@ import java.util.regex.Pattern;
 import okhttp3.HttpUrl;
 import org.jspecify.annotations.NonNull;
 import org.jspecify.annotations.Nullable;
-import org.osmdroid.util.GeoPoint;
+import eu.siacs.conversations.utils.GeoPoint;
 
 public class MiniUri {
 

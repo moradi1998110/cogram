@@ -13,6 +13,7 @@ import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.MoreExecutors;
+import com.google.gson.Gson;
 import eu.siacs.conversations.Config;
 import eu.siacs.conversations.entities.Room;
 import eu.siacs.conversations.http.HttpConnectionManager;
@@ -31,21 +32,29 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
+import okhttp3.Call;
+import okhttp3.Callback;
+import okhttp3.HttpUrl;
+import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.RequestBody;
+import okhttp3.Response;
 import okhttp3.ResponseBody;
-import retrofit2.Call;
-import retrofit2.Callback;
-import retrofit2.Response;
-import retrofit2.Retrofit;
-import retrofit2.converter.gson.GsonConverterFactory;
 
 public class ChannelDiscoveryService {
 
+    private static final MediaType JSON = MediaType.get("application/json; charset=utf-8");
+
+    // The same default Gson the Retrofit converter used before.
+    private static final Gson GSON = new Gson();
+
     private final XmppConnectionService service;
 
-    private MuclumbusService muclumbusService;
+    private OkHttpClient muclumbusClient;
+    private HttpUrl muclumbusBase;
 
     private final Cache<String, List<Room>> cache;
 
@@ -55,8 +64,13 @@ public class ChannelDiscoveryService {
     }
 
     void initializeMuclumbusService() {
-        if (Strings.isNullOrEmpty(Config.CHANNEL_DISCOVERY)) {
-            this.muclumbusService = null;
+        final HttpUrl base =
+                Strings.isNullOrEmpty(Config.CHANNEL_DISCOVERY)
+                        ? null
+                        : HttpUrl.parse(Config.CHANNEL_DISCOVERY);
+        if (base == null) {
+            this.muclumbusClient = null;
+            this.muclumbusBase = null;
             return;
         }
         final OkHttpClient.Builder builder =
@@ -64,14 +78,52 @@ public class ChannelDiscoveryService {
         if (service.useTorToConnect()) {
             builder.proxy(HttpConnectionManager.getProxy());
         }
-        final Retrofit retrofit =
-                new Retrofit.Builder()
-                        .client(builder.build())
-                        .baseUrl(Config.CHANNEL_DISCOVERY)
-                        .addConverterFactory(GsonConverterFactory.create())
-                        .callbackExecutor(Executors.newSingleThreadExecutor())
-                        .build();
-        this.muclumbusService = retrofit.create(MuclumbusService.class);
+        this.muclumbusClient = builder.build();
+        this.muclumbusBase = base;
+    }
+
+    private <T> void queryMuclumbus(
+            final Request request,
+            final Class<T> type,
+            final Consumer<T> onBody,
+            final OnChannelSearchResultsFound listener) {
+        muclumbusClient
+                .newCall(request)
+                .enqueue(
+                        new Callback() {
+                            @Override
+                            public void onResponse(
+                                    @NonNull final Call call, @NonNull final Response response) {
+                                try (final ResponseBody responseBody = response.body()) {
+                                    final T body =
+                                            response.isSuccessful() && responseBody != null
+                                                    ? GSON.fromJson(responseBody.charStream(), type)
+                                                    : null;
+                                    if (body == null) {
+                                        Log.d(
+                                                Config.LOGTAG,
+                                                "code from muclumbus=" + response.code());
+                                        listener.onChannelSearchResultsFound(
+                                                Collections.emptyList());
+                                        return;
+                                    }
+                                    onBody.accept(body);
+                                } catch (final RuntimeException e) {
+                                    Log.d(Config.LOGTAG, "Unable to read muclumbus answer", e);
+                                    listener.onChannelSearchResultsFound(Collections.emptyList());
+                                }
+                            }
+
+                            @Override
+                            public void onFailure(
+                                    @NonNull final Call call, @NonNull final IOException e) {
+                                Log.d(
+                                        Config.LOGTAG,
+                                        "Unable to query muclumbus on " + Config.CHANNEL_DISCOVERY,
+                                        e);
+                                listener.onChannelSearchResultsFound(Collections.emptyList());
+                            }
+                        });
     }
 
     void cleanCache() {
@@ -99,77 +151,52 @@ public class ChannelDiscoveryService {
     }
 
     private void discoverChannelsJabberNetwork(final OnChannelSearchResultsFound listener) {
-        if (muclumbusService == null) {
+        if (muclumbusClient == null) {
             listener.onChannelSearchResultsFound(Collections.emptyList());
             return;
         }
-        final Call<MuclumbusService.Rooms> call = muclumbusService.getRooms(1);
-        call.enqueue(
-                new Callback<MuclumbusService.Rooms>() {
-                    @Override
-                    public void onResponse(
-                            @NonNull Call<MuclumbusService.Rooms> call,
-                            @NonNull Response<MuclumbusService.Rooms> response) {
-                        final MuclumbusService.Rooms body = response.body();
-                        if (body == null) {
-                            listener.onChannelSearchResultsFound(Collections.emptyList());
-                            logError(response);
-                            return;
-                        }
-                        cache.put(key(Method.JABBER_NETWORK, ""), body.items);
-                        listener.onChannelSearchResultsFound(body.items);
-                    }
-
-                    @Override
-                    public void onFailure(
-                            @NonNull Call<MuclumbusService.Rooms> call,
-                            @NonNull Throwable throwable) {
-                        Log.d(
-                                Config.LOGTAG,
-                                "Unable to query muclumbus on " + Config.CHANNEL_DISCOVERY,
-                                throwable);
-                        listener.onChannelSearchResultsFound(Collections.emptyList());
-                    }
-                });
+        final HttpUrl url =
+                muclumbusBase
+                        .newBuilder()
+                        .encodedPath(MuclumbusService.ROOMS_PATH)
+                        .addQueryParameter("p", "1")
+                        .build();
+        queryMuclumbus(
+                new Request.Builder().url(url).get().build(),
+                MuclumbusService.Rooms.class,
+                body -> {
+                    final List<Room> items = nullToEmpty(body.items);
+                    cache.put(key(Method.JABBER_NETWORK, ""), items);
+                    listener.onChannelSearchResultsFound(items);
+                },
+                listener);
     }
 
     private void discoverChannelsJabberNetwork(
             final String query, final OnChannelSearchResultsFound listener) {
-        if (muclumbusService == null) {
+        if (muclumbusClient == null) {
             listener.onChannelSearchResultsFound(Collections.emptyList());
             return;
         }
-        final MuclumbusService.SearchRequest searchRequest =
-                new MuclumbusService.SearchRequest(query);
-        final Call<MuclumbusService.SearchResult> searchResultCall =
-                muclumbusService.search(searchRequest);
-        searchResultCall.enqueue(
-                new Callback<MuclumbusService.SearchResult>() {
-                    @Override
-                    public void onResponse(
-                            @NonNull Call<MuclumbusService.SearchResult> call,
-                            @NonNull Response<MuclumbusService.SearchResult> response) {
-                        final MuclumbusService.SearchResult body = response.body();
-                        if (body == null) {
-                            listener.onChannelSearchResultsFound(Collections.emptyList());
-                            logError(response);
-                            return;
-                        }
-                        cache.put(key(Method.JABBER_NETWORK, query), body.result.items);
-                        listener.onChannelSearchResultsFound(body.result.items);
-                    }
+        final HttpUrl url =
+                muclumbusBase.newBuilder().encodedPath(MuclumbusService.SEARCH_PATH).build();
+        final RequestBody requestBody =
+                RequestBody.create(
+                        GSON.toJson(new MuclumbusService.SearchRequest(query)), JSON);
+        queryMuclumbus(
+                new Request.Builder().url(url).post(requestBody).build(),
+                MuclumbusService.SearchResult.class,
+                body -> {
+                    final List<Room> items =
+                            nullToEmpty(body.result == null ? null : body.result.items);
+                    cache.put(key(Method.JABBER_NETWORK, query), items);
+                    listener.onChannelSearchResultsFound(items);
+                },
+                listener);
+    }
 
-                    @Override
-                    public void onFailure(
-                            @NonNull Call<MuclumbusService.SearchResult> call,
-                            @NonNull Throwable throwable) {
-                        Log.d(
-                                Config.LOGTAG,
-                                "Unable to query muclumbus on " + Config.CHANNEL_DISCOVERY,
-                                throwable);
-                        listener.onChannelSearchResultsFound(Collections.emptyList());
-                    }
-                });
+    private static List<Room> nullToEmpty(final List<Room> rooms) {
+        return rooms == null ? Collections.emptyList() : rooms;
     }
 
     private void discoverChannelsLocalServers(
@@ -318,19 +345,6 @@ public class ChannelDiscoveryService {
 
     private static String key(Method method, String query) {
         return String.format("%s\00%s", method, query);
-    }
-
-    private static void logError(final Response response) {
-        final ResponseBody errorBody = response.errorBody();
-        Log.d(Config.LOGTAG, "code from muclumbus=" + response.code());
-        if (errorBody == null) {
-            return;
-        }
-        try {
-            Log.d(Config.LOGTAG, "error body=" + errorBody.string());
-        } catch (IOException e) {
-            // ignored
-        }
     }
 
     public interface OnChannelSearchResultsFound {

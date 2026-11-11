@@ -3,10 +3,10 @@ package im.conversations.android.xmpp.model.reactions;
 import com.google.common.base.Strings;
 import com.google.common.collect.Collections2;
 import com.google.common.collect.ImmutableSet;
+import eu.siacs.conversations.utils.Emoticons;
 import im.conversations.android.annotation.XmlElement;
 import im.conversations.android.xmpp.model.Extension;
 import java.util.Collection;
-import net.fellbaum.jemoji.EmojiManager;
 
 @XmlElement
 public class Reactions extends Extension {
@@ -25,7 +25,7 @@ public class Reactions extends Extension {
                             if (Strings.isNullOrEmpty(r)) {
                                 return false;
                             }
-                            return EmojiManager.isEmoji(r);
+                            return Emoticons.isEmoji(r);
                         }));
     }
 

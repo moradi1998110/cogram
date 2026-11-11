@@ -6,7 +6,6 @@ import android.util.Log;
 
 import androidx.core.content.ContextCompat;
 
-import org.osmdroid.util.GeoPoint;
 
 import java.io.BufferedReader;
 import java.io.IOException;

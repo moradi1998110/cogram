@@ -163,7 +163,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
-import me.leolin.shortcutbadger.ShortcutBadger;
 import okhttp3.HttpUrl;
 import org.jxmpp.stringprep.libidn.LibIdnXmppStringprep;
 import org.openintents.openpgp.IOpenPgpService2;
@@ -3646,15 +3645,11 @@ public class XmppConnectionService extends Service {
         }
     }
 
+    // Phogram's launcher badge comes from Telegram's own unread count, so the engine only tracks it.
     public synchronized void updateUnreadCountBadge() {
         int count = unreadCount();
         if (unreadCount != count) {
             Log.d(Config.LOGTAG, "update unread count to " + count);
-            if (count > 0) {
-                ShortcutBadger.applyCount(getApplicationContext(), count);
-            } else {
-                ShortcutBadger.removeCount(getApplicationContext());
-            }
             unreadCount = count;
         }
     }
