@@ -70,6 +70,10 @@ if (gradle.ext.has('osmand')) {
 
     // OsmAnd's native renderer is built for the device's ABI only, not for all four.
     project(':OsmAnd') {
+        // OsmAnd's app build names the app per flavor; its library build leaves the name to the host app.
+        plugins.withId('com.android.library') {
+            android.defaultConfig.resValue 'string', 'app_name', 'Phogram'
+        }
         // OsmAnd compiles its Java for 17 and leaves Kotlin on the JDK's own level, which on Phogram's CI is 21.
         tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinJvmCompile).configureEach {
             compilerOptions.jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)

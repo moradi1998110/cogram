@@ -115,6 +115,9 @@ dependencies {
 }
 
 android.sourceSets.main.java.srcDirs += (gradle.ext.has('osmand') ? 'src/osmand/java' : 'src/plain/java')
+if (gradle.ext.has('osmand')) {
+    android.sourceSets.main.res.srcDirs += 'src/osmand/res'
+}
 
 android {
     compileSdkVersion 36

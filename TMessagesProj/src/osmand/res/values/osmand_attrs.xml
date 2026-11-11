@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- OsmAnd's layouts set RecyclerView's layout manager; Telegram ships its own RecyclerView without that attribute. -->
+    <declare-styleable name="PhogramOsmAndRecyclerView">
+        <attr name="layoutManager" format="string" />
+    </declare-styleable>
+</resources>
