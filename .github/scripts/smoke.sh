@@ -110,6 +110,20 @@ adb shell cmd uimode night yes || true
 sleep 5
 adb exec-out screencap -p > "$OUT/6-services-dark.png" || true
 adb shell cmd uimode night no || true
+sleep 5
+
+# Phogram's Maps tab holds Telegram's Settings slot, so Settings must open from the chats page's options menu.
+tap_view 'text="Maps"' || true
+sleep 3
+dump_screen 7-maps
+tap_view 'text="Chats"' || true
+sleep 3
+tap_view 'content-desc="More options"' || true
+sleep 2
+dump_screen 8-chats-menu
+tap_view 'text="Settings"' || true
+sleep 3
+dump_screen 9-settings
 
 adb shell pidof "$PACKAGE" > "$OUT/pid.txt" || true
 adb logcat -d -v threadtime > "$OUT/logcat.txt" || true

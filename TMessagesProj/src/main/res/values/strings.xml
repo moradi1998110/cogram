@@ -11656,4 +11656,6 @@
     <string name="PhogramAdSample2Text">Open a service from the cards below.</string>
     <string name="PhogramAdSample3Title">Special offer</string>
     <string name="PhogramAdSample3Text">Swipe to see more adverts.</string>
+    <string name="PhogramMapsTab">Maps</string>
+    <string name="PhogramMapsEmpty">The map will appear here.</string>
 </resources>

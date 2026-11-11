@@ -13808,7 +13808,8 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
                 }
             }
         }
-        if (getUserConfig().showCallsTab) {
+        // Phogram's Maps tab holds the Settings slot, so Settings opens from this menu as it does with Calls there.
+        if (getUserConfig().showCallsTab || org.telegram.cogram.CogramGateway.ENABLED) {
             io.add(R.drawable.msg_settings_old, getString(R.string.Settings), () -> {
                 presentFragment(new SettingsActivity());
             });

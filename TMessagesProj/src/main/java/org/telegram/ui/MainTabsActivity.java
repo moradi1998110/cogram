@@ -50,6 +50,7 @@ import org.telegram.messenger.MessagesController;
 import org.telegram.messenger.MessagesStorage;
 import org.telegram.messenger.NotificationCenter;
 import org.telegram.cogram.CogramGateway;
+import org.telegram.cogram.MapsActivity;
 import org.telegram.cogram.ServicesActivity;
 import org.telegram.messenger.R;
 import org.telegram.messenger.SharedConfig;
@@ -319,7 +320,10 @@ public class MainTabsActivity extends ViewPagerActivity implements NotificationC
         tabs[INDEX_CONTACTS] = CogramGateway.ENABLED
             ? GlassTabView.createMainTab(context, resourceProvider, GlassTabView.TabAnimation.CHECKLIST, R.string.PhogramServicesTab)
             : GlassTabView.createMainTab(context, resourceProvider, GlassTabView.TabAnimation.CONTACTS, R.string.MainTabsContacts);
-        tabs[INDEX_SETTINGS] = GlassTabView.createMainTab(context, resourceProvider, GlassTabView.TabAnimation.SETTINGS, R.string.Settings);
+        // Phogram's Maps tab holds the Settings slot; Settings opens from the chats page's options menu.
+        tabs[INDEX_SETTINGS] = CogramGateway.ENABLED
+            ? GlassTabView.createMainTab(context, resourceProvider, GlassTabView.TabAnimation.LOCATION, R.string.PhogramMapsTab)
+            : GlassTabView.createMainTab(context, resourceProvider, GlassTabView.TabAnimation.SETTINGS, R.string.Settings);
         tabs[INDEX_CALLS] = GlassTabView.createMainTab(context, resourceProvider, GlassTabView.TabAnimation.CALLS, R.string.MainTabsCalls);
         tabs[INDEX_PROFILE] = GlassTabView.createAvatar(context, resourceProvider, currentAccount, R.string.MainTabsProfile);
         tabs[INDEX_CHATS].setOnLongClickListener(this::openFoldersSelector);
@@ -834,6 +838,9 @@ public class MainTabsActivity extends ViewPagerActivity implements NotificationC
             }
             Bundle args = new Bundle();
             args.putBoolean("hasMainTabs", true);
+            if (CogramGateway.ENABLED) {
+                return new MapsActivity(args);
+            }
             return new SettingsActivity(args);
         } else if (position == POSITION_CHATS) {
             Bundle args = new Bundle();

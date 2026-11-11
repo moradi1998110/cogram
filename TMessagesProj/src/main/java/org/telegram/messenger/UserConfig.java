@@ -312,7 +312,8 @@ public class UserConfig extends BaseController {
             webappRatingLoadTime = preferences.getInt("webappRatingLoadTime", 0);
             loginTime = preferences.getInt("loginTime", currentAccount);
             syncContacts = preferences.getBoolean("syncContacts", true);
-            showCallsTab = preferences.getBoolean("showCallsTab", false);
+            // Phogram's Maps tab holds the slot Telegram gives to Calls, so Calls never takes it.
+            showCallsTab = !org.telegram.cogram.CogramGateway.ENABLED && preferences.getBoolean("showCallsTab", false);
             suggestContacts = preferences.getBoolean("suggestContacts", true);
             hasSecureData = preferences.getBoolean("hasSecureData", false);
             notificationsSettingsLoaded = preferences.getBoolean("notificationsSettingsLoaded4", false);
@@ -565,6 +566,9 @@ public class UserConfig extends BaseController {
     }
 
     public void setShowCallsTab(boolean show) {
+        if (show && org.telegram.cogram.CogramGateway.ENABLED) {
+            return;
+        }
         if (showCallsTab != show) {
             showCallsTab = show;
             saveConfig(false);

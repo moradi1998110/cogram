@@ -1269,4 +1269,6 @@
     <string name="PhogramAdSample2Text">افتح أي خدمة من البطاقات في الأسفل.</string>
     <string name="PhogramAdSample3Title">عرض خاص</string>
     <string name="PhogramAdSample3Text">اسحب لرؤية المزيد من الإعلانات.</string>
+    <string name="PhogramMapsTab">الخرائط</string>
+    <string name="PhogramMapsEmpty">ستظهر الخريطة هنا.</string>
 </resources>
