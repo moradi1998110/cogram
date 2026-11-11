@@ -47,4 +47,14 @@ dependencies {
     implementation("com.github.javaparser:javaparser-core:3.25.4")
     implementation("com.squareup:kotlinpoet:1.15.0")
     implementation("com.google.code.gson:gson:2.11.0")
+
+    // OsmAnd's engine (phase 0 of the Maps tab) uses Kotlin Multiplatform. Its plugins must load next to
+    // the Android plugin above, or Gradle sees Kotlin's classes twice and refuses the build.
+    if (file("../osmand/android/OsmAnd").exists()) {
+        implementation("org.jetbrains.kotlin:kotlin-gradle-plugin:2.1.20")
+        implementation("org.jetbrains.kotlin:compose-compiler-gradle-plugin:2.1.20")
+        implementation("org.jetbrains.kotlin:kotlin-serialization:2.1.20")
+        implementation("com.squareup.sqldelight:gradle-plugin:1.5.5")
+        implementation("de.undercouch:gradle-download-task:5.7.0")
+    }
 }
