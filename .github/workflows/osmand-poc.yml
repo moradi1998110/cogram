@@ -1,0 +1,98 @@
+name: OsmAnd engine (proof)
+
+# Phase 0 of putting OsmAnd's map engine in Phogram's Maps tab. This builds OsmAnd as a library with
+# OsmAnd's own toolchain, the way OsmAnd's own CI lays out its repositories side by side, and keeps the
+# result for Phogram's build to use. It never touches releases.
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'osmand*'
+
+permissions:
+  contents: read
+
+jobs:
+  engine:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      # The OsmAnd commit studied for the plan; the other repositories are taken at the same time.
+      OSMAND_COMMIT: b8136d9c410350ccf6e31ff027f52bae9bd9a9cb
+      NDK_VERSION: 27.2.12479018
+    steps:
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/boost
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install the NDK
+        run: |
+          SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKM" --licenses > /dev/null || true
+          "$SDKM" "platforms;android-36" "build-tools;36.0.0" "ndk;$NDK_VERSION" > /dev/null
+          echo "ANDROID_NDK=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
+
+      - name: Fetch OsmAnd
+        run: |
+          mkdir -p osmand && cd osmand
+          git init -q android
+          git -C android fetch -q --depth 1 https://github.com/osmandapp/OsmAnd.git "$OSMAND_COMMIT"
+          git -C android checkout -q FETCH_HEAD
+          # OsmAnd's scripts expect these next to the app, as in OsmAnd's own CI.
+          for repo in OsmAnd-resources:resources OsmAnd-core-legacy:core-legacy OsmAnd-core:core OsmAnd-build:build; do
+            git clone -q --depth 1 "https://github.com/osmandapp/${repo%%:*}.git" "${repo##*:}"
+          done
+          for d in android resources core-legacy core build; do
+            echo "$d $(git -C $d rev-parse HEAD)" | tee -a ../osmand-commits.txt
+          done
+          du -sh * | tee -a ../osmand-commits.txt
+
+      - name: Build OsmAnd as a library
+        working-directory: osmand/android
+        run: |
+          # Only the engine modules, with the app module built from OsmAnd's library script.
+          cat > settings.gradle <<'EOF'
+          include ':OsmAnd'
+          include ':OsmAnd-java'
+          include ':OsmAnd-api'
+          include ':OsmAnd-shared'
+          project(':OsmAnd').buildFileName = 'build-library.gradle'
+          gradle.ext.java_shared_conf = ''
+          EOF
+          printf "\norg.gradle.jvmargs=-Xmx4096m -XX:+HeapDumpOnOutOfMemoryError -Dfile.encoding=UTF-8\n" >> gradle.properties
+          chmod +x gradlew
+          ./gradlew --no-daemon --stacktrace \
+            :OsmAnd:assembleLegacyArm64Debug \
+            :OsmAnd-api:assembleDebug \
+            :OsmAnd-shared:assembleDebug \
+            :OsmAnd-java:androidJar > ../../osmand-build.log 2>&1 || { tail -80 ../../osmand-build.log; exit 1; }
+          grep -E "BUILD|warning: \[" ../../osmand-build.log | tail -5 || true
+
+      - name: List what was built
+        if: always()
+        run: |
+          cd osmand/android
+          find . -path '*/build/outputs/*' \( -name '*.aar' -o -name '*.jar' \) -exec ls -l {} \; | tee ../../osmand-outputs.txt
+          find . -name 'libosmand.so' -exec ls -l {} \; | tee -a ../../osmand-outputs.txt
+          ./gradlew --no-daemon -q :OsmAnd:dependencies --configuration legacyArm64DebugRuntimeClasspath > ../../osmand-runtime-deps.txt 2>&1 || true
+
+      - name: Collect
+        if: always()
+        run: |
+          mkdir -p dist
+          cp osmand-*.txt osmand-build.log dist/ 2>/dev/null || true
+          cd osmand/android
+          find . -path '*/build/outputs/*' \( -name '*.aar' -o -name '*-android*.jar' \) -exec cp {} ../../dist/ \; || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: osmand-engine
+          path: dist
+          retention-days: 14
