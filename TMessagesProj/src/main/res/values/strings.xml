@@ -11642,4 +11642,18 @@
     <string name="PhogramSignInFailed">Could not log in (%1$s).</string>
     <string name="PhogramContactRequest">wants to add you to contacts</string>
     <string name="PhogramUsernameHint">name@example.org</string>
+    <string name="PhogramServicesTab">Services</string>
+    <string name="PhogramServiceNotReady">This service is not available yet.</string>
+    <string name="PhogramServiceSalifni">Salifni</string>
+    <string name="PhogramServiceBousla">Bousla</string>
+    <string name="PhogramServicePayments">Payments</string>
+    <string name="PhogramServiceAppointments">Appointments</string>
+    <string name="PhogramServiceReports">Reports</string>
+    <string name="PhogramServiceSupport">Support</string>
+    <string name="PhogramAdSample1Title">Sample advert</string>
+    <string name="PhogramAdSample1Text">Your organization\'s adverts will appear here.</string>
+    <string name="PhogramAdSample2Title">New services</string>
+    <string name="PhogramAdSample2Text">Open a service from the cards below.</string>
+    <string name="PhogramAdSample3Title">Special offer</string>
+    <string name="PhogramAdSample3Text">Swipe to see more adverts.</string>
 </resources>

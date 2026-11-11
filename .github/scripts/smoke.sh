@@ -90,6 +90,27 @@ adb shell input keycombination 113 66 || true
 sleep "$ECHO_SECONDS"
 adb exec-out screencap -p > "$OUT/4-echo.png" || true
 
+# Phogram's Services tab, where Telegram has Contacts. The second picture shows whether the adverts turn
+# by themselves, and the third whether the page follows the system's dark mode.
+adb shell input keyevent 4
+sleep 3
+adb shell input keyevent 4
+sleep 3
+if ! tap_view 'text="Services"'; then
+  # Back may have left the app; the launcher brings back the chats page with its tabs.
+  adb shell am start -n "$PACKAGE/org.telegram.messenger.DefaultIcon"
+  sleep 8
+  tap_view 'text="Services"' || true
+fi
+sleep 3
+dump_screen 5-services
+sleep 6
+adb exec-out screencap -p > "$OUT/5-services-later.png" || true
+adb shell cmd uimode night yes || true
+sleep 5
+adb exec-out screencap -p > "$OUT/6-services-dark.png" || true
+adb shell cmd uimode night no || true
+
 adb shell pidof "$PACKAGE" > "$OUT/pid.txt" || true
 adb logcat -d -v threadtime > "$OUT/logcat.txt" || true
 adb logcat -d -b crash -v threadtime > "$OUT/logcat-crash.txt" || true

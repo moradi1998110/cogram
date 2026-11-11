@@ -1255,4 +1255,18 @@
     <string name="PhogramSignInFailed">تعذّر تسجيل الدخول (%1$s).</string>
     <string name="PhogramContactRequest">يريد إضافتك إلى جهات الاتصال</string>
     <string name="PhogramUsernameHint">name@example.org</string>
+    <string name="PhogramServicesTab">الخدمات</string>
+    <string name="PhogramServiceNotReady">هذه الخدمة غير متاحة بعد.</string>
+    <string name="PhogramServiceSalifni">سلفني</string>
+    <string name="PhogramServiceBousla">بوصلة</string>
+    <string name="PhogramServicePayments">المدفوعات</string>
+    <string name="PhogramServiceAppointments">المواعيد</string>
+    <string name="PhogramServiceReports">التقارير</string>
+    <string name="PhogramServiceSupport">الدعم</string>
+    <string name="PhogramAdSample1Title">إعلان تجريبي</string>
+    <string name="PhogramAdSample1Text">ستظهر هنا إعلانات مؤسستك.</string>
+    <string name="PhogramAdSample2Title">خدمات جديدة</string>
+    <string name="PhogramAdSample2Text">افتح أي خدمة من البطاقات في الأسفل.</string>
+    <string name="PhogramAdSample3Title">عرض خاص</string>
+    <string name="PhogramAdSample3Text">اسحب لرؤية المزيد من الإعلانات.</string>
 </resources>
