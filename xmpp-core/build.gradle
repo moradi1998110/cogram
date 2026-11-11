@@ -47,6 +47,8 @@ dependencies {
     // With OsmAnd's map engine in the build, the app class builds on OsmAnd's (see PhogramBaseApplication).
     if (gradle.ext.has('osmand')) {
         compileOnly project(':OsmAnd')
+        // OsmAnd's application class builds on this one, which its library keeps to itself.
+        compileOnly 'androidx.multidex:multidex:2.0.1'
     }
 }
 
