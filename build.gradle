@@ -70,6 +70,10 @@ if (gradle.ext.has('osmand')) {
 
     // OsmAnd's native renderer is built for the device's ABI only, not for all four.
     project(':OsmAnd') {
+        // OsmAnd compiles its Java for 17 and leaves Kotlin on the JDK's own level, which on Phogram's CI is 21.
+        tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinJvmCompile).configureEach {
+            compilerOptions.jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+        }
         tasks.configureEach { t ->
             // OsmAnd's script (written for Android plugin 8.10) orders its icon copy before the resource tasks
             // it knows; newer resource tasks, such as navigation resources, read those icons too.
