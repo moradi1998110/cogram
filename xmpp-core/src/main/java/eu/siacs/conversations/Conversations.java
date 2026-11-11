@@ -23,7 +23,7 @@ import javax.net.ssl.X509TrustManager;
 import org.conscrypt.Conscrypt;
 import org.jxmpp.stringprep.libidn.LibIdnXmppStringprep;
 
-public class Conversations extends Application {
+public class Conversations extends PhogramBaseApplication {
 
     @SuppressLint("StaticFieldLeak")
     private static Context CONTEXT;

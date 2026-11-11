@@ -47,6 +47,10 @@ jobs:
           yes | "$SDKM" --licenses > /dev/null || true
           "$SDKM" "platforms;android-36" "build-tools;36.0.0" "ndk;$NDK_VERSION" "cmake;3.22.1" > /dev/null
 
+      # The osmand-poc branch builds OsmAnd's map engine into the Maps tab.
+      - name: Fetch OsmAnd
+        run: bash .github/scripts/fetch-osmand.sh
+
       # Private repository runners have 7 GB of memory, and R8 needs more with the build around it.
       - name: Add swap
         run: |

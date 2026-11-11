@@ -20,3 +20,15 @@ dependencyResolutionManagement {
 
 gradle.ext.androidxMediaModulePrefix = 'TMessagesProj_Modules:media3:media-'
 apply from: file("TMessagesProj_Modules/media/core_settings.gradle")
+// Phase 0 of the Maps tab: OsmAnd's map engine joins the build when its sources sit in osmand/, as the
+// osmand-poc CI fetches them. Without that folder the build is the same as before.
+if (file('osmand/android/OsmAnd').exists()) {
+    gradle.ext.osmand = true
+    gradle.ext.java_shared_conf = ''
+    include ':OsmAnd', ':OsmAnd-java', ':OsmAnd-api', ':OsmAnd-shared'
+    project(':OsmAnd').projectDir = file('osmand/android/OsmAnd')
+    project(':OsmAnd').buildFileName = 'build-library.gradle'
+    project(':OsmAnd-java').projectDir = file('osmand/android/OsmAnd-java')
+    project(':OsmAnd-api').projectDir = file('osmand/android/OsmAnd-api')
+    project(':OsmAnd-shared').projectDir = file('osmand/android/OsmAnd-shared')
+}

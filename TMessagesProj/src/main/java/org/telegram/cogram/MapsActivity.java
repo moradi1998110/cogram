@@ -130,7 +130,37 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
 
         updateColors();
         ViewCompat.setOnApplyWindowInsetsListener(contentView, this::onApplyWindowInsets);
+
+        // Builds with a map engine show its map here; the others keep the empty state.
+        try {
+            mapEngine = MapEngines.create(context);
+        } catch (Throwable e) {
+            org.telegram.messenger.FileLog.e(e);
+            mapEngine = null;
+        }
+        if (mapEngine != null) {
+            setMapView(mapEngine.getView());
+            applyMapPadding();
+        }
         return fragmentView = contentView;
+    }
+
+    private MapEngine mapEngine;
+
+    private void applyMapPadding() {
+        if (mapEngine != null) {
+            final int[] padding = getMapPadding();
+            mapEngine.setPadding(padding[0], padding[1], padding[2], padding[3]);
+        }
+    }
+
+    @Override
+    public void onFragmentDestroy() {
+        super.onFragmentDestroy();
+        if (mapEngine != null) {
+            mapEngine.onDestroy();
+            mapEngine = null;
+        }
     }
 
     /** Shows a map on this page in place of the empty state, or the empty state again for null. */
@@ -167,13 +197,18 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
     public void onResume() {
         super.onResume();
         updateColors();
-        // A map added later resumes here.
+        if (mapEngine != null) {
+            mapEngine.onResume();
+        }
     }
 
     @Override
     public void onPause() {
         super.onPause();
-        // A map added later pauses here, so it does not use the battery while another tab is open.
+        // The map pauses so it does not use the battery while another tab is open.
+        if (mapEngine != null) {
+            mapEngine.onPause();
+        }
     }
 
     @Override
@@ -194,6 +229,7 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         final int[] padding = getMapPadding();
         // The empty state centers in the part of the page the bars leave free.
         emptyView.setPadding(dp(32), padding[1], dp(32), padding[3]);
+        applyMapPadding();
         return WindowInsetsCompat.CONSUMED;
     }
 

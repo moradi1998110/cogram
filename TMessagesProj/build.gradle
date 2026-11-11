@@ -107,7 +107,14 @@ dependencies {
 
 
     coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.5'
+
+    // OsmAnd's map engine for the Maps tab, when its sources are in the build (see settings.gradle).
+    if (gradle.ext.has('osmand')) {
+        implementation project(':OsmAnd')
+    }
 }
+
+android.sourceSets.main.java.srcDirs += (gradle.ext.has('osmand') ? 'src/osmand/java' : 'src/plain/java')
 
 android {
     compileSdkVersion 36

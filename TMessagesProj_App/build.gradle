@@ -216,3 +216,8 @@ android {
         checkReleaseBuilds false
     }
 }
+
+// OsmAnd's map engine (phase 0 of the Maps tab) needs its keep rules: its native renderer calls back into Java by name.
+if (gradle.ext.has('osmand')) {
+    android.buildTypes.debug.proguardFiles '../osmand/android/OsmAnd/proguard-rules.pro'
+}

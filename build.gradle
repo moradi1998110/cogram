@@ -10,7 +10,73 @@ buildscript {
         classpath 'com.google.gms:google-services:4.3.15'
         classpath 'com.huawei.agconnect:agcp:1.9.1.301'
         classpath 'com.google.firebase:firebase-crashlytics-gradle:2.9.0'
-        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:2.1.0"
+        // OsmAnd's engine (phase 0 of the Maps tab) needs its own Kotlin and plugins; see settings.gradle.
+        if (file('osmand/android/OsmAnd').exists()) {
+            classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:2.1.20"
+            classpath "org.jetbrains.kotlin:compose-compiler-gradle-plugin:2.1.20"
+            classpath "org.jetbrains.kotlin:kotlin-serialization:2.1.20"
+            classpath "com.squareup.sqldelight:gradle-plugin:1.5.5"
+            classpath "de.undercouch:gradle-download-task:5.7.0"
+        } else {
+            classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:2.1.0"
+        }
+    }
+}
+
+if (gradle.ext.has('osmand')) {
+    ext.kotlin_version = '2.1.20'
+    // OsmAnd's scripts use the Download task type this plugin publishes from the root project.
+    apply plugin: 'de.undercouch.download'
+
+    // OsmAnd's libraries come from its own binary store and from JitPack.
+    allprojects {
+        repositories {
+            ivy {
+                name = "OsmAndBinariesIvy"
+                url = "https://builder.osmand.net"
+                patternLayout {
+                    artifact "ivy/[organisation]/[module]/[revision]/[artifact]-[revision].[ext]"
+                }
+                metadataSources { artifact() }
+            }
+            google()
+            mavenCentral()
+            maven { url "https://jitpack.io" }
+        }
+    }
+
+    // One OsmAnd variant per build: its legacy (non-OpenGL) renderer, for the ABI the build is for.
+    def injectedAbi = (findProperty('android.injected.build.abi') ?: '').toString()
+    def osmandAbi = injectedAbi.contains('arm64') ? 'arm64' : injectedAbi.contains('x86') ? 'x86' : 'fat'
+    def osmandProjects = [':OsmAnd', ':OsmAnd-java', ':OsmAnd-api', ':OsmAnd-shared']
+    subprojects { p ->
+        if (osmandProjects.contains(p.path)) return
+        ['com.android.application', 'com.android.library'].each { id ->
+            p.plugins.withId(id) {
+                p.android.defaultConfig {
+                    missingDimensionStrategy 'coreversion', 'legacy'
+                    missingDimensionStrategy 'abi', osmandAbi
+                }
+                // OsmAnd supports Android 7 and newer; this wins over the minSdkVersion the module sets later.
+                p.androidComponents.beforeVariants(p.androidComponents.selector().all()) { v -> v.minSdk = 24 }
+            }
+        }
+        // OsmAnd brings BouncyCastle for Java 1.5; Phogram already ships the Java 1.8 build of the same classes.
+        p.configurations.configureEach {
+            exclude group: 'org.bouncycastle', module: 'bcpkix-jdk15on'
+            exclude group: 'org.bouncycastle', module: 'bcprov-jdk15on'
+            exclude group: 'org.bouncycastle', module: 'bcutil-jdk15on'
+        }
+    }
+
+    // OsmAnd's native renderer is built for the device's ABI only, not for all four.
+    project(':OsmAnd') {
+        tasks.configureEach { t ->
+            if (t.name == 'buildOsmAndCore') {
+                if (injectedAbi.contains('arm64')) t.environment('ARM64_ONLY', '1')
+                else if (injectedAbi.contains('x86_64')) t.environment('X86_64_ONLY', '1')
+            }
+        }
     }
 }
 repositories {
