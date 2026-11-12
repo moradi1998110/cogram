@@ -223,5 +223,8 @@ if (gradle.ext.has('osmand')) {
 }
 if (gradle.ext.has('osmand')) {
     // The app class's chain of parents includes OsmAnd's application class.
-    dependencies { implementation project(':OsmAnd') }
+    dependencies {
+        implementation project(':OsmAnd')
+        implementation 'androidx.multidex:multidex:2.0.1'
+    }
 }
