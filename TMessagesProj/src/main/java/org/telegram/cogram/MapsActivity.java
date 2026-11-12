@@ -236,8 +236,14 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         downloadSubtitle = new TextView(context);
         downloadSubtitle.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 13);
         downloadSubtitle.setSingleLine(true);
+        downloadSubtitle.setEllipsize(android.text.TextUtils.TruncateAt.END);
         downloadTexts.addView(downloadSubtitle, LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, 0, 1, 0, 0));
-        downloadCard.addView(downloadTexts, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.CENTER_VERTICAL | Gravity.START, 14, 9, 104, 11));
+        // The texts take what the button leaves, so a long name or size ends with an ellipsis before the button.
+        final LinearLayout downloadRow = new LinearLayout(context);
+        downloadRow.setOrientation(LinearLayout.HORIZONTAL);
+        downloadRow.setGravity(Gravity.CENTER_VERTICAL);
+        downloadRow.addView(downloadTexts, LayoutHelper.createLinear(0, LayoutHelper.WRAP_CONTENT, 1f));
+        downloadCard.addView(downloadRow, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.CENTER_VERTICAL, 14, 9, 12, 11));
         downloadButton = new TextView(context);
         downloadButton.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 14);
         downloadButton.setTypeface(AndroidUtilities.bold());
@@ -254,7 +260,7 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
                 mapEngine.startOfferedDownload();
             }
         });
-        downloadCard.addView(downloadButton, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, 30, Gravity.CENTER_VERTICAL | Gravity.END, 0, 0, 12, 0));
+        downloadRow.addView(downloadButton, LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, 30, 0f, Gravity.CENTER_VERTICAL, 10, 0, 0, 0));
         downloadProgress = new LineProgressView(context);
         downloadCard.addView(downloadProgress, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, 2, Gravity.BOTTOM, 12, 0, 12, 4));
         contentView.addView(downloadCard, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.BOTTOM, 12, 0, 64, 12));
