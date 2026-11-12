@@ -120,6 +120,14 @@ dump_screen 7-maps
 sleep 5
 adb exec-out screencap -p > "$OUT/7-maps-later.png" || true
 adb shell dumpsys meminfo "$PACKAGE" > "$OUT/meminfo-maps.txt" || true
+# The app ships without OsmAnd's world map, so the page offers it (about 38 MB from OsmAnd's servers).
+dump_screen 7-maps-offer
+if tap_view 'text="Download"'; then
+  sleep 4
+  dump_screen 7-maps-downloading
+  sleep 40
+  dump_screen 7-maps-downloaded
+fi
 # The emulator reports a fixed position, and the app was given the location permission at install.
 adb emu geo fix 44.3661 33.3152 || true
 tap_view 'content-desc="My location"' || true

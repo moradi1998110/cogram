@@ -11660,4 +11660,8 @@
     <string name="PhogramMapsEmpty">The map will appear here.</string>
     <string name="PhogramMapsLocationPermission">**Phogram** needs access to location to show where you are on the map. Tap Settings -> Permissions, and turn **Location** on.</string>
     <string name="PhogramMapsNorthUp">Turn the map north up</string>
+    <string name="PhogramMapsWorldMap">World map</string>
+    <string name="PhogramMapsOffline">Offline map · %1$s</string>
+    <string name="PhogramMapsDownloading">Downloading… %1$d%%</string>
+    <string name="PhogramMapsDownload">Download</string>
 </resources>

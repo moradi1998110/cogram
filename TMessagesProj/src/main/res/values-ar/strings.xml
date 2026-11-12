@@ -1273,4 +1273,8 @@
     <string name="PhogramMapsEmpty">ستظهر الخريطة هنا.</string>
     <string name="PhogramMapsLocationPermission">يحتاج **Phogram** إلى الوصول للموقع ليعرض مكانك على الخريطة. اضغط الإعدادات ← الأذونات، وفعّل **الموقع**.</string>
     <string name="PhogramMapsNorthUp">أدر الخريطة نحو الشمال</string>
+    <string name="PhogramMapsWorldMap">خريطة العالم</string>
+    <string name="PhogramMapsOffline">خريطة دون إنترنت · %1$s</string>
+    <string name="PhogramMapsDownloading">جارٍ التنزيل… %1$d%%</string>
+    <string name="PhogramMapsDownload">تنزيل</string>
 </resources>

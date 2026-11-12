@@ -3,16 +3,30 @@ package org.telegram.cogram;
 import android.content.Context;
 import android.view.View;
 
+import androidx.annotation.NonNull;
+
+import net.osmand.data.LatLon;
+import net.osmand.map.IMapLocationListener;
 import net.osmand.plus.AppInitializeListener;
 import net.osmand.plus.AppInitializer;
 import net.osmand.plus.OsmAndLocationProvider;
 import net.osmand.plus.OsmandApplication;
 import net.osmand.plus.base.MapViewTrackingUtilities;
+import net.osmand.plus.download.DownloadActivityType;
+import net.osmand.plus.download.DownloadIndexesThread;
+import net.osmand.plus.download.DownloadResources;
+import net.osmand.plus.download.IndexItem;
 import net.osmand.plus.settings.enums.CompassMode;
 import net.osmand.plus.views.MapViewWithLayers;
 import net.osmand.plus.views.OsmandMapTileView;
 
+import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.FileLog;
+import org.telegram.messenger.LocaleController;
+import org.telegram.messenger.R;
+
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import eu.siacs.conversations.PhogramBaseApplication;
 
@@ -21,7 +35,8 @@ import eu.siacs.conversations.PhogramBaseApplication;
  * app; this attaches it to the tab the way OsmAnd's own map screen does, and opens it over Iraq until the map
  * has a position of its own.
  *
- * OsmAnd does not start with the app: the first engine starts it. The device's position is followed only
+ * OsmAnd does not start with the app: the first engine starts it. The app does not ship OsmAnd's world map;
+ * the engine offers it and the regional maps for download from OsmAnd's servers. The device's position is followed only
  * while the tab is open and only once the location permission has been granted, which the page asks for when
  * its location button is pressed.
  */
@@ -31,6 +46,11 @@ final class OsmAndMapEngine implements MapEngine {
     private static final double START_LONGITUDE = 44.4;
     private static final int START_ZOOM = 6;
     private static final int MY_LOCATION_ZOOM = 15;
+    /** OsmAnd's small world map, the one OsmAnd itself ships inside its app (World_basemap_mini.obf). */
+    private static final String WORLD_MAP_INDEX = "World_basemap_mini_2.obf.zip";
+    /** Below this zoom the center says little about which region the user means. */
+    private static final int REGION_OFFER_MIN_ZOOM = 5;
+    private static final long OFFER_DELAY_MS = 600;
 
     private final OsmandApplication app;
     private final MapViewWithLayers view;
@@ -40,6 +60,10 @@ final class OsmAndMapEngine implements MapEngine {
     private boolean followingLocation;
     private boolean ready;
     private Runnable readyListener;
+    private Runnable downloadListener;
+    private IndexItem offeredItem;
+    private int offerGeneration;
+    private final ExecutorService offerExecutor = Executors.newSingleThreadExecutor();
 
     OsmAndMapEngine(Context context) {
         app = (OsmandApplication) context.getApplicationContext();
@@ -67,7 +91,7 @@ final class OsmAndMapEngine implements MapEngine {
             });
         } else {
             app.getOsmandMap().setupRenderingView();
-            ready = true;
+            markReady();
         }
         FileLog.d("cogram: OsmAnd started in " + (started - start) + " ms, map view created in "
                 + (System.currentTimeMillis() - started) + " ms, initializing=" + app.isApplicationInitializing());
@@ -90,6 +114,137 @@ final class OsmAndMapEngine implements MapEngine {
         ready = true;
         if (readyListener != null) {
             readyListener.run();
+        }
+        startDownloadOffers();
+    }
+
+    // Map downloads. The app ships without OsmAnd's world map, so the page offers it first; once it is there, the
+    // page offers the map of the region at the map's center, as OsmAnd's own map screen does. Files come from
+    // OsmAnd's servers through OsmAnd's own download queue, which also indexes them for the map when done.
+
+    private void startDownloadOffers() {
+        final DownloadIndexesThread thread = app.getDownloadThread();
+        thread.setUiActivity(downloadEvents);
+        mapView.addMapLocationListener(mapLocationListener);
+        if (thread.shouldDownloadIndexes()) {
+            // The list of map files on OsmAnd's servers; the offers follow when it arrives.
+            thread.runReloadIndexFilesSilent();
+        } else {
+            updateOffer();
+        }
+    }
+
+    private final DownloadIndexesThread.DownloadEvents downloadEvents = new DownloadIndexesThread.DownloadEvents() {
+        @Override
+        public void onUpdatedIndexesList() {
+            updateOffer();
+        }
+
+        @Override
+        public void downloadInProgress() {
+            notifyDownloadListener();
+        }
+
+        @Override
+        public void downloadingError(@NonNull String error) {
+            notifyDownloadListener();
+        }
+
+        @Override
+        public void downloadHasFinished() {
+            mapView.refreshMap(true);
+            updateOffer();
+        }
+    };
+
+    // OsmAnd reports moves from its animation thread too, so the check runs on the main thread after the map settles.
+    private final IMapLocationListener mapLocationListener =
+            (latitude, longitude, source) -> AndroidUtilities.runOnUIThread(this::updateOfferLater);
+
+    private final Runnable updateOffer = this::updateOffer;
+
+    private void updateOfferLater() {
+        AndroidUtilities.cancelRunOnUIThread(updateOffer);
+        AndroidUtilities.runOnUIThread(updateOffer, OFFER_DELAY_MS);
+    }
+
+    private void updateOffer() {
+        if (destroyed) return;
+        final DownloadIndexesThread thread = app.getDownloadThread();
+        if (offeredItem != null && thread.isDownloading(offeredItem)) {
+            // A running download stays on the card wherever the map is moved.
+            notifyDownloadListener();
+            return;
+        }
+        final int generation = ++offerGeneration;
+        final IndexItem world = thread.getIndexes().getIndexItem(WORLD_MAP_INDEX);
+        if (world != null && !world.isDownloaded()) {
+            setOffer(world);
+            return;
+        }
+        if (mapView.getZoom() < REGION_OFFER_MIN_ZOOM) {
+            setOffer(null);
+            return;
+        }
+        final LatLon center = new LatLon(mapView.getLatitude(), mapView.getLongitude());
+        offerExecutor.execute(() -> {
+            IndexItem region = null;
+            try {
+                region = DownloadResources.findSmallestIndexItemAt(app, center, DownloadActivityType.NORMAL_FILE);
+            } catch (Exception e) {
+                FileLog.e(e);
+            }
+            final IndexItem found = region;
+            AndroidUtilities.runOnUIThread(() -> {
+                if (!destroyed && generation == offerGeneration) {
+                    setOffer(found != null && !found.isDownloaded() ? found : null);
+                }
+            });
+        });
+    }
+
+    private void setOffer(IndexItem item) {
+        offeredItem = item;
+        notifyDownloadListener();
+    }
+
+    private void notifyDownloadListener() {
+        if (!destroyed && downloadListener != null) {
+            downloadListener.run();
+        }
+    }
+
+    @Override
+    public void setDownloadListener(Runnable listener) {
+        downloadListener = listener;
+    }
+
+    @Override
+    public Download getOfferedDownload() {
+        final IndexItem item = offeredItem;
+        if (item == null) return null;
+        final DownloadIndexesThread thread = app.getDownloadThread();
+        final boolean downloading = thread.isDownloading(item);
+        final float progress = downloading && thread.getCurrentDownloadingItem() == item ? thread.getCurrentDownloadProgress() : 0;
+        final String name = WORLD_MAP_INDEX.equals(item.getFileName())
+                ? LocaleController.getString(R.string.PhogramMapsWorldMap)
+                : item.getVisibleName(app, app.getRegions(), false);
+        return new Download(name, item.getSizeDescription(app), downloading, Math.max(0, Math.min(100, progress)));
+    }
+
+    @Override
+    public void startOfferedDownload() {
+        if (offeredItem != null) {
+            app.getDownloadThread().runDownloadFiles(offeredItem);
+            notifyDownloadListener();
+        }
+    }
+
+    @Override
+    public void cancelOfferedDownload() {
+        if (offeredItem != null) {
+            app.getDownloadThread().cancelDownload(offeredItem);
+            notifyDownloadListener();
         }
     }
 
@@ -166,6 +321,13 @@ final class OsmAndMapEngine implements MapEngine {
     @Override
     public void onDestroy() {
         destroyed = true;
+        AndroidUtilities.cancelRunOnUIThread(updateOffer);
+        if (ready) {
+            mapView.removeMapLocationListener(mapLocationListener);
+            // A running download goes on in OsmAnd's queue; only this page stops listening to it.
+            app.getDownloadThread().resetUiActivity(downloadEvents);
+        }
+        offerExecutor.shutdown();
         stopFollowingLocation();
         view.onDestroy();
         app.getMapViewTrackingUtilities().setMapView(null);

@@ -35,6 +35,7 @@ import androidx.core.view.WindowInsetsCompat;
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.ApplicationLoader;
 import org.telegram.messenger.FileLog;
+import org.telegram.messenger.LocaleController;
 import org.telegram.messenger.MessagesController;
 import org.telegram.messenger.R;
 import org.telegram.messenger.utils.ViewOutlineProviderImpl;
@@ -44,6 +45,7 @@ import org.telegram.ui.ActionBar.BaseFragment;
 import org.telegram.ui.ActionBar.Theme;
 import org.telegram.ui.Components.AlertsCreator;
 import org.telegram.ui.Components.LayoutHelper;
+import org.telegram.ui.Components.LineProgressView;
 import org.telegram.ui.Components.RadialProgressView;
 import org.telegram.ui.Components.ScaleStateListAnimator;
 import org.telegram.ui.DialogsActivity;
@@ -78,6 +80,11 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
     private RadialProgressView progressView;
     private ImageView locationButton;
     private CompassButton compassButton;
+    private FrameLayout downloadCard;
+    private TextView downloadTitle;
+    private TextView downloadSubtitle;
+    private TextView downloadButton;
+    private LineProgressView downloadProgress;
     private View mapView;
 
     private MapEngine mapEngine;
@@ -213,6 +220,45 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         });
         contentView.addView(compassButton, LayoutHelper.createFrame(40, 40, Gravity.RIGHT | Gravity.TOP, 0, 12, 12, 0));
 
+        // The offer of a map file to download, left of the location button: Telegram's white rounded panel with
+        // its blue button and line progress.
+        downloadCard = new FrameLayout(context);
+        downloadCard.setTranslationZ(dp(2));
+        downloadCard.setVisibility(View.GONE);
+        final LinearLayout downloadTexts = new LinearLayout(context);
+        downloadTexts.setOrientation(LinearLayout.VERTICAL);
+        downloadTitle = new TextView(context);
+        downloadTitle.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 15);
+        downloadTitle.setTypeface(AndroidUtilities.bold());
+        downloadTitle.setSingleLine(true);
+        downloadTitle.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        downloadTexts.addView(downloadTitle, LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT));
+        downloadSubtitle = new TextView(context);
+        downloadSubtitle.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 13);
+        downloadSubtitle.setSingleLine(true);
+        downloadTexts.addView(downloadSubtitle, LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, 0, 1, 0, 0));
+        downloadCard.addView(downloadTexts, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.CENTER_VERTICAL | Gravity.START, 14, 9, 104, 11));
+        downloadButton = new TextView(context);
+        downloadButton.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 14);
+        downloadButton.setTypeface(AndroidUtilities.bold());
+        downloadButton.setGravity(Gravity.CENTER);
+        downloadButton.setPadding(dp(14), 0, dp(14), 0);
+        ScaleStateListAnimator.apply(downloadButton);
+        downloadButton.setOnClickListener(v -> {
+            if (mapEngine == null) return;
+            final MapEngine.Download offer = mapEngine.getOfferedDownload();
+            if (offer == null) return;
+            if (offer.downloading) {
+                mapEngine.cancelOfferedDownload();
+            } else {
+                mapEngine.startOfferedDownload();
+            }
+        });
+        downloadCard.addView(downloadButton, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, 30, Gravity.CENTER_VERTICAL | Gravity.END, 0, 0, 12, 0));
+        downloadProgress = new LineProgressView(context);
+        downloadCard.addView(downloadProgress, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, 2, Gravity.BOTTOM, 12, 0, 12, 4));
+        contentView.addView(downloadCard, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.BOTTOM, 12, 0, 64, 12));
+
         final boolean engineAvailable = MapEngines.isAvailable();
         emptyView.setVisibility(engineAvailable ? View.GONE : View.VISIBLE);
         progressView.setVisibility(engineAvailable ? View.VISIBLE : View.GONE);
@@ -257,7 +303,30 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
             mapEngine.onResume();
             AndroidUtilities.runOnUIThread(compassCheck, COMPASS_CHECK_MS);
         }
+        mapEngine.setDownloadListener(this::updateDownloadCard);
         mapEngine.setOnReadyListener(this::onMapReady);
+    }
+
+    private void updateDownloadCard() {
+        if (downloadCard == null) return;
+        final MapEngine.Download offer = mapEngine != null && mapContainer.getVisibility() == View.VISIBLE ? mapEngine.getOfferedDownload() : null;
+        if (offer == null) {
+            downloadCard.setVisibility(View.GONE);
+            return;
+        }
+        downloadTitle.setText(offer.name);
+        if (offer.downloading) {
+            downloadSubtitle.setText(LocaleController.formatString(R.string.PhogramMapsDownloading, (int) offer.progress));
+            downloadButton.setText(getString(R.string.Cancel));
+            downloadProgress.setVisibility(View.VISIBLE);
+            downloadProgress.setProgress(offer.progress / 100f, true);
+        } else {
+            downloadSubtitle.setText(LocaleController.formatString(R.string.PhogramMapsOffline, offer.size));
+            downloadButton.setText(getString(R.string.PhogramMapsDownload));
+            downloadProgress.setVisibility(View.GONE);
+            downloadProgress.setProgress(0, false);
+        }
+        downloadCard.setVisibility(View.VISIBLE);
     }
 
     private void onMapReady() {
@@ -266,6 +335,7 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         mapContainer.setVisibility(View.VISIBLE);
         locationButton.setVisibility(View.VISIBLE);
         updateCompass();
+        updateDownloadCard();
     }
 
     private void applyMapPadding() {
@@ -327,6 +397,7 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         divider.topMargin = padding[1];
 
         ((FrameLayout.LayoutParams) locationButton.getLayoutParams()).bottomMargin = padding[3] + dp(12);
+        ((FrameLayout.LayoutParams) downloadCard.getLayoutParams()).bottomMargin = padding[3] + dp(12);
         ((FrameLayout.LayoutParams) compassButton.getLayoutParams()).topMargin = padding[1] + dp(12);
         contentView.requestLayout();
     }
@@ -345,6 +416,16 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         locationButton.setBackground(Theme.createSimpleSelectorCircleDrawable(dp(40), getThemedColor(Theme.key_location_actionBackground), getThemedColor(Theme.key_location_actionPressedBackground)));
         locationButton.setColorFilter(new PorterDuffColorFilter(getThemedColor(Theme.key_location_actionActiveIcon), PorterDuff.Mode.MULTIPLY));
         compassButton.setBackground(Theme.createSimpleSelectorCircleDrawable(dp(40), getThemedColor(Theme.key_location_actionBackground), getThemedColor(Theme.key_location_actionPressedBackground)));
+        final GradientDrawable cardBackground = new GradientDrawable();
+        cardBackground.setCornerRadius(dp(12));
+        cardBackground.setColor(getThemedColor(Theme.key_windowBackgroundWhite));
+        downloadCard.setBackground(cardBackground);
+        downloadTitle.setTextColor(getThemedColor(Theme.key_windowBackgroundWhiteBlackText));
+        downloadSubtitle.setTextColor(getThemedColor(Theme.key_windowBackgroundWhiteGrayText));
+        downloadButton.setTextColor(getThemedColor(Theme.key_featuredStickers_buttonText));
+        downloadButton.setBackground(Theme.createSimpleSelectorRoundRectDrawable(dp(15), getThemedColor(Theme.key_featuredStickers_addButton), getThemedColor(Theme.key_featuredStickers_addButtonPressed)));
+        downloadProgress.setProgressColor(getThemedColor(Theme.key_featuredStickers_addButton));
+        downloadProgress.setBackColor(getThemedColor(Theme.key_divider));
         compassButton.setColors(getThemedColor(Theme.key_text_RedRegular), getThemedColor(Theme.key_location_actionIcon));
     }
 

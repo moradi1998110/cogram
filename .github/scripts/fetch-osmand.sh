@@ -36,6 +36,19 @@ rmdir osmand/android/OsmAnd-java/src/main/java/com/google/protobuf
 grep -rlF "$PROTOBUF_OLD" osmand/android --include='*.java' --include='*.kt' --include='*.pro' \
   | xargs sed -i "s/com\.google\.protobuf/net.osmand.protobuf/g"
 echo "Files still naming $PROTOBUF_OLD: $(grep -rlF "$PROTOBUF_OLD" osmand/android --include='*.java' --include='*.kt' --include='*.pro' | wc -l)"
+# Phogram does not ship OsmAnd's 72 MB world map; the Maps tab offers it for download from OsmAnd's servers. Without
+# this entry OsmAnd does not look for the map among the app's files at start.
+python3 - <<'EOF'
+import json
+path = 'osmand/resources/bundled_assets.json'
+with open(path) as f:
+    data = json.load(f)
+before = len(data['assets'])
+data['assets'] = [a for a in data['assets'] if a.get('source') != 'World_basemap_mini.obf']
+with open(path, 'w') as f:
+    json.dump(data, f, indent=2)
+print('Bundled assets: %d -> %d' % (before, len(data['assets'])))
+EOF
 # OsmAnd's XML parser library also carries the XmlPull interfaces Android already has, and R8 refuses an app
 # that redefines them. The app takes this copy without them.
 mkdir -p osmand/libs

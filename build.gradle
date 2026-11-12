@@ -92,6 +92,10 @@ if (gradle.ext.has('osmand')) {
             if (t.name.startsWith('merge') && t.name.endsWith('JniLibFolders')) {
                 t.dependsOn('cleanupDuplicatesInCore')
             }
+            // Phogram does not ship OsmAnd's world map (see fetch-osmand.sh); the Maps tab downloads it.
+            if (t.name == 'downloadWorldMiniBasemap') {
+                t.enabled = false
+            }
             if (t.name == 'buildOsmAndCore') {
                 if (injectedAbi.contains('arm64')) t.environment('ARM64_ONLY', '1')
                 else if (injectedAbi.contains('x86_64')) t.environment('X86_64_ONLY', '1')

@@ -28,6 +28,32 @@ public interface MapEngine {
     /** Turns the map back to north up. */
     void resetRotation();
 
+    /** A map file the page offers to download: the world map first, then the region at the map's center. */
+    final class Download {
+        public final String name;
+        public final String size;
+        public final boolean downloading;
+        /** 0 to 100 while downloading. */
+        public final float progress;
+
+        public Download(String name, String size, boolean downloading, float progress) {
+            this.name = name;
+            this.size = size;
+            this.downloading = downloading;
+            this.progress = progress;
+        }
+    }
+
+    /** Called on the main thread when the offered download or its progress changes. */
+    void setDownloadListener(Runnable listener);
+
+    /** The map file to offer now, or null when the map has what it needs here. */
+    Download getOfferedDownload();
+
+    void startOfferedDownload();
+
+    void cancelOfferedDownload();
+
     void onResume();
 
     void onPause();
