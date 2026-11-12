@@ -28,7 +28,6 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
-import androidx.core.graphics.ColorUtils;
 import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
@@ -177,7 +176,7 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         contentView.addView(progressView, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, Gravity.CENTER));
 
         // Behind the title over the map. The map is drawn on its own surface, which the glass of Telegram's
-        // headers cannot blur, so the header takes the page's color, slightly see-through, with Telegram's divider.
+        // headers cannot blur, so the header takes the page's color with Telegram's divider.
         headerBackground = new View(context);
         headerBackground.setVisibility(View.GONE);
         contentView.addView(headerBackground, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.TOP));
@@ -245,17 +244,28 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
             FileLog.e(e);
             mapEngine = null;
         }
-        progressView.setVisibility(View.GONE);
         if (mapEngine == null) {
+            progressView.setVisibility(View.GONE);
             emptyView.setVisibility(View.VISIBLE);
             return;
         }
+        // The map stays hidden behind the progress circle until it can draw; its surface is black before that.
+        mapContainer.setVisibility(View.INVISIBLE);
         setMapView(mapEngine.getView());
         applyMapPadding();
         if (pageResumed) {
             mapEngine.onResume();
             AndroidUtilities.runOnUIThread(compassCheck, COMPASS_CHECK_MS);
         }
+        mapEngine.setOnReadyListener(this::onMapReady);
+    }
+
+    private void onMapReady() {
+        if (contentView == null || mapEngine == null) return;
+        progressView.setVisibility(View.GONE);
+        mapContainer.setVisibility(View.VISIBLE);
+        locationButton.setVisibility(View.VISIBLE);
+        updateCompass();
     }
 
     private void applyMapPadding() {
@@ -291,7 +301,9 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         emptyView.setVisibility(hasMap ? View.GONE : View.VISIBLE);
         headerBackground.setVisibility(hasMap ? View.VISIBLE : View.GONE);
         headerDivider.setVisibility(hasMap ? View.VISIBLE : View.GONE);
-        locationButton.setVisibility(hasMap && mapEngine != null ? View.VISIBLE : View.GONE);
+        if (!hasMap) {
+            locationButton.setVisibility(View.GONE);
+        }
         updateCompass();
     }
 
@@ -327,7 +339,7 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         emptyTitle.setTextColor(getThemedColor(Theme.key_windowBackgroundWhiteBlackText));
         emptyText.setTextColor(getThemedColor(Theme.key_windowBackgroundWhiteGrayText));
         progressView.setProgressColor(getThemedColor(Theme.key_progressCircle));
-        headerBackground.setBackgroundColor(ColorUtils.setAlphaComponent(getThemedColor(Theme.key_windowBackgroundWhite), 0xF0));
+        headerBackground.setBackgroundColor(getThemedColor(Theme.key_windowBackgroundWhite));
         headerDivider.setBackgroundColor(getThemedColor(Theme.key_divider));
 
         locationButton.setBackground(Theme.createSimpleSelectorCircleDrawable(dp(40), getThemedColor(Theme.key_location_actionBackground), getThemedColor(Theme.key_location_actionPressedBackground)));
@@ -339,7 +351,7 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
     private void updateCompass() {
         if (compassButton == null) return;
         final float rotation = mapEngine != null ? mapEngine.getRotation() : 0;
-        final boolean turned = mapView != null && Math.abs(normalize(rotation)) > 0.5f;
+        final boolean turned = mapView != null && mapContainer.getVisibility() == View.VISIBLE && Math.abs(normalize(rotation)) > 0.5f;
         compassButton.setNeedleRotation(rotation);
         if (turned != (compassButton.getVisibility() == View.VISIBLE)) {
             compassButton.setVisibility(turned ? View.VISIBLE : View.GONE);

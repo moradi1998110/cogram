@@ -7,6 +7,7 @@ import net.osmand.plus.AppInitializeListener;
 import net.osmand.plus.AppInitializer;
 import net.osmand.plus.OsmAndLocationProvider;
 import net.osmand.plus.OsmandApplication;
+import net.osmand.plus.base.MapViewTrackingUtilities;
 import net.osmand.plus.settings.enums.CompassMode;
 import net.osmand.plus.views.MapViewWithLayers;
 import net.osmand.plus.views.OsmandMapTileView;
@@ -29,6 +30,7 @@ final class OsmAndMapEngine implements MapEngine {
     private static final double START_LATITUDE = 33.3;
     private static final double START_LONGITUDE = 44.4;
     private static final int START_ZOOM = 6;
+    private static final int MY_LOCATION_ZOOM = 15;
 
     private final OsmandApplication app;
     private final MapViewWithLayers view;
@@ -36,6 +38,8 @@ final class OsmAndMapEngine implements MapEngine {
     private boolean destroyed;
     private boolean resumed;
     private boolean followingLocation;
+    private boolean ready;
+    private Runnable readyListener;
 
     OsmAndMapEngine(Context context) {
         app = (OsmandApplication) context.getApplicationContext();
@@ -57,11 +61,13 @@ final class OsmAndMapEngine implements MapEngine {
                         FileLog.d("cogram: map engine ready after " + (System.currentTimeMillis() - start) + " ms");
                         app.getOsmandMap().setupRenderingView();
                         mapView.refreshMap(true);
+                        markReady();
                     }
                 }
             });
         } else {
             app.getOsmandMap().setupRenderingView();
+            ready = true;
         }
         FileLog.d("cogram: OsmAnd started in " + (started - start) + " ms, map view created in "
                 + (System.currentTimeMillis() - started) + " ms, initializing=" + app.isApplicationInitializing());
@@ -73,6 +79,21 @@ final class OsmAndMapEngine implements MapEngine {
     }
 
     @Override
+    public void setOnReadyListener(Runnable listener) {
+        readyListener = listener;
+        if (ready && listener != null) {
+            listener.run();
+        }
+    }
+
+    private void markReady() {
+        ready = true;
+        if (readyListener != null) {
+            readyListener.run();
+        }
+    }
+
+    @Override
     public void setPadding(int left, int top, int right, int bottom) {
         // The map runs under the header and the tab bar, as Telegram's pages do; its center stays the view's.
     }
@@ -80,8 +101,16 @@ final class OsmAndMapEngine implements MapEngine {
     @Override
     public void moveToMyLocation() {
         startFollowingLocation();
+        final MapViewTrackingUtilities tracking = app.getMapViewTrackingUtilities();
+        final OsmAndLocationProvider provider = app.getLocationProvider();
+        final boolean hasPosition = provider.getLastKnownLocation() != null || provider.getLastStaleKnownLocation() != null;
+        if (hasPosition && tracking.isMapLinkedToLocation()) {
+            // OsmAnd only moves a map that is not following the position yet; the button should also bring the
+            // map close in, as Telegram's does, so the link is let go first and taken again by the move.
+            tracking.setMapLinkedToLocation(false);
+        }
         // Without a fix yet OsmAnd says so and links the map to the position, so the map moves when one comes.
-        app.getMapViewTrackingUtilities().backToLocationImpl();
+        tracking.backToLocationImpl(MY_LOCATION_ZOOM, true);
     }
 
     @Override

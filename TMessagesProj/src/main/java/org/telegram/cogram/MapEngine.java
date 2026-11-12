@@ -7,6 +7,12 @@ public interface MapEngine {
 
     View getView();
 
+    /**
+     * Runs the listener on the main thread once the map can draw, right away if it already can. Until then the
+     * map's view shows nothing, so the page keeps its progress circle.
+     */
+    void setOnReadyListener(Runnable listener);
+
     /** Sets how much of each edge the page's header and tab bar cover, so the map keeps its controls visible. */
     void setPadding(int left, int top, int right, int bottom);
 
