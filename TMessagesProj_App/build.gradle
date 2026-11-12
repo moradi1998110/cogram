@@ -226,5 +226,6 @@ if (gradle.ext.has('osmand')) {
     dependencies {
         implementation project(':OsmAnd')
         implementation 'androidx.multidex:multidex:2.0.1'
+        implementation files('../osmand/libs/kxml2-2.3.0.jar')
     }
 }

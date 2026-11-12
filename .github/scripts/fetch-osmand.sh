@@ -23,3 +23,9 @@ cp osmand/android/versions.gradle versions.gradle
   echo "ANDROID_NDK=$ANDROID_HOME/ndk/$NDK_VERSION"
   echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/$NDK_VERSION"
 } >> "$GITHUB_ENV"
+# OsmAnd's XML parser library also carries the XmlPull interfaces Android already has, and R8 refuses an app
+# that redefines them. The app takes this copy without them.
+mkdir -p osmand/libs
+curl -sSfL --retry 5 -o osmand/libs/kxml2-2.3.0.jar https://repo1.maven.org/maven2/net/sf/kxml/kxml2/2.3.0/kxml2-2.3.0.jar
+zip -q -d osmand/libs/kxml2-2.3.0.jar 'org/xmlpull/*'
+unzip -l osmand/libs/kxml2-2.3.0.jar | tail -1

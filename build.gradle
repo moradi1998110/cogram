@@ -68,6 +68,9 @@ if (gradle.ext.has('osmand')) {
             // OsmAnd's core library carries its own patched protobuf 2.5 under the same class names; the
             // Signal library behind OMEMO is written for protobuf 2.5 and uses that copy.
             exclude group: 'com.google.protobuf', module: 'protobuf-java'
+            // The app takes a copy of OsmAnd's XML parser without the XmlPull interfaces Android already has
+            // (see fetch-osmand.sh and the app module).
+            exclude group: 'net.sf.kxml', module: 'kxml2'
         }
     }
 
