@@ -11658,4 +11658,6 @@
     <string name="PhogramAdSample3Text">Swipe to see more adverts.</string>
     <string name="PhogramMapsTab">Maps</string>
     <string name="PhogramMapsEmpty">The map will appear here.</string>
+    <string name="PhogramMapsLocationPermission">**Phogram** needs access to location to show where you are on the map. Tap Settings -> Permissions, and turn **Location** on.</string>
+    <string name="PhogramMapsNorthUp">Turn the map north up</string>
 </resources>

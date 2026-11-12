@@ -120,6 +120,11 @@ dump_screen 7-maps
 sleep 5
 adb exec-out screencap -p > "$OUT/7-maps-later.png" || true
 adb shell dumpsys meminfo "$PACKAGE" > "$OUT/meminfo-maps.txt" || true
+# The emulator reports a fixed position, and the app was given the location permission at install.
+adb emu geo fix 44.3661 33.3152 || true
+tap_view 'content-desc="My location"' || true
+sleep 5
+adb exec-out screencap -p > "$OUT/7-maps-location.png" || true
 tap_view 'text="Chats"' || true
 sleep 3
 tap_view 'content-desc="More options"' || true

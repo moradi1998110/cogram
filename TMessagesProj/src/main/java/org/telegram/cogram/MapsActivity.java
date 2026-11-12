@@ -1,12 +1,22 @@
 package org.telegram.cogram;
 
 import static org.telegram.messenger.AndroidUtilities.dp;
+import static org.telegram.messenger.LocaleController.getString;
 
+import android.Manifest;
+import android.app.Activity;
 import android.content.Context;
+import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.Paint;
+import android.graphics.Path;
 import android.graphics.PorterDuff;
 import android.graphics.PorterDuffColorFilter;
 import android.graphics.drawable.GradientDrawable;
+import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.util.TypedValue;
 import android.view.Gravity;
@@ -18,42 +28,78 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
+import androidx.core.graphics.ColorUtils;
 import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
 
 import org.telegram.messenger.AndroidUtilities;
-import org.telegram.messenger.LocaleController;
+import org.telegram.messenger.ApplicationLoader;
+import org.telegram.messenger.FileLog;
+import org.telegram.messenger.MessagesController;
 import org.telegram.messenger.R;
+import org.telegram.messenger.utils.ViewOutlineProviderImpl;
 import org.telegram.ui.ActionBar.ActionBar;
+import org.telegram.ui.ActionBar.AlertDialog;
 import org.telegram.ui.ActionBar.BaseFragment;
 import org.telegram.ui.ActionBar.Theme;
+import org.telegram.ui.Components.AlertsCreator;
 import org.telegram.ui.Components.LayoutHelper;
+import org.telegram.ui.Components.RadialProgressView;
+import org.telegram.ui.Components.ScaleStateListAnimator;
 import org.telegram.ui.DialogsActivity;
 import org.telegram.ui.MainTabsActivity;
 
 /**
  * Phogram's Maps tab, in the slot where Telegram has Settings (Settings opens from the chats page's options
- * menu, as Telegram does when Calls holds this slot). No map is chosen yet, so the page shows an empty
+ * menu, as Telegram does when Calls holds this slot).
+ *
+ * In builds with a map engine the page shows Telegram's progress circle until the tab is first opened, then
+ * makes the map, so the engine costs nothing to users who never open the tab. The map fills the page under
+ * the header and the tab bar; the header gets the page's color so its title stays readable over the map, and
+ * the map's buttons are Telegram's round location-page buttons. Builds without a map engine show an empty
  * state in Telegram's style.
  *
- * The page is ready for a map: {@link #setMapView} puts it under the glass header and tab bar, and
- * {@link #getMapPadding} tells it how much of each edge those bars cover, so the map keeps its logo and
- * controls visible. While a map is shown, swipes on it move the map instead of switching tabs.
+ * While a map is shown, swipes on it move the map instead of switching tabs.
  */
 public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFragmentDelegate {
 
+    private static final int LOCATION_PERMISSION_REQUEST = 7301;
+    private static final String LOCATION_ASKED_KEY = "phogramMapsLocationAsked";
+    private static final long COMPASS_CHECK_MS = 250;
+
     private FrameLayout contentView;
     private FrameLayout mapContainer;
+    private View headerBackground;
+    private View headerDivider;
     private LinearLayout emptyView;
     private ImageView emptyIcon;
     private TextView emptyTitle;
     private TextView emptyText;
+    private RadialProgressView progressView;
+    private ImageView locationButton;
+    private CompassButton compassButton;
     private View mapView;
+
+    private MapEngine mapEngine;
+    private boolean mapEngineRequested;
+    private boolean pageResumed;
 
     private boolean hasMainTabs;
     private int statusBarHeight;
     private int navigationBarHeight;
+
+    private final Runnable compassCheck = new Runnable() {
+        @Override
+        public void run() {
+            updateCompass();
+            if (pageResumed && mapEngine != null) {
+                AndroidUtilities.runOnUIThread(this, COMPASS_CHECK_MS);
+            }
+        }
+    };
+
+    private final Runnable createMapEngine = this::createMapEngine;
 
     public MapsActivity(Bundle args) {
         super(args);
@@ -78,7 +124,7 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
             actionBar.setBackButtonImage(R.drawable.ic_ab_back);
         }
         actionBar.setAllowOverlayTitle(true);
-        actionBar.setTitle(LocaleController.getString(R.string.PhogramMapsTab));
+        actionBar.setTitle(getString(R.string.PhogramMapsTab));
         actionBar.setActionBarMenuOnItemClick(new ActionBar.ActionBarMenuOnItemClick() {
             @Override
             public void onItemClick(int id) {
@@ -116,36 +162,101 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         emptyTitle.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 20);
         emptyTitle.setTypeface(AndroidUtilities.bold());
         emptyTitle.setGravity(Gravity.CENTER);
-        emptyTitle.setText(LocaleController.getString(R.string.PhogramMapsTab));
+        emptyTitle.setText(getString(R.string.PhogramMapsTab));
         emptyView.addView(emptyTitle, LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, Gravity.CENTER_HORIZONTAL, 0, 18, 0, 0));
 
         emptyText = new TextView(context);
         emptyText.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 14);
         emptyText.setGravity(Gravity.CENTER);
-        emptyText.setText(LocaleController.getString(R.string.PhogramMapsEmpty));
+        emptyText.setText(getString(R.string.PhogramMapsEmpty));
         emptyView.addView(emptyText, LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, Gravity.CENTER_HORIZONTAL, 0, 8, 0, 0));
 
         contentView.addView(emptyView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
+
+        progressView = new RadialProgressView(context, getResourceProvider());
+        contentView.addView(progressView, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, Gravity.CENTER));
+
+        // Behind the title over the map. The map is drawn on its own surface, which the glass of Telegram's
+        // headers cannot blur, so the header takes the page's color, slightly see-through, with Telegram's divider.
+        headerBackground = new View(context);
+        headerBackground.setVisibility(View.GONE);
+        contentView.addView(headerBackground, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.TOP));
+        headerDivider = new View(context);
+        headerDivider.setVisibility(View.GONE);
+        contentView.addView(headerDivider, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.TOP));
+
         contentView.addView(actionBar, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.FILL_HORIZONTAL | Gravity.TOP));
 
-        updateColors();
-        ViewCompat.setOnApplyWindowInsetsListener(contentView, this::onApplyWindowInsets);
+        // The location page's round buttons: the device's position at the bottom, north up at the top when the
+        // map is turned.
+        locationButton = new ImageView(context);
+        ScaleStateListAnimator.apply(locationButton);
+        locationButton.setTranslationZ(dp(2));
+        locationButton.setOutlineProvider(ViewOutlineProviderImpl.BOUNDS_OVAL);
+        locationButton.setImageResource(R.drawable.msg_current_location);
+        locationButton.setScaleType(ImageView.ScaleType.CENTER);
+        locationButton.setContentDescription(getString(R.string.AccDescrMyLocation));
+        locationButton.setVisibility(View.GONE);
+        locationButton.setOnClickListener(v -> onLocationButtonClick());
+        contentView.addView(locationButton, LayoutHelper.createFrame(40, 40, Gravity.RIGHT | Gravity.BOTTOM, 0, 0, 12, 12));
 
-        // Builds with a map engine show its map here; the others keep the empty state.
-        try {
-            mapEngine = MapEngines.create(context);
-        } catch (Throwable e) {
-            org.telegram.messenger.FileLog.e(e);
-            mapEngine = null;
-        }
-        if (mapEngine != null) {
-            setMapView(mapEngine.getView());
-            applyMapPadding();
-        }
+        compassButton = new CompassButton(context);
+        ScaleStateListAnimator.apply(compassButton);
+        compassButton.setTranslationZ(dp(2));
+        compassButton.setOutlineProvider(ViewOutlineProviderImpl.BOUNDS_OVAL);
+        compassButton.setContentDescription(getString(R.string.PhogramMapsNorthUp));
+        compassButton.setVisibility(View.GONE);
+        compassButton.setOnClickListener(v -> {
+            if (mapEngine != null) {
+                mapEngine.resetRotation();
+                updateCompass();
+            }
+        });
+        contentView.addView(compassButton, LayoutHelper.createFrame(40, 40, Gravity.RIGHT | Gravity.TOP, 0, 12, 12, 0));
+
+        final boolean engineAvailable = MapEngines.isAvailable();
+        emptyView.setVisibility(engineAvailable ? View.GONE : View.VISIBLE);
+        progressView.setVisibility(engineAvailable ? View.VISIBLE : View.GONE);
+
+        updateColors();
+        updateLayout();
+        ViewCompat.setOnApplyWindowInsetsListener(contentView, this::onApplyWindowInsets);
         return fragmentView = contentView;
     }
 
-    private MapEngine mapEngine;
+    @Override
+    public void onBecomeFullyVisible() {
+        super.onBecomeFullyVisible();
+        if (MapEngines.isAvailable() && !mapEngineRequested) {
+            mapEngineRequested = true;
+            // One frame for the progress circle first: the engine's first start holds the main thread for a moment.
+            AndroidUtilities.runOnUIThread(createMapEngine, 32);
+        }
+    }
+
+    private void createMapEngine() {
+        if (contentView == null || getParentActivity() == null) {
+            mapEngineRequested = false;
+            return;
+        }
+        try {
+            mapEngine = MapEngines.create(getParentActivity());
+        } catch (Throwable e) {
+            FileLog.e(e);
+            mapEngine = null;
+        }
+        progressView.setVisibility(View.GONE);
+        if (mapEngine == null) {
+            emptyView.setVisibility(View.VISIBLE);
+            return;
+        }
+        setMapView(mapEngine.getView());
+        applyMapPadding();
+        if (pageResumed) {
+            mapEngine.onResume();
+            AndroidUtilities.runOnUIThread(compassCheck, COMPASS_CHECK_MS);
+        }
+    }
 
     private void applyMapPadding() {
         if (mapEngine != null) {
@@ -157,6 +268,8 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
     @Override
     public void onFragmentDestroy() {
         super.onFragmentDestroy();
+        AndroidUtilities.cancelRunOnUIThread(compassCheck);
+        AndroidUtilities.cancelRunOnUIThread(createMapEngine);
         if (mapEngine != null) {
             mapEngine.onDestroy();
             mapEngine = null;
@@ -174,7 +287,12 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
             AndroidUtilities.removeFromParent(view);
             mapContainer.addView(view, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
         }
-        emptyView.setVisibility(view == null ? View.VISIBLE : View.GONE);
+        final boolean hasMap = view != null;
+        emptyView.setVisibility(hasMap ? View.GONE : View.VISIBLE);
+        headerBackground.setVisibility(hasMap ? View.VISIBLE : View.GONE);
+        headerDivider.setVisibility(hasMap ? View.VISIBLE : View.GONE);
+        locationButton.setVisibility(hasMap && mapEngine != null ? View.VISIBLE : View.GONE);
+        updateCompass();
     }
 
     /** How much of the top and bottom edges the header and the tab bar cover, for the map's own padding. */
@@ -184,6 +302,23 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         return new int[] { 0, top, 0, bottom };
     }
 
+    private void updateLayout() {
+        if (contentView == null) return;
+        final int[] padding = getMapPadding();
+        // The empty state and the progress circle center in the part of the page the bars leave free.
+        emptyView.setPadding(dp(32), padding[1], dp(32), padding[3]);
+        progressView.setTranslationY((padding[1] - padding[3]) / 2f);
+
+        headerBackground.getLayoutParams().height = padding[1];
+        final FrameLayout.LayoutParams divider = (FrameLayout.LayoutParams) headerDivider.getLayoutParams();
+        divider.height = Math.max(1, AndroidUtilities.getShadowHeight());
+        divider.topMargin = padding[1];
+
+        ((FrameLayout.LayoutParams) locationButton.getLayoutParams()).bottomMargin = padding[3] + dp(12);
+        ((FrameLayout.LayoutParams) compassButton.getLayoutParams()).topMargin = padding[1] + dp(12);
+        contentView.requestLayout();
+    }
+
     private void updateColors() {
         if (contentView == null) return;
         contentView.setBackgroundColor(getThemedColor(Theme.key_windowBackgroundGray));
@@ -191,20 +326,103 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         actionBar.setItemsColor(getThemedColor(Theme.key_windowBackgroundWhiteBlackText), false);
         emptyTitle.setTextColor(getThemedColor(Theme.key_windowBackgroundWhiteBlackText));
         emptyText.setTextColor(getThemedColor(Theme.key_windowBackgroundWhiteGrayText));
+        progressView.setProgressColor(getThemedColor(Theme.key_progressCircle));
+        headerBackground.setBackgroundColor(ColorUtils.setAlphaComponent(getThemedColor(Theme.key_windowBackgroundWhite), 0xF0));
+        headerDivider.setBackgroundColor(getThemedColor(Theme.key_divider));
+
+        locationButton.setBackground(Theme.createSimpleSelectorCircleDrawable(dp(40), getThemedColor(Theme.key_location_actionBackground), getThemedColor(Theme.key_location_actionPressedBackground)));
+        locationButton.setColorFilter(new PorterDuffColorFilter(getThemedColor(Theme.key_location_actionActiveIcon), PorterDuff.Mode.MULTIPLY));
+        compassButton.setBackground(Theme.createSimpleSelectorCircleDrawable(dp(40), getThemedColor(Theme.key_location_actionBackground), getThemedColor(Theme.key_location_actionPressedBackground)));
+        compassButton.setColors(getThemedColor(Theme.key_text_RedRegular), getThemedColor(Theme.key_location_actionIcon));
+    }
+
+    private void updateCompass() {
+        if (compassButton == null) return;
+        final float rotation = mapEngine != null ? mapEngine.getRotation() : 0;
+        final boolean turned = mapView != null && Math.abs(normalize(rotation)) > 0.5f;
+        compassButton.setNeedleRotation(rotation);
+        if (turned != (compassButton.getVisibility() == View.VISIBLE)) {
+            compassButton.setVisibility(turned ? View.VISIBLE : View.GONE);
+        }
+    }
+
+    private static float normalize(float degrees) {
+        float d = degrees % 360;
+        if (d > 180) d -= 360;
+        if (d < -180) d += 360;
+        return d;
+    }
+
+    private void onLocationButtonClick() {
+        if (mapEngine == null) return;
+        final Activity activity = getParentActivity();
+        if (activity == null) return;
+        if (Build.VERSION.SDK_INT >= 23 && !hasLocationPermission(activity)) {
+            // The permission is asked for here, when the user wants the position, not when the tab opens.
+            final boolean askedBefore = MessagesController.getGlobalMainSettings().getBoolean(LOCATION_ASKED_KEY, false);
+            if (askedBefore && !activity.shouldShowRequestPermissionRationale(Manifest.permission.ACCESS_FINE_LOCATION)) {
+                // Android no longer shows its question once it was refused for good, so point to Settings as Telegram does.
+                showPermissionAlert();
+            } else {
+                MessagesController.getGlobalMainSettings().edit().putBoolean(LOCATION_ASKED_KEY, true).apply();
+                activity.requestPermissions(new String[] { Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION }, LOCATION_PERMISSION_REQUEST);
+            }
+            return;
+        }
+        mapEngine.moveToMyLocation();
+    }
+
+    private static boolean hasLocationPermission(Activity activity) {
+        return activity.checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+                || activity.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    @Override
+    public void onRequestPermissionsResultFragment(int requestCode, String[] permissions, int[] grantResults) {
+        if (requestCode != LOCATION_PERMISSION_REQUEST) return;
+        final Activity activity = getParentActivity();
+        if (activity != null && mapEngine != null && hasLocationPermission(activity)) {
+            mapEngine.onLocationPermissionGranted();
+            mapEngine.moveToMyLocation();
+        }
+    }
+
+    private void showPermissionAlert() {
+        if (getParentActivity() == null) return;
+        final AlertDialog.Builder builder = new AlertDialog.Builder(getParentActivity());
+        builder.setTopAnimation(R.raw.permission_request_location, AlertsCreator.PERMISSIONS_REQUEST_TOP_ICON_SIZE, false, getThemedColor(Theme.key_dialogTopBackground));
+        builder.setMessage(AndroidUtilities.replaceTags(getString(R.string.PhogramMapsLocationPermission)));
+        builder.setNegativeButton(getString(R.string.PermissionOpenSettings), (dialog, which) -> {
+            if (getParentActivity() == null) return;
+            try {
+                final Intent intent = new Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
+                intent.setData(Uri.parse("package:" + ApplicationLoader.applicationContext.getPackageName()));
+                getParentActivity().startActivity(intent);
+            } catch (Exception e) {
+                FileLog.e(e);
+            }
+        });
+        builder.setPositiveButton(getString(R.string.OK), null);
+        showDialog(builder.create());
     }
 
     @Override
     public void onResume() {
         super.onResume();
+        pageResumed = true;
         updateColors();
         if (mapEngine != null) {
             mapEngine.onResume();
+            AndroidUtilities.cancelRunOnUIThread(compassCheck);
+            AndroidUtilities.runOnUIThread(compassCheck, COMPASS_CHECK_MS);
         }
     }
 
     @Override
     public void onPause() {
         super.onPause();
+        pageResumed = false;
+        AndroidUtilities.cancelRunOnUIThread(compassCheck);
         // The map pauses so it does not use the battery while another tab is open.
         if (mapEngine != null) {
             mapEngine.onPause();
@@ -213,7 +431,8 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
 
     @Override
     public boolean isLightStatusBar() {
-        return AndroidUtilities.computePerceivedBrightness(getThemedColor(Theme.key_windowBackgroundGray)) > 0.721f;
+        final int key = mapView != null ? Theme.key_windowBackgroundWhite : Theme.key_windowBackgroundGray;
+        return AndroidUtilities.computePerceivedBrightness(getThemedColor(key)) > 0.721f;
     }
 
     @Override
@@ -226,9 +445,7 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         final Insets systemInsets = AndroidUtilities.getDefaultWindowInsets(insets, false);
         statusBarHeight = systemInsets.top;
         navigationBarHeight = systemInsets.bottom;
-        final int[] padding = getMapPadding();
-        // The empty state centers in the part of the page the bars leave free.
-        emptyView.setPadding(dp(32), padding[1], dp(32), padding[3]);
+        updateLayout();
         applyMapPadding();
         return WindowInsetsCompat.CONSUMED;
     }
@@ -237,5 +454,55 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
     public boolean canParentTabsSlide(MotionEvent ev, boolean forward) {
         // With a map shown, a swipe moves the map; without one the tabs slide as on any other page.
         return mapView == null;
+    }
+
+    /** North up button: a compass needle, red to the north, turned with the map. */
+    private static final class CompassButton extends View {
+
+        private final Paint northPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint southPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Path north = new Path();
+        private final Path south = new Path();
+        private float needleRotation;
+
+        CompassButton(Context context) {
+            super(context);
+        }
+
+        void setColors(int northColor, int southColor) {
+            northPaint.setColor(northColor);
+            southPaint.setColor(southColor);
+            invalidate();
+        }
+
+        void setNeedleRotation(float degrees) {
+            if (needleRotation != degrees) {
+                needleRotation = degrees;
+                invalidate();
+            }
+        }
+
+        @Override
+        protected void onDraw(Canvas canvas) {
+            final float cx = getWidth() / 2f;
+            final float cy = getHeight() / 2f;
+            final float half = dp(5);
+            final float length = dp(11);
+            north.rewind();
+            north.moveTo(cx, cy - length);
+            north.lineTo(cx + half, cy);
+            north.lineTo(cx - half, cy);
+            north.close();
+            south.rewind();
+            south.moveTo(cx, cy + length);
+            south.lineTo(cx - half, cy);
+            south.lineTo(cx + half, cy);
+            south.close();
+            canvas.save();
+            canvas.rotate(needleRotation, cx, cy);
+            canvas.drawPath(north, northPaint);
+            canvas.drawPath(south, southPaint);
+            canvas.restore();
+        }
     }
 }
