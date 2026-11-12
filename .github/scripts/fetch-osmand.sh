@@ -31,7 +31,8 @@ PROTOBUF_OLD=com.google.protobuf
 PROTOBUF_NEW=net.osmand.protobuf
 [ ${#PROTOBUF_OLD} -eq ${#PROTOBUF_NEW} ]
 mkdir -p osmand/android/OsmAnd-java/src/main/java/net/osmand/protobuf
-git -C osmand/android mv OsmAnd-java/src/main/java/com/google/protobuf/* OsmAnd-java/src/main/java/net/osmand/protobuf/
+mv osmand/android/OsmAnd-java/src/main/java/com/google/protobuf/* osmand/android/OsmAnd-java/src/main/java/net/osmand/protobuf/
+rmdir osmand/android/OsmAnd-java/src/main/java/com/google/protobuf
 grep -rlF "$PROTOBUF_OLD" osmand/android --include='*.java' --include='*.kt' --include='*.pro' \
   | xargs sed -i "s/com\.google\.protobuf/net.osmand.protobuf/g"
 echo "Files still naming $PROTOBUF_OLD: $(grep -rlF "$PROTOBUF_OLD" osmand/android --include='*.java' --include='*.kt' --include='*.pro' | wc -l)"
