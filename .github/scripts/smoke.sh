@@ -76,6 +76,7 @@ adb shell run-as "$PACKAGE" ls -l shared_prefs > "$OUT/prefs.txt" || true
 adb shell am start -n "$PACKAGE/org.telegram.messenger.DefaultIcon"
 sleep "$START_SECONDS"
 adb exec-out screencap -p > "$OUT/1-chats.png" || true
+adb shell dumpsys meminfo "$PACKAGE" > "$OUT/meminfo-chats.txt" || true
 
 adb shell input tap 160 160
 sleep 5
@@ -116,6 +117,9 @@ sleep 5
 tap_view 'text="Maps"' || true
 sleep 3
 dump_screen 7-maps
+sleep 5
+adb exec-out screencap -p > "$OUT/7-maps-later.png" || true
+adb shell dumpsys meminfo "$PACKAGE" > "$OUT/meminfo-maps.txt" || true
 tap_view 'text="Chats"' || true
 sleep 3
 tap_view 'content-desc="More options"' || true
