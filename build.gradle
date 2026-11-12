@@ -90,6 +90,11 @@ if (gradle.ext.has('osmand')) {
             if (t.name != 'copyIcons' && t.name.endsWith('Resources') && !t.name.startsWith('collect')) {
                 t.dependsOn('copyIcons')
             }
+            // OsmAnd's native renderer is built into the folder its native libraries are collected from, so the
+            // collection has to wait for it; otherwise the APK ships without it and OsmAnd falls back to Java.
+            if (t.name.startsWith('merge') && t.name.endsWith('JniLibFolders')) {
+                t.dependsOn('cleanupDuplicatesInCore')
+            }
             if (t.name == 'buildOsmAndCore') {
                 if (injectedAbi.contains('arm64')) t.environment('ARM64_ONLY', '1')
                 else if (injectedAbi.contains('x86_64')) t.environment('X86_64_ONLY', '1')
