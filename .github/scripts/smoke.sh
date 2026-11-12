@@ -122,7 +122,7 @@ adb exec-out screencap -p > "$OUT/7-maps-later.png" || true
 adb shell dumpsys meminfo "$PACKAGE" > "$OUT/meminfo-maps.txt" || true
 # The app ships without OsmAnd's world map, so the page offers it (about 38 MB from OsmAnd's servers).
 dump_screen 7-maps-offer
-if tap_view 'text="Download"'; then
+if tap_view 'content-desc="Download"'; then
   sleep 4
   dump_screen 7-maps-downloading
   sleep 40

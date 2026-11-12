@@ -82,9 +82,10 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
     private CompassButton compassButton;
     private FrameLayout downloadCard;
     private TextView downloadTitle;
-    private TextView downloadSubtitle;
-    private TextView downloadButton;
+    private ImageView downloadButton;
+    private ImageView downloadClose;
     private LineProgressView downloadProgress;
+    private String dismissedDownload;
     private View mapView;
 
     private MapEngine mapEngine;
@@ -220,50 +221,41 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         });
         contentView.addView(compassButton, LayoutHelper.createFrame(40, 40, Gravity.RIGHT | Gravity.TOP, 0, 12, 12, 0));
 
-        // The offer of a map file to download, left of the location button: Telegram's white rounded panel with
-        // its blue button and line progress.
+        // The offer of a map file to download, in the strip under the header where Telegram plays voice messages
+        // and music: the action on the left, the name in one line, the close button on the right, and a line that
+        // fills with the download.
         downloadCard = new FrameLayout(context);
-        downloadCard.setTranslationZ(dp(2));
         downloadCard.setVisibility(View.GONE);
-        final LinearLayout downloadTexts = new LinearLayout(context);
-        downloadTexts.setOrientation(LinearLayout.VERTICAL);
+        downloadCard.setOnClickListener(v -> onDownloadAction());
+        downloadButton = new ImageView(context);
+        downloadButton.setScaleType(ImageView.ScaleType.CENTER);
+        downloadButton.setOnClickListener(v -> onDownloadAction());
+        downloadCard.addView(downloadButton, LayoutHelper.createFrame(36, 36, Gravity.TOP | Gravity.LEFT, 8, 0, 0, 0));
         downloadTitle = new TextView(context);
         downloadTitle.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 15);
-        downloadTitle.setTypeface(AndroidUtilities.bold());
         downloadTitle.setSingleLine(true);
         downloadTitle.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        downloadTexts.addView(downloadTitle, LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT));
-        downloadSubtitle = new TextView(context);
-        downloadSubtitle.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 13);
-        downloadSubtitle.setSingleLine(true);
-        downloadSubtitle.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        downloadTexts.addView(downloadSubtitle, LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, 0, 1, 0, 0));
-        // The texts take what the button leaves, so a long name or size ends with an ellipsis before the button.
-        final LinearLayout downloadRow = new LinearLayout(context);
-        downloadRow.setOrientation(LinearLayout.HORIZONTAL);
-        downloadRow.setGravity(Gravity.CENTER_VERTICAL);
-        downloadRow.addView(downloadTexts, LayoutHelper.createLinear(0, LayoutHelper.WRAP_CONTENT, 1f));
-        downloadCard.addView(downloadRow, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.CENTER_VERTICAL, 14, 9, 12, 11));
-        downloadButton = new TextView(context);
-        downloadButton.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 14);
-        downloadButton.setTypeface(AndroidUtilities.bold());
-        downloadButton.setGravity(Gravity.CENTER);
-        downloadButton.setPadding(dp(14), 0, dp(14), 0);
-        ScaleStateListAnimator.apply(downloadButton);
-        downloadButton.setOnClickListener(v -> {
+        downloadTitle.setGravity(Gravity.CENTER_VERTICAL | Gravity.LEFT);
+        downloadCard.addView(downloadTitle, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, 36, Gravity.TOP | Gravity.LEFT, 35 + 16, 0, 36, 0));
+        downloadClose = new ImageView(context);
+        downloadClose.setImageResource(R.drawable.miniplayer_close);
+        downloadClose.setScaleType(ImageView.ScaleType.CENTER);
+        downloadClose.setContentDescription(getString(R.string.Close));
+        downloadClose.setOnClickListener(v -> {
+            // Closing stops a running download and hides this file's offer until the page is made again.
             if (mapEngine == null) return;
             final MapEngine.Download offer = mapEngine.getOfferedDownload();
             if (offer == null) return;
             if (offer.downloading) {
                 mapEngine.cancelOfferedDownload();
-            } else {
-                mapEngine.startOfferedDownload();
             }
+            dismissedDownload = offer.name;
+            updateDownloadCard();
         });
-        downloadRow.addView(downloadButton, LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, 30, 0f, Gravity.CENTER_VERTICAL, 10, 0, 0, 0));
+        downloadCard.addView(downloadClose, LayoutHelper.createFrame(36, 36, Gravity.RIGHT | Gravity.TOP, 0, 0, 2, 0));
         downloadProgress = new LineProgressView(context);
-        downloadCard.addView(downloadProgress, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, 2, Gravity.BOTTOM, 12, 0, 12, 4));
-        contentView.addView(downloadCard, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.BOTTOM, 12, 0, 64, 12));
+        downloadCard.addView(downloadProgress, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, 2, Gravity.BOTTOM));
+        contentView.addView(downloadCard, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, 36, Gravity.TOP));
 
         final boolean engineAvailable = MapEngines.isAvailable();
         emptyView.setVisibility(engineAvailable ? View.GONE : View.VISIBLE);
@@ -316,23 +308,35 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
     private void updateDownloadCard() {
         if (downloadCard == null) return;
         final MapEngine.Download offer = mapEngine != null && mapContainer.getVisibility() == View.VISIBLE ? mapEngine.getOfferedDownload() : null;
-        if (offer == null) {
-            downloadCard.setVisibility(View.GONE);
-            return;
+        final boolean show = offer != null && (offer.downloading || !offer.name.equals(dismissedDownload));
+        if (show) {
+            // As the player's "performer - title": the name stands out, the state follows in the title color.
+            final String state = offer.downloading
+                    ? LocaleController.formatString(R.string.PhogramMapsDownloading, (int) offer.progress)
+                    : LocaleController.formatString(R.string.PhogramMapsOffline, offer.size);
+            final android.text.SpannableStringBuilder text = new android.text.SpannableStringBuilder(offer.name);
+            text.setSpan(new org.telegram.ui.Components.TypefaceSpan(AndroidUtilities.bold(), 0, getThemedColor(Theme.key_inappPlayerPerformer)), 0, text.length(), android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+            text.append("  ").append(state);
+            downloadTitle.setText(text);
+            downloadButton.setImageResource(offer.downloading ? R.drawable.msg_cancel : R.drawable.msg_download);
+            downloadButton.setContentDescription(getString(offer.downloading ? R.string.Cancel : R.string.PhogramMapsDownload));
+            downloadProgress.setProgress(offer.downloading ? offer.progress / 100f : 0, offer.downloading);
         }
-        downloadTitle.setText(offer.name);
+        if (show != (downloadCard.getVisibility() == View.VISIBLE)) {
+            downloadCard.setVisibility(show ? View.VISIBLE : View.GONE);
+            updateLayout();
+        }
+    }
+
+    private void onDownloadAction() {
+        if (mapEngine == null) return;
+        final MapEngine.Download offer = mapEngine.getOfferedDownload();
+        if (offer == null) return;
         if (offer.downloading) {
-            downloadSubtitle.setText(LocaleController.formatString(R.string.PhogramMapsDownloading, (int) offer.progress));
-            downloadButton.setText(getString(R.string.Cancel));
-            downloadProgress.setVisibility(View.VISIBLE);
-            downloadProgress.setProgress(offer.progress / 100f, true);
+            mapEngine.cancelOfferedDownload();
         } else {
-            downloadSubtitle.setText(LocaleController.formatString(R.string.PhogramMapsOffline, offer.size));
-            downloadButton.setText(getString(R.string.PhogramMapsDownload));
-            downloadProgress.setVisibility(View.GONE);
-            downloadProgress.setProgress(0, false);
+            mapEngine.startOfferedDownload();
         }
-        downloadCard.setVisibility(View.VISIBLE);
     }
 
     private void onMapReady() {
@@ -403,8 +407,11 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         divider.topMargin = padding[1];
 
         ((FrameLayout.LayoutParams) locationButton.getLayoutParams()).bottomMargin = padding[3] + dp(12);
-        ((FrameLayout.LayoutParams) downloadCard.getLayoutParams()).bottomMargin = padding[3] + dp(12);
-        ((FrameLayout.LayoutParams) compassButton.getLayoutParams()).topMargin = padding[1] + dp(12);
+        // The download strip hangs under the header; Telegram's divider and the north button move below it.
+        final int strip = downloadCard.getVisibility() == View.VISIBLE ? dp(36) : 0;
+        ((FrameLayout.LayoutParams) downloadCard.getLayoutParams()).topMargin = padding[1];
+        divider.topMargin = padding[1] + strip;
+        ((FrameLayout.LayoutParams) compassButton.getLayoutParams()).topMargin = padding[1] + strip + dp(12);
         contentView.requestLayout();
     }
 
@@ -422,16 +429,15 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         locationButton.setBackground(Theme.createSimpleSelectorCircleDrawable(dp(40), getThemedColor(Theme.key_location_actionBackground), getThemedColor(Theme.key_location_actionPressedBackground)));
         locationButton.setColorFilter(new PorterDuffColorFilter(getThemedColor(Theme.key_location_actionActiveIcon), PorterDuff.Mode.MULTIPLY));
         compassButton.setBackground(Theme.createSimpleSelectorCircleDrawable(dp(40), getThemedColor(Theme.key_location_actionBackground), getThemedColor(Theme.key_location_actionPressedBackground)));
-        final GradientDrawable cardBackground = new GradientDrawable();
-        cardBackground.setCornerRadius(dp(12));
-        cardBackground.setColor(getThemedColor(Theme.key_windowBackgroundWhite));
-        downloadCard.setBackground(cardBackground);
-        downloadTitle.setTextColor(getThemedColor(Theme.key_windowBackgroundWhiteBlackText));
-        downloadSubtitle.setTextColor(getThemedColor(Theme.key_windowBackgroundWhiteGrayText));
-        downloadButton.setTextColor(getThemedColor(Theme.key_featuredStickers_buttonText));
-        downloadButton.setBackground(Theme.createSimpleSelectorRoundRectDrawable(dp(15), getThemedColor(Theme.key_featuredStickers_addButton), getThemedColor(Theme.key_featuredStickers_addButtonPressed)));
-        downloadProgress.setProgressColor(getThemedColor(Theme.key_featuredStickers_addButton));
-        downloadProgress.setBackColor(getThemedColor(Theme.key_divider));
+        // The player strip's colors.
+        downloadCard.setBackgroundColor(getThemedColor(Theme.key_inappPlayerBackground));
+        downloadTitle.setTextColor(getThemedColor(Theme.key_inappPlayerTitle));
+        downloadButton.setColorFilter(new PorterDuffColorFilter(getThemedColor(Theme.key_inappPlayerPlayPause), PorterDuff.Mode.MULTIPLY));
+        downloadButton.setBackground(Theme.createSelectorDrawable(getThemedColor(Theme.key_inappPlayerPlayPause) & 0x19ffffff, 1, dp(14)));
+        downloadClose.setColorFilter(new PorterDuffColorFilter(getThemedColor(Theme.key_inappPlayerClose), PorterDuff.Mode.MULTIPLY));
+        downloadClose.setBackground(Theme.createSelectorDrawable(getThemedColor(Theme.key_inappPlayerClose) & 0x19ffffff, 1, dp(14)));
+        downloadProgress.setProgressColor(getThemedColor(Theme.key_inappPlayerPlayPause));
+        downloadProgress.setBackColor(0);
         compassButton.setColors(getThemedColor(Theme.key_text_RedRegular), getThemedColor(Theme.key_location_actionIcon));
     }
 
