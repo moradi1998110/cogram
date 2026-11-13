@@ -125,6 +125,9 @@ dump_screen 7-maps-offer
 if tap_view 'content-desc="Download"'; then
   sleep 4
   dump_screen 7-maps-downloading
+  # The download runs in OsmAnd's foreground service, so it goes on when the app is in the background.
+  adb shell dumpsys activity services "$PACKAGE" > "$OUT/services-downloading.txt" || true
+  adb shell dumpsys notification --noredact > "$OUT/notifications-downloading.txt" || true
   sleep 40
   dump_screen 7-maps-downloaded
 fi

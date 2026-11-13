@@ -49,6 +49,38 @@ with open(path, 'w') as f:
     json.dump(data, f, indent=2)
 print('Bundled assets: %d -> %d' % (before, len(data['assets'])))
 EOF
+# OsmAnd's map downloads run in its foreground service so they go on when the app is in the background. OsmAnd's
+# library manifest leaves the service to OsmAnd's app manifest, so it is added here, not exported. The download
+# notification opens OsmAnd's download screen, which Phogram does not have; it opens Phogram instead.
+python3 - <<'EOF'
+path = 'osmand/android/OsmAnd/AndroidManifest-library.xml'
+with open(path) as f:
+    text = f.read()
+service = '''
+	<uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+	<application>
+		<service
+			android:name="net.osmand.plus.download.DownloadService"
+			android:stopWithTask="false"
+			android:exported="false"
+			android:foregroundServiceType="dataSync" />
+	</application>
+</manifest>'''
+assert text.count('</manifest>') == 1
+with open(path, 'w') as f:
+    f.write(text.replace('</manifest>', service))
+print('Download service added to the library manifest')
+
+path = 'osmand/android/OsmAnd/src/net/osmand/plus/notifications/DownloadNotification.java'
+with open(path) as f:
+    text = f.read()
+old = 'Intent intent = new Intent(app, DownloadActivity.class);'
+assert text.count(old) == 1
+text = text.replace(old, 'Intent intent = app.getPackageManager().getLaunchIntentForPackage(app.getPackageName());')
+with open(path, 'w') as f:
+    f.write(text)
+print('Download notification opens the app')
+EOF
 # OsmAnd's XML parser library also carries the XmlPull interfaces Android already has, and R8 refuses an app
 # that redefines them. The app takes this copy without them.
 mkdir -p osmand/libs
