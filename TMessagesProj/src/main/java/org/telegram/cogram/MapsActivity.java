@@ -22,12 +22,16 @@ import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewGroup;
+import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
+import androidx.recyclerview.widget.LinearLayoutManager;
+import androidx.recyclerview.widget.RecyclerView;
 import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
@@ -39,17 +43,25 @@ import org.telegram.messenger.LocaleController;
 import org.telegram.messenger.MessagesController;
 import org.telegram.messenger.R;
 import org.telegram.messenger.utils.ViewOutlineProviderImpl;
+import org.telegram.tgnet.TLRPC;
 import org.telegram.ui.ActionBar.ActionBar;
+import org.telegram.ui.ActionBar.ActionBarMenu;
+import org.telegram.ui.ActionBar.ActionBarMenuItem;
 import org.telegram.ui.ActionBar.AlertDialog;
 import org.telegram.ui.ActionBar.BaseFragment;
 import org.telegram.ui.ActionBar.Theme;
+import org.telegram.ui.Cells.LocationCell;
 import org.telegram.ui.Components.AlertsCreator;
+import org.telegram.ui.Components.EditTextBoldCursor;
 import org.telegram.ui.Components.LayoutHelper;
 import org.telegram.ui.Components.LineProgressView;
 import org.telegram.ui.Components.RadialProgressView;
+import org.telegram.ui.Components.RecyclerListView;
 import org.telegram.ui.Components.ScaleStateListAnimator;
 import org.telegram.ui.DialogsActivity;
 import org.telegram.ui.MainTabsActivity;
+
+import java.util.ArrayList;
 
 /**
  * Phogram's Maps tab, in the slot where Telegram has Settings (Settings opens from the chats page's options
@@ -86,6 +98,23 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
     private ImageView downloadClose;
     private LineProgressView downloadProgress;
     private String dismissedDownload;
+
+    private static final long SEARCH_DELAY_MS = 300;
+    private ActionBarMenuItem searchItem;
+    private RecyclerListView searchList;
+    private SearchAdapter searchAdapter;
+    private TextView searchEmpty;
+    private String searchQuery = "";
+    private boolean searchDone;
+    private final ArrayList<MapEngine.Place> searchResults = new ArrayList<>();
+    private final Runnable searchRunnable = this::runSearch;
+
+    private LinearLayout placeCard;
+    private LocationCell placeCell;
+    private ImageView placeClose;
+    private TextView placeShare;
+    private ImageView placePin;
+    private MapEngine.Place shownPlace;
     private View mapView;
 
     private MapEngine mapEngine;
@@ -144,6 +173,47 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         actionBar.setOccupyStatusBar(true);
         actionBar.setBackgroundColor(Color.TRANSPARENT);
         actionBar.setBackground(null);
+
+        // Telegram's header search, as on its location page: the field opens in the header and the results list
+        // covers the map until a place is picked.
+        final ActionBarMenu menu = actionBar.createMenu();
+        searchItem = menu.addItem(0, R.drawable.outline_header_search, getResourceProvider()).setIsSearchField(true)
+                .setActionBarMenuItemSearchListener(new ActionBarMenuItem.ActionBarMenuItemSearchListener() {
+                    @Override
+                    public void onSearchExpand() {
+                        searchList.setVisibility(View.VISIBLE);
+                        updateSearchEmpty();
+                    }
+
+                    @Override
+                    public void onSearchCollapse() {
+                        AndroidUtilities.cancelRunOnUIThread(searchRunnable);
+                        searchQuery = "";
+                        searchResults.clear();
+                        searchAdapter.notifyDataSetChanged();
+                        searchItem.setShowSearchProgress(false);
+                        searchList.setVisibility(View.GONE);
+                        searchEmpty.setVisibility(View.GONE);
+                    }
+
+                    @Override
+                    public void onTextChanged(EditText editText) {
+                        searchQuery = editText.getText().toString().trim();
+                        AndroidUtilities.cancelRunOnUIThread(searchRunnable);
+                        if (searchQuery.isEmpty()) {
+                            searchResults.clear();
+                            searchAdapter.notifyDataSetChanged();
+                            searchItem.setShowSearchProgress(false);
+                            updateSearchEmpty();
+                        } else {
+                            searchItem.setShowSearchProgress(true);
+                            AndroidUtilities.runOnUIThread(searchRunnable, SEARCH_DELAY_MS);
+                        }
+                    }
+                });
+        searchItem.setSearchFieldHint(getString(R.string.Search));
+        searchItem.setContentDescription(getString(R.string.Search));
+        searchItem.setVisibility(View.GONE);
 
         // The map fills the whole page; the header and the tab bar float above it.
         mapContainer = new FrameLayout(context);
@@ -257,6 +327,67 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         downloadCard.addView(downloadProgress, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, 2, Gravity.BOTTOM));
         contentView.addView(downloadCard, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, 36, Gravity.TOP));
 
+        // The pin of the place picked from the search: Telegram's map pin, its point on the place.
+        placePin = new ImageView(context);
+        placePin.setImageResource(R.drawable.map_pin2);
+        placePin.setVisibility(View.GONE);
+        contentView.addView(placePin, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, Gravity.LEFT | Gravity.TOP));
+
+        // The place card, above the tab bar: Telegram's location row with the place's name and address, and its
+        // share button.
+        placeCard = new LinearLayout(context);
+        placeCard.setOrientation(LinearLayout.VERTICAL);
+        placeCard.setTranslationZ(dp(2));
+        placeCard.setVisibility(View.GONE);
+        placeCard.setClickable(true);
+        final FrameLayout placeHeader = new FrameLayout(context);
+        placeCell = new LocationCell(context, false, getResourceProvider());
+        placeHeader.addView(placeCell, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.TOP, 0, 0, 40, 0));
+        placeClose = new ImageView(context);
+        placeClose.setImageResource(R.drawable.miniplayer_close);
+        placeClose.setScaleType(ImageView.ScaleType.CENTER);
+        placeClose.setContentDescription(getString(R.string.Close));
+        placeClose.setOnClickListener(v -> hidePlace());
+        placeHeader.addView(placeClose, LayoutHelper.createFrame(36, 36, Gravity.RIGHT | Gravity.CENTER_VERTICAL, 0, 0, 8, 0));
+        placeCard.addView(placeHeader, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT));
+        placeShare = new TextView(context);
+        placeShare.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 14);
+        placeShare.setTypeface(AndroidUtilities.bold());
+        placeShare.setGravity(Gravity.CENTER);
+        placeShare.setText(getString(R.string.PhogramMapsSharePlace));
+        ScaleStateListAnimator.apply(placeShare, 0.02f, 1.2f);
+        placeShare.setOnClickListener(v -> sharePlace());
+        placeCard.addView(placeShare, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 44, 14, 2, 14, 14));
+        contentView.addView(placeCard, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.BOTTOM, 8, 0, 8, 8));
+
+        // The search results, between the header and the tab bar.
+        searchList = new RecyclerListView(context, getResourceProvider());
+        searchList.setLayoutManager(new LinearLayoutManager(context, LinearLayoutManager.VERTICAL, false));
+        searchList.setAdapter(searchAdapter = new SearchAdapter(context));
+        searchList.setClipToPadding(false);
+        searchList.setVisibility(View.GONE);
+        searchList.setOnItemClickListener((view, position) -> {
+            if (position < 0 || position >= searchResults.size()) return;
+            final MapEngine.Place place = searchResults.get(position);
+            actionBar.closeSearchField();
+            showPlace(place);
+        });
+        searchList.setOnScrollListener(new RecyclerView.OnScrollListener() {
+            @Override
+            public void onScrollStateChanged(@NonNull RecyclerView recyclerView, int newState) {
+                if (newState == RecyclerView.SCROLL_STATE_DRAGGING) {
+                    AndroidUtilities.hideKeyboard(searchItem.getSearchField());
+                }
+            }
+        });
+        contentView.addView(searchList, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT, Gravity.TOP));
+        searchEmpty = new TextView(context);
+        searchEmpty.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 15);
+        searchEmpty.setGravity(Gravity.CENTER);
+        searchEmpty.setPadding(dp(32), 0, dp(32), 0);
+        searchEmpty.setVisibility(View.GONE);
+        contentView.addView(searchEmpty, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT, Gravity.TOP));
+
         final boolean engineAvailable = MapEngines.isAvailable();
         emptyView.setVisibility(engineAvailable ? View.GONE : View.VISIBLE);
         progressView.setVisibility(engineAvailable ? View.VISIBLE : View.GONE);
@@ -328,6 +459,125 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         }
     }
 
+    private void runSearch() {
+        if (mapEngine == null || searchQuery.isEmpty()) return;
+        final String query = searchQuery;
+        mapEngine.search(query, (resultQuery, places) -> {
+            if (!resultQuery.equals(searchQuery)) return;
+            searchResults.clear();
+            searchResults.addAll(places);
+            searchDone = true;
+            searchAdapter.notifyDataSetChanged();
+            searchItem.setShowSearchProgress(false);
+            updateSearchEmpty();
+        });
+        searchDone = false;
+    }
+
+    private void updateSearchEmpty() {
+        if (searchEmpty == null) return;
+        // Nothing found says so; nothing typed yet leaves the list blank, as Telegram's search does.
+        final boolean show = searchList.getVisibility() == View.VISIBLE && searchDone && !searchQuery.isEmpty() && searchResults.isEmpty();
+        searchEmpty.setText(getString(R.string.NoResult));
+        searchEmpty.setVisibility(show ? View.VISIBLE : View.GONE);
+    }
+
+    private void showPlace(MapEngine.Place place) {
+        if (mapEngine == null) return;
+        shownPlace = place;
+        final TLRPC.TL_messageMediaVenue venue = new TLRPC.TL_messageMediaVenue();
+        venue.title = place.name;
+        venue.address = place.address;
+        venue.icon = "pin";
+        placeCell.setLocation(venue, null, 2, false, false);
+        placeCard.setVisibility(View.VISIBLE);
+        placePin.setVisibility(View.INVISIBLE);
+        mapEngine.showPlace(place, (x, y) -> {
+            if (shownPlace != place) return;
+            // The pin's point is the middle of its bottom edge.
+            placePin.setTranslationX(x - placePin.getWidth() / 2f);
+            placePin.setTranslationY(y - placePin.getHeight());
+            placePin.setVisibility(View.VISIBLE);
+        });
+    }
+
+    private void hidePlace() {
+        shownPlace = null;
+        placeCard.setVisibility(View.GONE);
+        placePin.setVisibility(View.GONE);
+        if (mapEngine != null) {
+            mapEngine.showPlace(null, null);
+        }
+    }
+
+    private void sharePlace() {
+        final MapEngine.Place place = shownPlace;
+        if (place == null || getParentActivity() == null) return;
+        // A link any map app or browser opens: OpenStreetMap's page with a marker on the place.
+        final String lat = String.format(java.util.Locale.US, "%.6f", place.latitude);
+        final String lon = String.format(java.util.Locale.US, "%.6f", place.longitude);
+        final String link = "https://www.openstreetmap.org/?mlat=" + lat + "&mlon=" + lon + "#map=17/" + lat + "/" + lon;
+        final StringBuilder text = new StringBuilder(place.name);
+        if (!android.text.TextUtils.isEmpty(place.address)) {
+            text.append('\n').append(place.address);
+        }
+        text.append('\n').append(link);
+        try {
+            final Intent intent = new Intent(Intent.ACTION_SEND);
+            intent.setType("text/plain");
+            intent.putExtra(Intent.EXTRA_TEXT, text.toString());
+            getParentActivity().startActivity(Intent.createChooser(intent, getString(R.string.PhogramMapsSharePlace)));
+        } catch (Exception e) {
+            FileLog.e(e);
+        }
+    }
+
+    @Override
+    public boolean onBackPressed(boolean invoked) {
+        if (shownPlace != null) {
+            if (invoked) hidePlace();
+            return false;
+        }
+        return super.onBackPressed(invoked);
+    }
+
+    private class SearchAdapter extends RecyclerListView.SelectionAdapter {
+
+        private final Context context;
+
+        SearchAdapter(Context context) {
+            this.context = context;
+        }
+
+        @Override
+        public int getItemCount() {
+            return searchResults.size();
+        }
+
+        @Override
+        public boolean isEnabled(RecyclerView.ViewHolder holder) {
+            return true;
+        }
+
+        @NonNull
+        @Override
+        public RecyclerView.ViewHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
+            final LocationCell cell = new LocationCell(context, false, getResourceProvider());
+            cell.setLayoutParams(new RecyclerView.LayoutParams(RecyclerView.LayoutParams.MATCH_PARENT, RecyclerView.LayoutParams.WRAP_CONTENT));
+            return new RecyclerListView.Holder(cell);
+        }
+
+        @Override
+        public void onBindViewHolder(@NonNull RecyclerView.ViewHolder holder, int position) {
+            final MapEngine.Place place = searchResults.get(position);
+            final TLRPC.TL_messageMediaVenue venue = new TLRPC.TL_messageMediaVenue();
+            venue.title = place.name;
+            venue.address = place.address;
+            venue.icon = "pin";
+            ((LocationCell) holder.itemView).setLocation(venue, null, position, position != searchResults.size() - 1, false);
+        }
+    }
+
     private void onDownloadAction() {
         if (mapEngine == null) return;
         final MapEngine.Download offer = mapEngine.getOfferedDownload();
@@ -344,6 +594,7 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         progressView.setVisibility(View.GONE);
         mapContainer.setVisibility(View.VISIBLE);
         locationButton.setVisibility(View.VISIBLE);
+        searchItem.setVisibility(View.VISIBLE);
         updateCompass();
         updateDownloadCard();
     }
@@ -412,6 +663,11 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         ((FrameLayout.LayoutParams) downloadCard.getLayoutParams()).topMargin = padding[1];
         divider.topMargin = padding[1] + strip;
         ((FrameLayout.LayoutParams) compassButton.getLayoutParams()).topMargin = padding[1] + strip + dp(12);
+        // The results start under the header and scroll out from under the tab bar.
+        ((FrameLayout.LayoutParams) searchList.getLayoutParams()).topMargin = padding[1];
+        searchList.setPadding(0, 0, 0, padding[3]);
+        searchEmpty.setPadding(dp(32), padding[1], dp(32), padding[3]);
+        ((FrameLayout.LayoutParams) placeCard.getLayoutParams()).bottomMargin = padding[3] + dp(8);
         contentView.requestLayout();
     }
 
@@ -429,6 +685,20 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         locationButton.setBackground(Theme.createSimpleSelectorCircleDrawable(dp(40), getThemedColor(Theme.key_location_actionBackground), getThemedColor(Theme.key_location_actionPressedBackground)));
         locationButton.setColorFilter(new PorterDuffColorFilter(getThemedColor(Theme.key_location_actionActiveIcon), PorterDuff.Mode.MULTIPLY));
         compassButton.setBackground(Theme.createSimpleSelectorCircleDrawable(dp(40), getThemedColor(Theme.key_location_actionBackground), getThemedColor(Theme.key_location_actionPressedBackground)));
+        searchList.setBackgroundColor(getThemedColor(Theme.key_windowBackgroundWhite));
+        searchEmpty.setTextColor(getThemedColor(Theme.key_windowBackgroundWhiteGrayText));
+        final EditTextBoldCursor searchField = searchItem.getSearchField();
+        searchField.setTextColor(getThemedColor(Theme.key_windowBackgroundWhiteBlackText));
+        searchField.setCursorColor(getThemedColor(Theme.key_windowBackgroundWhiteBlackText));
+        searchField.setHintTextColor(getThemedColor(Theme.key_windowBackgroundWhiteHintText));
+        final GradientDrawable placeBackground = new GradientDrawable();
+        placeBackground.setCornerRadius(dp(14));
+        placeBackground.setColor(getThemedColor(Theme.key_windowBackgroundWhite));
+        placeCard.setBackground(placeBackground);
+        placeClose.setColorFilter(new PorterDuffColorFilter(getThemedColor(Theme.key_windowBackgroundWhiteGrayIcon), PorterDuff.Mode.MULTIPLY));
+        placeClose.setBackground(Theme.createSelectorDrawable(getThemedColor(Theme.key_listSelector), 1, dp(14)));
+        placeShare.setTextColor(getThemedColor(Theme.key_featuredStickers_buttonText));
+        placeShare.setBackground(Theme.createSimpleSelectorRoundRectDrawable(dp(8), getThemedColor(Theme.key_featuredStickers_addButton), getThemedColor(Theme.key_featuredStickers_addButtonPressed)));
         // The player strip's colors.
         downloadCard.setBackgroundColor(getThemedColor(Theme.key_inappPlayerBackground));
         downloadTitle.setTextColor(getThemedColor(Theme.key_inappPlayerTitle));

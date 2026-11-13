@@ -11664,4 +11664,5 @@
     <string name="PhogramMapsOffline">Offline map · %1$s</string>
     <string name="PhogramMapsDownloading">Downloading… %1$d%%</string>
     <string name="PhogramMapsDownload">Download</string>
+    <string name="PhogramMapsSharePlace">Share location</string>
 </resources>

@@ -54,6 +54,37 @@ public interface MapEngine {
 
     void cancelOfferedDownload();
 
+    /** A place found by the search. */
+    final class Place {
+        public final String name;
+        public final String address;
+        public final double latitude;
+        public final double longitude;
+
+        public Place(String name, String address, double latitude, double longitude) {
+            this.name = name;
+            this.address = address;
+            this.latitude = latitude;
+            this.longitude = longitude;
+        }
+    }
+
+    interface SearchCallback {
+        /** On the main thread, for the latest query only. */
+        void onResults(String query, java.util.List<Place> places);
+    }
+
+    /** Searches the downloaded maps around the map's center, offline. */
+    void search(String query, SearchCallback callback);
+
+    interface PinListener {
+        /** On the main thread: where the shown place is on the map view, in pixels. */
+        void onPinMoved(float x, float y);
+    }
+
+    /** Moves the map to the place and reports where it is as the map moves; null stops that. */
+    void showPlace(Place place, PinListener listener);
+
     void onResume();
 
     void onPause();

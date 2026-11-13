@@ -136,6 +136,18 @@ adb emu geo fix 44.3661 33.3152 || true
 tap_view 'content-desc="My location"' || true
 sleep 5
 adb exec-out screencap -p > "$OUT/7-maps-location.png" || true
+# Offline search in the downloaded world map, then the place card of the first result.
+if tap_view 'content-desc="Search"'; then
+  sleep 2
+  adb shell input text Mosul
+  sleep 6
+  dump_screen 7-maps-search
+  adb shell input tap 160 140
+  sleep 5
+  dump_screen 7-maps-place
+  adb shell input keyevent 4
+  sleep 2
+fi
 tap_view 'text="Chats"' || true
 sleep 3
 tap_view 'content-desc="More options"' || true

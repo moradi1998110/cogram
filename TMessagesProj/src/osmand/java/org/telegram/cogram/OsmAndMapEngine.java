@@ -1,11 +1,16 @@
 package org.telegram.cogram;
 
 import android.content.Context;
+import android.text.TextUtils;
 import android.view.View;
 
 import androidx.annotation.NonNull;
 
 import net.osmand.data.LatLon;
+import net.osmand.data.RotatedTileBox;
+import net.osmand.search.SearchUICore;
+import net.osmand.search.core.SearchResult;
+import net.osmand.plus.settings.backend.OsmandSettings;
 import net.osmand.map.IMapLocationListener;
 import net.osmand.plus.AppInitializeListener;
 import net.osmand.plus.AppInitializer;
@@ -25,6 +30,8 @@ import org.telegram.messenger.FileLog;
 import org.telegram.messenger.LocaleController;
 import org.telegram.messenger.R;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -51,6 +58,8 @@ final class OsmAndMapEngine implements MapEngine {
     /** Below this zoom the center says little about which region the user means. */
     private static final int REGION_OFFER_MIN_ZOOM = 5;
     private static final long OFFER_DELAY_MS = 600;
+    private static final int MAX_SEARCH_RESULTS = 40;
+    private static final int PLACE_ZOOM = 16;
 
     private final OsmandApplication app;
     private final MapViewWithLayers view;
@@ -240,6 +249,92 @@ final class OsmAndMapEngine implements MapEngine {
         }
     }
 
+    // Search: OsmAnd's own offline search over the downloaded maps, around the map's center, in the app's language.
+
+    private final ExecutorService searchExecutor = Executors.newSingleThreadExecutor();
+    private volatile int searchRequest;
+
+    @Override
+    public void search(String query, SearchCallback callback) {
+        final int request = ++searchRequest;
+        final LatLon center = new LatLon(mapView.getLatitude(), mapView.getLongitude());
+        searchExecutor.execute(() -> {
+            if (request != searchRequest) return;
+            final List<Place> places = new ArrayList<>();
+            try {
+                final SearchUICore core = app.getSearchUICore().getCore();
+                final OsmandSettings settings = app.getSettings();
+                core.updateSettings(core.getSearchSettings().setOriginalLocation(center)
+                        .setLangs(app.getLanguage(), settings.MAP_PREFERRED_LOCALE.get(), settings.MAP_TRANSLITERATE_NAMES.get()));
+                final SearchUICore.SearchResultCollection results = core.immediateSearch(query, center);
+                for (SearchResult result : results.getCurrentSearchResults()) {
+                    if (request != searchRequest) return;
+                    if (result.location == null || TextUtils.isEmpty(result.localeName)) continue;
+                    places.add(new Place(result.localeName, describe(result), result.location.getLatitude(), result.location.getLongitude()));
+                    if (places.size() >= MAX_SEARCH_RESULTS) break;
+                }
+            } catch (Exception e) {
+                FileLog.e(e);
+            }
+            AndroidUtilities.runOnUIThread(() -> {
+                if (!destroyed && request == searchRequest) {
+                    callback.onResults(query, places);
+                }
+            });
+        });
+    }
+
+    private static String describe(SearchResult result) {
+        final List<String> parts = new ArrayList<>();
+        for (String part : new String[] { result.addressName, result.localeRelatedObjectName, result.cityName }) {
+            if (!TextUtils.isEmpty(part) && !part.equals(result.localeName) && !parts.contains(part)) {
+                parts.add(part);
+            }
+        }
+        return TextUtils.join(", ", parts);
+    }
+
+    // The shown place: the map moves to it, and each map frame reports where it is so the page keeps its pin on it.
+
+    private Place shownPlace;
+    private PinListener pinListener;
+    private float lastPinX = Float.NaN;
+    private float lastPinY = Float.NaN;
+
+    private final OsmandMapTileView.OnDrawMapListener pinTracker = () -> {
+        final Place place = shownPlace;
+        if (place == null) return;
+        final RotatedTileBox box = mapView.getRotatedTileBox();
+        final float x = box.getPixXFromLatLon(place.latitude, place.longitude);
+        final float y = box.getPixYFromLatLon(place.latitude, place.longitude);
+        AndroidUtilities.runOnUIThread(() -> reportPin(place, x, y));
+    };
+
+    private void reportPin(Place place, float x, float y) {
+        if (destroyed || place != shownPlace || pinListener == null) return;
+        if (x == lastPinX && y == lastPinY) return;
+        lastPinX = x;
+        lastPinY = y;
+        pinListener.onPinMoved(x, y);
+    }
+
+    @Override
+    public void showPlace(Place place, PinListener listener) {
+        shownPlace = place;
+        pinListener = listener;
+        lastPinX = Float.NaN;
+        lastPinY = Float.NaN;
+        if (place == null) {
+            mapView.setOnDrawMapListener(null);
+            return;
+        }
+        mapView.setOnDrawMapListener(pinTracker);
+        // The map no longer follows the device's position, or it would pull away from the place.
+        app.getMapViewTrackingUtilities().setMapLinkedToLocation(false);
+        mapView.getAnimatedDraggingThread().startMoving(place.latitude, place.longitude, Math.max(mapView.getZoom(), PLACE_ZOOM));
+        mapView.refreshMap();
+    }
+
     @Override
     public void cancelOfferedDownload() {
         if (offeredItem != null) {
@@ -328,6 +423,10 @@ final class OsmAndMapEngine implements MapEngine {
             app.getDownloadThread().resetUiActivity(downloadEvents);
         }
         offerExecutor.shutdown();
+        searchRequest++;
+        searchExecutor.shutdown();
+        shownPlace = null;
+        mapView.setOnDrawMapListener(null);
         stopFollowingLocation();
         view.onDestroy();
         app.getMapViewTrackingUtilities().setMapView(null);
