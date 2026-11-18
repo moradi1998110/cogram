@@ -304,7 +304,8 @@ final class OsmAndMapEngine implements MapEngine {
     private final OsmandMapTileView.OnDrawMapListener pinTracker = () -> {
         final Place place = shownPlace;
         if (place == null) return;
-        final RotatedTileBox box = mapView.getRotatedTileBox();
+        // The field is set in the constructor, before any frame can be drawn.
+        final RotatedTileBox box = this.mapView.getRotatedTileBox();
         final float x = box.getPixXFromLatLon(place.latitude, place.longitude);
         final float y = box.getPixYFromLatLon(place.latitude, place.longitude);
         AndroidUtilities.runOnUIThread(() -> reportPin(place, x, y));
