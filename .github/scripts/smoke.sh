@@ -145,10 +145,24 @@ if tap_view 'content-desc="Search"'; then
   adb shell input tap 160 140
   sleep 5
   dump_screen 7-maps-place
+  # The place goes to the demo chat as a location, through Telegram's chat picker.
+  if tap_view 'text="Send to chat"'; then
+    sleep 3
+    dump_screen 7-maps-picker
+    adb shell input tap 160 160
+    sleep 4
+    dump_screen 7-maps-sent
+  fi
   adb shell input keyevent 4
   sleep 2
 fi
 tap_view 'text="Chats"' || true
+sleep 3
+# The demo chat with the location just sent, shown as Telegram's location bubble.
+adb shell input tap 160 160
+sleep 4
+dump_screen 7-chat-location
+adb shell input keyevent 4
 sleep 3
 tap_view 'content-desc="More options"' || true
 sleep 2

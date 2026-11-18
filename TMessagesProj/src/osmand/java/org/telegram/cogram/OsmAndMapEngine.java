@@ -401,6 +401,15 @@ final class OsmAndMapEngine implements MapEngine {
     @Override
     public void onResume() {
         resumed = true;
+        if (ready) {
+            // OsmAnd has one map for the whole app. Another map screen (a location opened from a chat) takes it
+            // over while it is open, so this one takes back its drawing, touches, tracking and listeners.
+            mapView.setupTouchDetectors(view.getContext());
+            view.setupRenderingView();
+            app.getMapViewTrackingUtilities().setMapView(mapView);
+            app.getDownloadThread().setUiActivity(downloadEvents);
+            mapView.setOnDrawMapListener(shownPlace != null ? pinTracker : null);
+        }
         mapView.refreshMap(true);
         view.onResume();
         startFollowingLocation();

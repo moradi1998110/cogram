@@ -1278,4 +1278,7 @@
     <string name="PhogramMapsDownloading">جارٍ التنزيل… %1$d%%</string>
     <string name="PhogramMapsDownload">تنزيل</string>
     <string name="PhogramMapsSharePlace">مشاركة الموقع</string>
+    <string name="PhogramMapsSendToChat">إرسال إلى محادثة</string>
+    <string name="PhogramMapsSent">أُرسل الموقع.</string>
+    <string name="PhogramMapsSharedLocation">موقع</string>
 </resources>

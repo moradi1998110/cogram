@@ -11665,4 +11665,7 @@
     <string name="PhogramMapsDownloading">Downloading… %1$d%%</string>
     <string name="PhogramMapsDownload">Download</string>
     <string name="PhogramMapsSharePlace">Share location</string>
+    <string name="PhogramMapsSendToChat">Send to chat</string>
+    <string name="PhogramMapsSent">Location sent.</string>
+    <string name="PhogramMapsSharedLocation">Location</string>
 </resources>

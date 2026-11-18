@@ -40,8 +40,11 @@ import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.ApplicationLoader;
 import org.telegram.messenger.FileLog;
 import org.telegram.messenger.LocaleController;
+import org.telegram.messenger.MessageObject;
 import org.telegram.messenger.MessagesController;
+import org.telegram.messenger.MessagesStorage;
 import org.telegram.messenger.R;
+import org.telegram.messenger.SendMessagesHelper;
 import org.telegram.messenger.utils.ViewOutlineProviderImpl;
 import org.telegram.tgnet.TLRPC;
 import org.telegram.ui.ActionBar.ActionBar;
@@ -52,6 +55,7 @@ import org.telegram.ui.ActionBar.BaseFragment;
 import org.telegram.ui.ActionBar.Theme;
 import org.telegram.ui.Cells.LocationCell;
 import org.telegram.ui.Components.AlertsCreator;
+import org.telegram.ui.Components.BulletinFactory;
 import org.telegram.ui.Components.EditTextBoldCursor;
 import org.telegram.ui.Components.LayoutHelper;
 import org.telegram.ui.Components.LineProgressView;
@@ -113,6 +117,7 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
     private LocationCell placeCell;
     private ImageView placeClose;
     private TextView placeShare;
+    private ImageView placeShareOut;
     private ImageView placePin;
     private MapEngine.Place shownPlace;
     private View mapView;
@@ -137,6 +142,32 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
 
     private final Runnable createMapEngine = this::createMapEngine;
 
+    private static final String ARG_LATITUDE = "placeLatitude";
+    private static final String ARG_LONGITUDE = "placeLongitude";
+    private static final String ARG_NAME = "placeName";
+    private static final String ARG_ADDRESS = "placeAddress";
+    private MapEngine.Place openedPlace;
+
+    /**
+     * The map screen a location in a chat opens, in place of Telegram's Google map: OsmAnd's map on the place,
+     * with its card. Null when this build has no map engine, so the chat keeps Telegram's own screen.
+     */
+    public static MapsActivity forLocation(MessageObject message) {
+        if (!MapEngines.isAvailable() || message == null || message.messageOwner == null || message.messageOwner.media == null
+                || !(message.messageOwner.media.geo instanceof TLRPC.TL_geoPoint)) {
+            return null;
+        }
+        final TLRPC.MessageMedia media = message.messageOwner.media;
+        final Bundle args = new Bundle();
+        args.putDouble(ARG_LATITUDE, media.geo.lat);
+        args.putDouble(ARG_LONGITUDE, media.geo._long);
+        final boolean venue = media instanceof TLRPC.TL_messageMediaVenue && !android.text.TextUtils.isEmpty(media.title);
+        args.putString(ARG_NAME, venue ? media.title : getString(R.string.PhogramMapsSharedLocation));
+        args.putString(ARG_ADDRESS, venue && !android.text.TextUtils.isEmpty(media.address) ? media.address
+                : String.format(java.util.Locale.US, "%.5f, %.5f", media.geo.lat, media.geo._long));
+        return new MapsActivity(args);
+    }
+
     public MapsActivity(Bundle args) {
         super(args);
     }
@@ -145,6 +176,10 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
     public boolean onFragmentCreate() {
         if (arguments != null) {
             hasMainTabs = arguments.getBoolean("hasMainTabs", false);
+            if (arguments.containsKey(ARG_LATITUDE)) {
+                openedPlace = new MapEngine.Place(arguments.getString(ARG_NAME, ""), arguments.getString(ARG_ADDRESS, ""),
+                        arguments.getDouble(ARG_LATITUDE), arguments.getDouble(ARG_LONGITUDE));
+            }
         }
         return super.onFragmentCreate();
     }
@@ -342,7 +377,14 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         placeCard.setClickable(true);
         final FrameLayout placeHeader = new FrameLayout(context);
         placeCell = new LocationCell(context, false, getResourceProvider());
-        placeHeader.addView(placeCell, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.TOP, 0, 0, 40, 0));
+        placeHeader.addView(placeCell, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.TOP, 0, 0, 80, 0));
+        // Sharing outside the app sits beside the close button; sending into a chat is the card's main button.
+        placeShareOut = new ImageView(context);
+        placeShareOut.setImageResource(R.drawable.msg_share);
+        placeShareOut.setScaleType(ImageView.ScaleType.CENTER);
+        placeShareOut.setContentDescription(getString(R.string.PhogramMapsSharePlace));
+        placeShareOut.setOnClickListener(v -> sharePlace());
+        placeHeader.addView(placeShareOut, LayoutHelper.createFrame(36, 36, Gravity.RIGHT | Gravity.CENTER_VERTICAL, 0, 0, 44, 0));
         placeClose = new ImageView(context);
         placeClose.setImageResource(R.drawable.miniplayer_close);
         placeClose.setScaleType(ImageView.ScaleType.CENTER);
@@ -354,9 +396,9 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         placeShare.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 14);
         placeShare.setTypeface(AndroidUtilities.bold());
         placeShare.setGravity(Gravity.CENTER);
-        placeShare.setText(getString(R.string.PhogramMapsSharePlace));
+        placeShare.setText(getString(R.string.PhogramMapsSendToChat));
         ScaleStateListAnimator.apply(placeShare, 0.02f, 1.2f);
-        placeShare.setOnClickListener(v -> sharePlace());
+        placeShare.setOnClickListener(v -> sendPlaceToChat());
         placeCard.addView(placeShare, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 44, 14, 2, 14, 14));
         contentView.addView(placeCard, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.BOTTOM, 8, 0, 8, 8));
 
@@ -532,9 +574,39 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         }
     }
 
+    /** Telegram's chat picker, then the place goes to each picked chat as a venue, as Telegram sends one. */
+    private void sendPlaceToChat() {
+        final MapEngine.Place place = shownPlace;
+        if (place == null) return;
+        final Bundle args = new Bundle();
+        args.putBoolean("onlySelect", true);
+        args.putInt("dialogsType", DialogsActivity.DIALOGS_TYPE_FORWARD);
+        final DialogsActivity picker = new DialogsActivity(args);
+        picker.setDelegate((fragment, dids, message, param, notify, scheduleDate, scheduleRepeatPeriod, topicsFragment) -> {
+            for (MessagesStorage.TopicKey key : dids) {
+                final TLRPC.TL_messageMediaVenue venue = new TLRPC.TL_messageMediaVenue();
+                venue.geo = new TLRPC.TL_geoPoint();
+                venue.geo.lat = place.latitude;
+                venue.geo._long = place.longitude;
+                venue.title = place.name;
+                venue.address = place.address == null ? "" : place.address;
+                venue.provider = "";
+                venue.venue_id = "";
+                venue.venue_type = "";
+                SendMessagesHelper.getInstance(currentAccount).sendMessage(
+                        SendMessagesHelper.SendMessageParams.of(venue, key.dialogId, null, null, null, null, notify, scheduleDate, 0));
+            }
+            fragment.finishFragment();
+            BulletinFactory.of(this).createSimpleBulletin(R.raw.forward, getString(R.string.PhogramMapsSent)).show();
+            return true;
+        });
+        presentFragment(picker);
+    }
+
     @Override
     public boolean onBackPressed(boolean invoked) {
-        if (shownPlace != null) {
+        // On the screen a chat's location opened, back leaves the screen as Telegram's location screen does.
+        if (shownPlace != null && hasMainTabs) {
             if (invoked) hidePlace();
             return false;
         }
@@ -597,6 +669,10 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         searchItem.setVisibility(View.VISIBLE);
         updateCompass();
         updateDownloadCard();
+        if (openedPlace != null) {
+            showPlace(openedPlace);
+            openedPlace = null;
+        }
     }
 
     private void applyMapPadding() {
@@ -697,6 +773,8 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         placeCard.setBackground(placeBackground);
         placeClose.setColorFilter(new PorterDuffColorFilter(getThemedColor(Theme.key_windowBackgroundWhiteGrayIcon), PorterDuff.Mode.MULTIPLY));
         placeClose.setBackground(Theme.createSelectorDrawable(getThemedColor(Theme.key_listSelector), 1, dp(14)));
+        placeShareOut.setColorFilter(new PorterDuffColorFilter(getThemedColor(Theme.key_windowBackgroundWhiteGrayIcon), PorterDuff.Mode.MULTIPLY));
+        placeShareOut.setBackground(Theme.createSelectorDrawable(getThemedColor(Theme.key_listSelector), 1, dp(14)));
         placeShare.setTextColor(getThemedColor(Theme.key_featuredStickers_buttonText));
         placeShare.setBackground(Theme.createSimpleSelectorRoundRectDrawable(dp(8), getThemedColor(Theme.key_featuredStickers_addButton), getThemedColor(Theme.key_featuredStickers_addButtonPressed)));
         // The player strip's colors.

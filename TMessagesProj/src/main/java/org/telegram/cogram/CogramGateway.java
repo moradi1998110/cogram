@@ -671,6 +671,12 @@ public final class CogramGateway {
 
     private TLObject sendMedia(TLRPC.TL_messages_sendMedia request) {
         TLRPC.InputMedia media = request.media;
+        if (media instanceof TLRPC.TL_inputMediaGeoPoint || media instanceof TLRPC.TL_inputMediaVenue) {
+            // A location goes out as Conversations sends one: the message's whole body is a geo URI. A reply would
+            // put a quote before it and turn it into plain text, so a location is sent on its own.
+            String uri = geoUri(media);
+            return uri == null ? null : backend.sendText(peerId(request.peer), uri, 0, request.random_id);
+        }
         boolean photo = media instanceof TLRPC.TL_inputMediaUploadedPhoto;
         if (!photo && !(media instanceof TLRPC.TL_inputMediaUploadedDocument) || media.file == null) {
             return null;
@@ -684,6 +690,26 @@ public final class CogramGateway {
             mime = "application/octet-stream";
         }
         return backend.sendFile(peerId(request.peer), file, mime, photo ? new ArrayList<>() : media.attributes, photo, request.random_id);
+    }
+
+    /**
+     * "geo:lat,lon", and for a named place Android's "?q=lat,lon(name)" after it, which Conversations reads as
+     * the place's label.
+     */
+    static String geoUri(TLRPC.InputMedia media) {
+        if (!(media.geo_point instanceof TLRPC.TL_inputGeoPoint)) {
+            return null;
+        }
+        String point = String.format(java.util.Locale.US, "%.6f,%.6f", media.geo_point.lat, media.geo_point._long);
+        String uri = "geo:" + point;
+        if (media instanceof TLRPC.TL_inputMediaVenue && media.title != null && !media.title.trim().isEmpty()) {
+            try {
+                String label = java.net.URLEncoder.encode(media.title.trim(), "UTF-8").replace("+", "%20");
+                uri += "?q=" + point + "(" + label + ")";
+            } catch (java.io.UnsupportedEncodingException ignored) {
+            }
+        }
+        return uri;
     }
 
     private TLObject file(TLRPC.TL_upload_getFile request) {

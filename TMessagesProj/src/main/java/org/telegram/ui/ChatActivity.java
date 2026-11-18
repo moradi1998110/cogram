@@ -41890,6 +41890,10 @@ public class ChatActivity extends BaseFragment implements
                     FileLog.e(e);
                     alertUserOpenError(message);
                 }
+            } else if (message.type == MessageObject.TYPE_GEO && org.telegram.cogram.CogramGateway.ENABLED && !message.isLiveLocation()
+                    && org.telegram.cogram.MapsActivity.forLocation(message) != null) {
+                // Phogram opens a location on OsmAnd's map, offline, in place of Telegram's Google map.
+                presentFragment(org.telegram.cogram.MapsActivity.forLocation(message));
             } else if (message.type == MessageObject.TYPE_GEO) {
                 if (!AndroidUtilities.isMapsInstalled(ChatActivity.this)) {
                     return;

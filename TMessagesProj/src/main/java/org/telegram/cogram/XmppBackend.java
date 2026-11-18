@@ -1222,6 +1222,13 @@ final class XmppBackend implements GatewayBackend {
             tl.message = "";
             TLRPC.MessageMedia sent = out ? storedMedia(tl.id) : null;
             tl.media = sent != null ? sent : media(message, tl.id, tl.date);
+        } else if (message.getType() == Message.TYPE_TEXT && message.isGeoUri()) {
+            // Conversations sends a location as a geo URI for the whole body; Telegram shows it as a location.
+            TLRPC.MessageMedia location = locationMedia(message.getBody());
+            if (location != null) {
+                tl.message = "";
+                tl.media = location;
+            }
         } else if (message.getType() == Message.TYPE_TEXT && !TEXT_UNREADABLE.equals(tl.message)) {
             Quote quote = Quote.of(message.getBody());
             int replyTo = quote == null ? 0 : quotedMessageId(message, quote);
@@ -1245,6 +1252,38 @@ final class XmppBackend implements GatewayBackend {
         // What Telegram now holds, so a later download, edit or reaction reaches it as an edit.
         snapshots.putIfAbsent(tl.id, snapshot(message));
         return tl;
+    }
+
+    /** A point, or a venue when the URI names the place as Android's "?q=lat,lon(name)" does. */
+    static TLRPC.MessageMedia locationMedia(String body) {
+        de.gultsch.common.MiniUri uri = de.gultsch.common.MiniUri.getOrNull(body == null ? null : body.trim());
+        if (!(uri instanceof de.gultsch.common.MiniUri.Geo)) {
+            return null;
+        }
+        de.gultsch.common.MiniUri.Geo geo = (de.gultsch.common.MiniUri.Geo) uri;
+        TLRPC.TL_geoPoint point = new TLRPC.TL_geoPoint();
+        point.lat = geo.getLatitude();
+        point._long = geo.getLongitude();
+        String label = geo.getLabel().orNull();
+        if (label != null) {
+            try {
+                label = java.net.URLDecoder.decode(label, "UTF-8");
+            } catch (Exception ignored) {
+            }
+        }
+        if (label == null || label.trim().isEmpty()) {
+            TLRPC.TL_messageMediaGeo media = new TLRPC.TL_messageMediaGeo();
+            media.geo = point;
+            return media;
+        }
+        TLRPC.TL_messageMediaVenue venue = new TLRPC.TL_messageMediaVenue();
+        venue.geo = point;
+        venue.title = label.trim();
+        venue.address = "";
+        venue.provider = "";
+        venue.venue_id = "";
+        venue.venue_type = "";
+        return venue;
     }
 
     /** A file or a link to one, which Conversations sends as the message's whole body. */
