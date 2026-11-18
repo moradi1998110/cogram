@@ -301,15 +301,17 @@ final class OsmAndMapEngine implements MapEngine {
     private float lastPinX = Float.NaN;
     private float lastPinY = Float.NaN;
 
-    private final OsmandMapTileView.OnDrawMapListener pinTracker = () -> {
+    // A method reference, so the map field it reads is not checked as unset in the field's initializer.
+    private final OsmandMapTileView.OnDrawMapListener pinTracker = this::trackPin;
+
+    private void trackPin() {
         final Place place = shownPlace;
         if (place == null) return;
-        // The field is set in the constructor, before any frame can be drawn.
-        final RotatedTileBox box = this.mapView.getRotatedTileBox();
+        final RotatedTileBox box = mapView.getRotatedTileBox();
         final float x = box.getPixXFromLatLon(place.latitude, place.longitude);
         final float y = box.getPixYFromLatLon(place.latitude, place.longitude);
         AndroidUtilities.runOnUIThread(() -> reportPin(place, x, y));
-    };
+    }
 
     private void reportPin(Place place, float x, float y) {
         if (destroyed || place != shownPlace || pinListener == null) return;
