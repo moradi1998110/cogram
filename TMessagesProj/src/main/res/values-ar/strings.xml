@@ -1281,4 +1281,17 @@
     <string name="PhogramMapsSendToChat">إرسال إلى محادثة</string>
     <string name="PhogramMapsSent">أُرسل الموقع.</string>
     <string name="PhogramMapsSharedLocation">موقع</string>
+    <string name="PhogramAssistantTab">المساعد</string>
+    <string name="PhogramAssistantGreeting">كيف أستطيع مساعدتك؟</string>
+    <string name="PhogramAssistantIntro">اسأل سؤالاً، أو اكتب نصاً أو لخّصه، أو ترجم، أو صف صورة.</string>
+    <string name="PhogramAssistantNewChat">محادثة جديدة</string>
+    <string name="PhogramAssistantSuggestions">جرّب أن تطلب</string>
+    <string name="PhogramAssistantSuggestWrite">اكتب رسالة رسمية</string>
+    <string name="PhogramAssistantSuggestSummary">لخّص نصاً طويلاً</string>
+    <string name="PhogramAssistantSuggestTranslate">ترجم إلى الإنجليزية</string>
+    <string name="PhogramAssistantSuggestExplain">اشرح فكرة ببساطة</string>
+    <string name="PhogramAssistantSuggestPhoto">صف صورة</string>
+    <string name="PhogramAssistantRecent">المحادثات الأخيرة</string>
+    <string name="PhogramAssistantNoChats">ستظهر محادثاتك مع المساعد هنا.</string>
+    <string name="PhogramAssistantNotReady">سيتوفر المساعد قريباً.</string>
 </resources>

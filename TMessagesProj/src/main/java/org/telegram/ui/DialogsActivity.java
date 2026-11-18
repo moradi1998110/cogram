@@ -13672,6 +13672,44 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
         }
     }
 
+    /**
+     * Phogram's assistant holds the Profile tab's slot, so the profile and the accounts its long press listed open
+     * from this menu: the own profile with its photo, the other signed-in accounts to switch to, and adding one.
+     */
+    private void addProfileAndAccounts(ItemOptions io) {
+        io.addGap();
+        io.addAccount(currentAccount, false, () -> {
+            Bundle args = new Bundle();
+            args.putLong("user_id", UserConfig.getInstance(currentAccount).getClientUserId());
+            args.putBoolean("my_profile", true);
+            presentFragment(new ProfileActivity(args));
+        });
+        final ArrayList<Integer> others = new ArrayList<>();
+        for (int a = 0; a < UserConfig.MAX_ACCOUNT_COUNT; a++) {
+            if (a != currentAccount && UserConfig.getInstance(a).isClientActivated()) {
+                others.add(a);
+            }
+        }
+        Collections.sort(others, (o1, o2) -> Long.compare(UserConfig.getInstance(o1).loginTime, UserConfig.getInstance(o2).loginTime));
+        for (int account : others) {
+            io.addAccount(account, false, () -> {
+                if (LaunchActivity.instance != null) {
+                    LaunchActivity.instance.switchToAccount(account, true);
+                }
+            });
+        }
+        if (UserConfig.getActivatedAccountsCount() < UserConfig.MAX_ACCOUNT_DEFAULT_COUNT) {
+            io.add(R.drawable.msg_addbot, getString(R.string.AddAccount), () -> {
+                for (int a = UserConfig.MAX_ACCOUNT_COUNT - 1; a >= 0; a--) {
+                    if (!UserConfig.getInstance(a).isClientActivated()) {
+                        presentFragment(new LoginActivity(a));
+                        return;
+                    }
+                }
+            });
+        }
+    }
+
     private void showItemOptions() {
         ItemOptions io = ItemOptions.makeOptions(this, optionsItem);
         io.setColors(getThemedColor(Theme.key_actionBarDefaultTitle), getThemedColor(Theme.key_actionBarDefaultTitle));
@@ -13765,6 +13803,9 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
                 presentFragment(new ThemeActivity(ThemeActivity.THEME_TYPE_NIGHT));
             });
         });
+        if (org.telegram.cogram.CogramGateway.ENABLED) {
+            addProfileAndAccounts(io);
+        }
         io.addGap();
         io.add(R.drawable.outline_groups_24, getString(R.string.NewGroup), () -> {
             Bundle args = new Bundle();

@@ -325,13 +325,17 @@ public class MainTabsActivity extends ViewPagerActivity implements NotificationC
             ? GlassTabView.createMainTab(context, resourceProvider, GlassTabView.TabAnimation.LOCATION, R.string.PhogramMapsTab)
             : GlassTabView.createMainTab(context, resourceProvider, GlassTabView.TabAnimation.SETTINGS, R.string.Settings);
         tabs[INDEX_CALLS] = GlassTabView.createMainTab(context, resourceProvider, GlassTabView.TabAnimation.CALLS, R.string.MainTabsCalls);
-        tabs[INDEX_PROFILE] = GlassTabView.createAvatar(context, resourceProvider, currentAccount, R.string.MainTabsProfile);
+        // Phogram's assistant holds the Profile slot; the profile and the accounts open from the chats page's
+        // options menu, right under the day and night switch.
+        tabs[INDEX_PROFILE] = CogramGateway.ENABLED
+            ? GlassTabView.createMainTab(context, resourceProvider, GlassTabView.TabAnimation.ASSISTANT, R.string.PhogramAssistantTab)
+            : GlassTabView.createAvatar(context, resourceProvider, currentAccount, R.string.MainTabsProfile);
         tabs[INDEX_CHATS].setOnLongClickListener(this::openFoldersSelector);
         if (!CogramGateway.ENABLED) {
             tabs[INDEX_CONTACTS].setOnLongClickListener(this::openContactsSelector);
+            tabs[INDEX_PROFILE].setOnLongClickListener(this::openAccountSelector);
         }
         tabs[INDEX_CALLS].setOnLongClickListener(this::openCallsSelector);
-        tabs[INDEX_PROFILE].setOnLongClickListener(this::openAccountSelector);
 
         tabsView.addTabToIgnoreClick(tabs[INDEX_CHATS]);
         tabsView.addTabToIgnoreClick(tabs[INDEX_CONTACTS]);
@@ -748,7 +752,7 @@ public class MainTabsActivity extends ViewPagerActivity implements NotificationC
                 dropFragmentAtPosition(POSITION_CALLS_OR_SETTINGS);
                 dropCallsFragmentAfterPageScroll = false;
             }
-            if (currentPosition != POSITION_PROFILE) {
+            if (currentPosition != POSITION_PROFILE && !CogramGateway.ENABLED) {
                 dropFragmentAtPosition(POSITION_PROFILE);
             }
             if (pendingFolderId != null && currentPosition == POSITION_CHATS && dialogsActivity != null) {
@@ -848,6 +852,10 @@ public class MainTabsActivity extends ViewPagerActivity implements NotificationC
             dialogsActivity = new DialogsActivity(args);
             dialogsActivity.setMainTabsActivityController(new MainTabsActivityControllerImpl());
             return dialogsActivity;
+        } else if (position == POSITION_PROFILE && CogramGateway.ENABLED) {
+            Bundle args = new Bundle();
+            args.putBoolean("hasMainTabs", true);
+            return new org.telegram.cogram.AssistantActivity(args);
         } else if (position == POSITION_PROFILE) {
             Bundle args = new Bundle();
             args.putLong("user_id", UserConfig.getInstance(currentAccount).getClientUserId());
@@ -1021,7 +1029,7 @@ public class MainTabsActivity extends ViewPagerActivity implements NotificationC
                 dropFragmentAtPosition(POSITION_CALLS_OR_SETTINGS);
             }
         } else if (id == NotificationCenter.mainUserInfoChanged) {
-            if (tabs != null && tabs[INDEX_PROFILE] != null) {
+            if (tabs != null && tabs[INDEX_PROFILE] != null && !CogramGateway.ENABLED) {
                 tabs[INDEX_PROFILE].updateUserAvatar(currentAccount);
             }
         } else if (id == NotificationCenter.contactsPermissionBadgeCheck) {
@@ -1077,7 +1085,8 @@ public class MainTabsActivity extends ViewPagerActivity implements NotificationC
         }
 
         final float animatedPosition = viewPager.getPositionAnimated();
-        final float isProfile = 1f - MathUtils.clamp(Math.abs(POSITION_PROFILE - animatedPosition), 0, 1);
+        // Phogram's assistant page keeps the tab bar's fade, as the other tab pages do; Telegram's profile drops it.
+        final float isProfile = CogramGateway.ENABLED ? 0f : 1f - MathUtils.clamp(Math.abs(POSITION_PROFILE - animatedPosition), 0, 1);
         final float hide = 1f - AndroidUtilities.getNavigationBarThirdButtonsFactor(0, 1f, navigationBarHeight);
         float alpha = (1f - isProfile * hide) * animatorTabsVisible.getFloatValue();
         if (tabletLayout) {
@@ -1177,7 +1186,8 @@ public class MainTabsActivity extends ViewPagerActivity implements NotificationC
     private boolean accountSwitchHintShown;
 
     private void showAccountChangeHint() {
-        if (accountSwitchHintShown) return;
+        // The hint points at the profile tab, which Phogram's assistant replaces.
+        if (accountSwitchHintShown || CogramGateway.ENABLED) return;
 
         if (accountSwitchHint == null && HintsController.Hint.AccountSwitchHint.show()) {
             AndroidUtilities.runOnUIThread(() -> {

@@ -170,6 +170,12 @@ dump_screen 8-chats-menu
 tap_view 'text="Settings"' || true
 sleep 3
 dump_screen 9-settings
+# Phogram's assistant tab, where Telegram has the Profile tab.
+adb shell input keyevent 4
+sleep 3
+tap_view 'text="Assistant"' || true
+sleep 3
+dump_screen 10-assistant
 
 adb shell pidof "$PACKAGE" > "$OUT/pid.txt" || true
 adb logcat -d -v threadtime > "$OUT/logcat.txt" || true

@@ -11668,4 +11668,17 @@
     <string name="PhogramMapsSendToChat">Send to chat</string>
     <string name="PhogramMapsSent">Location sent.</string>
     <string name="PhogramMapsSharedLocation">Location</string>
+    <string name="PhogramAssistantTab">Assistant</string>
+    <string name="PhogramAssistantGreeting">How can I help you?</string>
+    <string name="PhogramAssistantIntro">Ask a question, write or summarize a text, translate, or describe a photo.</string>
+    <string name="PhogramAssistantNewChat">New conversation</string>
+    <string name="PhogramAssistantSuggestions">Try asking</string>
+    <string name="PhogramAssistantSuggestWrite">Write a formal message</string>
+    <string name="PhogramAssistantSuggestSummary">Summarize a long text</string>
+    <string name="PhogramAssistantSuggestTranslate">Translate into English</string>
+    <string name="PhogramAssistantSuggestExplain">Explain an idea simply</string>
+    <string name="PhogramAssistantSuggestPhoto">Describe a photo</string>
+    <string name="PhogramAssistantRecent">Recent conversations</string>
+    <string name="PhogramAssistantNoChats">Your conversations with the assistant will appear here.</string>
+    <string name="PhogramAssistantNotReady">The assistant will be available soon.</string>
 </resources>
