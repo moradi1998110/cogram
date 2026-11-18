@@ -41,6 +41,7 @@ import org.telegram.ui.ActionBar.BaseFragment;
 import org.telegram.ui.ActionBar.Theme;
 import org.telegram.ui.ChatActivity;
 import org.telegram.ui.Components.BottomPagesView;
+import org.telegram.ui.Components.Bulletin;
 import org.telegram.ui.Components.BulletinFactory;
 import org.telegram.ui.Components.CubicBezierInterpolator;
 import org.telegram.ui.Components.LayoutHelper;
@@ -328,11 +329,19 @@ public class ServicesActivity extends BaseFragment implements MainTabsActivity.T
         super.onResume();
         updateColors();
         if (advertsView != null) advertsView.scheduleRotation();
+        // Bulletins rise above the floating tab bar, as on Telegram's chats page.
+        Bulletin.addDelegate(this, new Bulletin.Delegate() {
+            @Override
+            public int getBottomOffset(int tag) {
+                return navigationBarHeight + additionNavigationBarHeight;
+            }
+        });
     }
 
     @Override
     public void onPause() {
         super.onPause();
+        Bulletin.removeDelegate(this);
         if (advertsView != null) advertsView.cancelRotation();
     }
 

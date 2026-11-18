@@ -176,6 +176,10 @@ sleep 3
 tap_view 'text="Assistant"' || true
 sleep 3
 dump_screen 10-assistant
+# Its bulletin must rise above the tab bar.
+tap_view 'text="New conversation"' || true
+sleep 1
+dump_screen 10-assistant-bulletin
 
 adb shell pidof "$PACKAGE" > "$OUT/pid.txt" || true
 adb logcat -d -v threadtime > "$OUT/logcat.txt" || true

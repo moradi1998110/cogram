@@ -55,6 +55,7 @@ import org.telegram.ui.ActionBar.BaseFragment;
 import org.telegram.ui.ActionBar.Theme;
 import org.telegram.ui.Cells.LocationCell;
 import org.telegram.ui.Components.AlertsCreator;
+import org.telegram.ui.Components.Bulletin;
 import org.telegram.ui.Components.BulletinFactory;
 import org.telegram.ui.Components.EditTextBoldCursor;
 import org.telegram.ui.Components.LayoutHelper;
@@ -869,11 +870,20 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
             AndroidUtilities.cancelRunOnUIThread(compassCheck);
             AndroidUtilities.runOnUIThread(compassCheck, COMPASS_CHECK_MS);
         }
+        // Bulletins rise above the tab bar, and above the place card while it is shown.
+        Bulletin.addDelegate(this, new Bulletin.Delegate() {
+            @Override
+            public int getBottomOffset(int tag) {
+                final int bottom = getMapPadding()[3];
+                return placeCard != null && placeCard.getVisibility() == View.VISIBLE ? bottom + placeCard.getHeight() + dp(8) : bottom;
+            }
+        });
     }
 
     @Override
     public void onPause() {
         super.onPause();
+        Bulletin.removeDelegate(this);
         pageResumed = false;
         AndroidUtilities.cancelRunOnUIThread(compassCheck);
         // The map pauses so it does not use the battery while another tab is open.
