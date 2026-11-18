@@ -39,6 +39,15 @@ public interface GatewayBackend {
 
     int pts();
 
+    /**
+     * Takes the next pts for an update the gateway makes itself (the assistant's messages). Private chats share
+     * one pts sequence in Telegram, so it comes from the same counter as the backend's own updates.
+     */
+    int nextPts();
+
+    /** A message id for a message the gateway keeps itself, from the backend's id space so ids never collide. */
+    int reserveMessageId(String key, long timeMillis);
+
     /** Returns messages already sent as updates after the given pts, for an app that missed them. */
     default List<TLRPC.Message> messagesAfter(int pts) {
         return Collections.emptyList();

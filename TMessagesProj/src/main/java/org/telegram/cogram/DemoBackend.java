@@ -243,4 +243,18 @@ final class DemoBackend implements GatewayBackend {
     public synchronized int pts() {
         return pts;
     }
+
+    @Override
+    public synchronized int nextPts() {
+        pts++;
+        saveCounters();
+        return pts;
+    }
+
+    @Override
+    public synchronized int reserveMessageId(String key, long timeMillis) {
+        int id = nextId++;
+        saveCounters();
+        return id;
+    }
 }

@@ -30,6 +30,9 @@ import androidx.recyclerview.widget.RecyclerView;
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.LiteMode;
 import org.telegram.messenger.LocaleController;
+import org.telegram.messenger.MessagesStorage;
+import org.telegram.tgnet.TLRPC;
+import org.telegram.ui.Components.Forum.ForumUtilities;
 import org.telegram.messenger.R;
 import org.telegram.messenger.SharedConfig;
 import org.telegram.ui.ActionBar.ActionBar;
@@ -233,18 +236,72 @@ public class AssistantActivity extends BaseFragment implements MainTabsActivity.
         items.add(UItem.asButton(ID_SUGGEST_PHOTO, R.drawable.msg_photos, LocaleController.getString(R.string.PhogramAssistantSuggestPhoto)));
         items.add(UItem.asShadow(null));
         items.add(UItem.asHeader(LocaleController.getString(R.string.PhogramAssistantRecent)));
-        items.add(UItem.asShadow(LocaleController.getString(R.string.PhogramAssistantNoChats)));
-    }
-
-    private void onClick(UItem item, View view, int position, float x, float y) {
-        if (item.id >= ID_SUGGEST_WRITE && item.id <= ID_SUGGEST_PHOTO) {
-            startConversation();
+        recent.clear();
+        final AssistantBot bot = CogramGateway.getInstance(currentAccount).assistant();
+        if (bot != null) {
+            recent.addAll(bot.recentTopics());
+        }
+        if (recent.isEmpty()) {
+            items.add(UItem.asShadow(LocaleController.getString(R.string.PhogramAssistantNoChats)));
+        } else {
+            for (int i = 0; i < recent.size() && i < MAX_RECENT; i++) {
+                final TLRPC.TL_forumTopic topic = recent.get(i);
+                items.add(UItem.asButton(ID_RECENT_BASE + i, R.drawable.msg_discussion, topic.title, LocaleController.formatDateChat(topic.date)));
+            }
+            items.add(UItem.asShadow(null));
         }
     }
 
-    /** Opens a new conversation; until the assistant's server is connected it says the assistant is coming. */
-    private void startConversation() {
-        BulletinFactory.of(this).createSimpleBulletin(R.raw.info, LocaleController.getString(R.string.PhogramAssistantNotReady)).show();
+    private static final int ID_RECENT_BASE = 100;
+    private static final int MAX_RECENT = 20;
+    private final ArrayList<TLRPC.TL_forumTopic> recent = new ArrayList<>();
+
+    private void onClick(UItem item, View view, int position, float x, float y) {
+        if (item.id >= ID_SUGGEST_WRITE && item.id <= ID_SUGGEST_PHOTO) {
+            startConversation(suggestionText(item.id));
+        } else if (item.id >= ID_RECENT_BASE && item.id - ID_RECENT_BASE < recent.size()) {
+            openConversation(recent.get(item.id - ID_RECENT_BASE).id);
+        }
+    }
+
+    private String suggestionText(int id) {
+        switch (id) {
+            case ID_SUGGEST_WRITE: return LocaleController.getString(R.string.PhogramAssistantSuggestWrite);
+            case ID_SUGGEST_SUMMARY: return LocaleController.getString(R.string.PhogramAssistantSuggestSummary);
+            case ID_SUGGEST_TRANSLATE: return LocaleController.getString(R.string.PhogramAssistantSuggestTranslate);
+            case ID_SUGGEST_EXPLAIN: return LocaleController.getString(R.string.PhogramAssistantSuggestExplain);
+            case ID_SUGGEST_PHOTO: return LocaleController.getString(R.string.PhogramAssistantSuggestPhoto);
+        }
+        return null;
+    }
+
+    /**
+     * Opens Telegram's chat with the assistant, which shows its conversations as topics; a new message there starts
+     * a new conversation. A suggestion is left in the message field as a draft for the user to finish.
+     */
+    private void startConversation(String suggestion) {
+        final AssistantBot bot = CogramGateway.getInstance(currentAccount).assistant();
+        if (bot == null) {
+            BulletinFactory.of(this).createSimpleBulletin(R.raw.info, LocaleController.getString(R.string.PhogramAssistantNotReady)).show();
+            return;
+        }
+        getMessagesController().putUser(bot.user(), false);
+        if (suggestion != null) {
+            getMediaDataController().saveDraft(AssistantBot.USER_ID, 0, suggestion + " ", null, null, null, null, 0, false, false);
+        }
+        presentFragment(ChatActivity.of(AssistantBot.USER_ID));
+    }
+
+    /** Opens one past conversation: the assistant's chat on that topic, once Telegram knows the topic. */
+    private void openConversation(int topicId) {
+        final AssistantBot bot = CogramGateway.getInstance(currentAccount).assistant();
+        if (bot == null) return;
+        getMessagesController().putUser(bot.user(), false);
+        final ChatActivity chat = ChatActivity.of(AssistantBot.USER_ID);
+        if (getMessagesController().getTopicsController().findTopic(-AssistantBot.USER_ID, topicId) != null) {
+            ForumUtilities.applyTopic(chat, MessagesStorage.TopicKey.of(AssistantBot.USER_ID, topicId));
+        }
+        presentFragment(chat);
     }
 
     private void updateActionBarBackground(boolean animated) {
@@ -283,6 +340,10 @@ public class AssistantActivity extends BaseFragment implements MainTabsActivity.
     public void onResume() {
         super.onResume();
         updateColors();
+        // A conversation may have started or changed in the chat screen.
+        if (listView != null) {
+            listView.adapter.update(false);
+        }
         // Bulletins rise above the floating tab bar, as on Telegram's chats page.
         Bulletin.addDelegate(this, new Bulletin.Delegate() {
             @Override
@@ -364,7 +425,7 @@ public class AssistantActivity extends BaseFragment implements MainTabsActivity.
             button.setGravity(Gravity.CENTER);
             button.setText(LocaleController.getString(R.string.PhogramAssistantNewChat));
             ScaleStateListAnimator.apply(button, 0.02f, 1.2f);
-            button.setOnClickListener(v -> startConversation());
+            button.setOnClickListener(v -> startConversation(null));
             addView(button, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 44, Gravity.CENTER_HORIZONTAL, 0, 18, 0, 0));
         }
 

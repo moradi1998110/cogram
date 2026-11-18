@@ -176,10 +176,25 @@ sleep 3
 tap_view 'text="Assistant"' || true
 sleep 3
 dump_screen 10-assistant
-# Its bulletin must rise above the tab bar.
-tap_view 'text="New conversation"' || true
-sleep 1
-dump_screen 10-assistant-bulletin
+# A conversation with the assistant: Telegram's chat screen, the reply written out, then the conversation listed.
+if tap_view 'text="New conversation"'; then
+  sleep 4
+  dump_screen 11-assistant-chat
+  adb shell input tap 120 600
+  sleep 2
+  adb shell input text "Hello%sassistant"
+  sleep 1
+  adb shell input keycombination 113 66 || true
+  sleep 3
+  dump_screen 11-assistant-streaming
+  sleep 10
+  dump_screen 11-assistant-reply
+  adb shell input keyevent 4
+  sleep 2
+  adb shell input keyevent 4
+  sleep 3
+  dump_screen 12-assistant-recent
+fi
 
 adb shell pidof "$PACKAGE" > "$OUT/pid.txt" || true
 adb logcat -d -v threadtime > "$OUT/logcat.txt" || true

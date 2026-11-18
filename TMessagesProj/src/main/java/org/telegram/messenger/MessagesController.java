@@ -22544,7 +22544,11 @@ public class MessagesController extends BaseController implements NotificationCe
             }
 
             boolean addToFolder = true;
-            if (addDialogToItsCommunity(d)) {
+            // Phogram's assistant chat lives in its own tab, not in the chat list.
+            if (org.telegram.cogram.CogramGateway.isAssistantDialog(d.id)) {
+                addToFolder = false;
+            }
+            if (addToFolder && addDialogToItsCommunity(d)) {
                 if (ChatObject.isCollapsedInCommunity(currentAccount, d.id)) {
                     addToFolder = false;
                 }

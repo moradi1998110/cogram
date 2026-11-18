@@ -91,7 +91,49 @@ public final class CogramGateway {
         }));
         applyPrivacy();
         backend = selected;
+        assistant = new AssistantBot(new AssistantBot.Host() {
+            @Override
+            public long selfId() {
+                return selected.selfUser().id;
+            }
+
+            @Override
+            public int pts() {
+                return selected.pts();
+            }
+
+            @Override
+            public int nextPts() {
+                return selected.nextPts();
+            }
+
+            @Override
+            public int reserveMessageId(String key, long timeMillis) {
+                return selected.reserveMessageId(key, timeMillis);
+            }
+
+            @Override
+            public void push(TLRPC.Updates updates) {
+                Utilities.stageQueue.postRunnable(() -> {
+                    AccountInstance instance = AccountInstance.getInstance(account);
+                    instance.getMessagesController().putUsers(new ArrayList<>(updates.users), false);
+                    instance.getMessagesController().processUpdates(updates, false);
+                });
+            }
+        }, account);
         startUpdateTimer();
+    }
+
+    /** Whether a dialog is the assistant's chat, which the chat list leaves out since it has its own tab. */
+    public static boolean isAssistantDialog(long dialogId) {
+        return ENABLED && AssistantBot.isAssistant(dialogId);
+    }
+
+    /** Phogram's AI assistant, a bot inside the gateway; null until an account is connected. */
+    private volatile AssistantBot assistant;
+
+    AssistantBot assistant() {
+        return assistant;
     }
 
     private java.util.concurrent.ScheduledExecutorService updateTimer;
@@ -136,6 +178,7 @@ public final class CogramGateway {
     private TLObject signOut() {
         GatewayBackend current = backend;
         backend = null;
+        assistant = null;
         current.signOut();
         preferences().edit().remove(KEY_DEMO).apply();
         return new TLRPC.TL_auth_loggedOut();
@@ -222,6 +265,14 @@ public final class CogramGateway {
     }
 
     private TLObject handle(TLObject request) {
+        // The assistant's chat is answered by the assistant, before the engine sees the request.
+        AssistantBot bot = assistant;
+        if (bot != null) {
+            TLObject answer = bot.handle(request);
+            if (answer != null) {
+                return answer;
+            }
+        }
         TLObject stickers = noStickers(request);
         if (stickers != null) {
             return stickers;
@@ -471,6 +522,10 @@ public final class CogramGateway {
     private TLObject users(TLRPC.TL_users_getUsers request) {
         Vector<TLRPC.User> result = new Vector<>(TLRPC.User::TLdeserialize);
         for (TLRPC.InputUser inputUser : request.id) {
+            if (assistant != null && AssistantBot.isAssistant(userId(inputUser))) {
+                result.objects.add(assistant.user());
+                continue;
+            }
             TLRPC.User user = backend.user(userId(inputUser));
             if (user != null) {
                 result.objects.add(user);
@@ -480,6 +535,12 @@ public final class CogramGateway {
     }
 
     private TLObject fullUser(long userId) {
+        if (assistant != null && AssistantBot.isAssistant(userId)) {
+            TLRPC.TL_users_userFull result = new TLRPC.TL_users_userFull();
+            result.full_user = assistant.fullUser();
+            result.users.add(assistant.user());
+            return result;
+        }
         TLRPC.User user = backend.user(userId);
         if (user == null) {
             return null;
@@ -815,6 +876,12 @@ public final class CogramGateway {
             }
         }
         result.messages.addAll(backend.topMessages());
+        for (TLRPC.InputDialogPeer inputPeer : request.peers) {
+            if (assistant != null && inputPeer instanceof TLRPC.TL_inputDialogPeer && AssistantBot.isAssistant(((TLRPC.TL_inputDialogPeer) inputPeer).peer)) {
+                result.dialogs.add(assistant.dialog(result.messages));
+                result.users.add(assistant.user());
+            }
+        }
         result.users.addAll(backend.users());
         result.chats.addAll(backend.roomChats());
         return result;

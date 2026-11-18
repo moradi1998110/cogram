@@ -1294,4 +1294,5 @@
     <string name="PhogramAssistantRecent">المحادثات الأخيرة</string>
     <string name="PhogramAssistantNoChats">ستظهر محادثاتك مع المساعد هنا.</string>
     <string name="PhogramAssistantNotReady">سيتوفر المساعد قريباً.</string>
+    <string name="PhogramAssistantSampleReply">هذا رد تجريبي يظهر بالطريقة التي ستظهر بها إجابات المساعد. سيُربط المساعد بخدمة الذكاء الاصطناعي في المرحلة القادمة.\n\nكتبتَ: %1$s</string>
 </resources>

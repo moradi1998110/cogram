@@ -3128,6 +3128,19 @@ final class XmppBackend implements GatewayBackend {
     }
 
     @Override
+    public synchronized int nextPts() {
+        pts++;
+        savePts();
+        return pts;
+    }
+
+    @Override
+    public int reserveMessageId(String key, long timeMillis) {
+        // The key never matches an engine message's uuid, so history and updates leave these ids alone.
+        return ids.messageId(key, timeMillis);
+    }
+
+    @Override
     public synchronized void signOut() {
         listener = null;
         if (service != null && calls != null) {
