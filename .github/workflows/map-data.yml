@@ -46,11 +46,23 @@ jobs:
         working-directory: basemaps/tiles
         run: mvn -q -B clean package -DskipTests
 
-      # Downloads the area's OpenStreetMap extract from Geofabrik and the coastline and Natural Earth data it needs.
+      # Geofabrik's index refuses some runners, so the extract is fetched directly, from Geofabrik or a mirror.
+      - name: Download the OpenStreetMap extract
+        working-directory: basemaps/tiles
+        run: |
+          mkdir -p data/sources
+          for url in "https://download.geofabrik.de/asia/$AREA-latest.osm.pbf" \
+                     "https://download.openstreetmap.fr/extracts/asia/$AREA-latest.osm.pbf"; do
+            curl -sSfL --retry 4 --retry-delay 20 -o "data/sources/$AREA.osm.pbf" "$url" && break
+          done
+          ls -l data/sources
+
+      # Downloads the coastline, land cover and Natural Earth data the profile needs.
       - name: Generate the tiles
         working-directory: basemaps/tiles
         run: |
-          java -Xmx6g -jar target/*-with-deps.jar --download --force --area="$AREA" --output="$GITHUB_WORKSPACE/out/$AREA.pmtiles"
+          java -Xmx6g -jar target/*-with-deps.jar --download --force --osm-path="data/sources/$AREA.osm.pbf" \
+            --output="$GITHUB_WORKSPACE/out/$AREA.pmtiles"
           ls -l "$GITHUB_WORKSPACE/out"
 
       # The app swaps PHOGRAM_TILES for the tiles file on the phone; glyphs and sprites ship in the app's assets.
