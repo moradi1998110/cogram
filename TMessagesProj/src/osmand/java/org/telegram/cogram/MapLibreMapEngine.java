@@ -19,6 +19,8 @@ import org.maplibre.android.maps.MapLibreMap;
 import org.maplibre.android.maps.MapView;
 import org.maplibre.android.maps.Style;
 import org.telegram.messenger.AndroidUtilities;
+import org.telegram.messenger.LocaleController;
+import org.telegram.messenger.R;
 import org.telegram.messenger.FileLog;
 import org.telegram.messenger.Utilities;
 import org.telegram.ui.ActionBar.Theme;
@@ -42,9 +44,12 @@ final class MapLibreMapEngine implements MapEngine {
     private static final double PLACE_ZOOM = 16;
     private static final int CAMERA_MS = 600;
 
-    /** The region's tiles, which ship in the app's assets during the prototype and are copied out once. */
-    private static final String TILES_ASSET = "phogram_map/iraq.pmtiles";
-    private static final String TILES_FILE = "maps/iraq.pmtiles";
+    /**
+     * A low-zoom overview of the region ships in the app, so the map is never empty; the region's detailed tiles are
+     * downloaded after installation (MapData). The overview is copied out once: MapLibre reads tiles by range.
+     */
+    private static final String OVERVIEW_ASSET = "phogram_map/iraq-overview.pmtiles";
+    private static final String OVERVIEW_FILE = "maps/iraq-overview.pmtiles";
 
     private final Context context;
     private final MapView view;
@@ -59,6 +64,8 @@ final class MapLibreMapEngine implements MapEngine {
 
     private Place shownPlace;
     private PinListener pinListener;
+    private Runnable downloadListener;
+    private File currentTiles;
 
     MapLibreMapEngine(Context context) {
         this.context = context;
@@ -66,15 +73,24 @@ final class MapLibreMapEngine implements MapEngine {
         view = new MapView(context);
         view.onCreate(null);
         offline = new OsmAndOffline(context);
+        MapData.addListener(mapDataChanged);
+        MapData.refreshCatalog();
+        MapData.startPolling();
         prepareTiles(file -> {
             if (destroyed) return;
+            currentTiles = file;
             view.getMapAsync(map -> onMap(map, file));
         });
     }
 
-    /** Copies the tiles out of the app's assets on first use, off the main thread: MapLibre reads them by range. */
+    /** The region's downloaded tiles, or else the overview, copied out of the assets off the main thread once. */
     private void prepareTiles(Utilities.Callback<File> done) {
-        final File file = new File(context.getFilesDir(), TILES_FILE);
+        final File installed = MapData.installedTiles();
+        if (installed != null) {
+            done.run(installed);
+            return;
+        }
+        final File file = new File(context.getFilesDir(), OVERVIEW_FILE);
         if (file.exists() && file.length() > 0) {
             done.run(file);
             return;
@@ -83,7 +99,7 @@ final class MapLibreMapEngine implements MapEngine {
             final File temp = new File(file.getPath() + ".tmp");
             try {
                 file.getParentFile().mkdirs();
-                try (InputStream in = context.getAssets().open(TILES_ASSET); OutputStream out = new FileOutputStream(temp)) {
+                try (InputStream in = context.getAssets().open(OVERVIEW_ASSET); OutputStream out = new FileOutputStream(temp)) {
                     final byte[] buffer = new byte[1 << 16];
                     int n;
                     while ((n = in.read(buffer)) > 0) {
@@ -235,23 +251,59 @@ final class MapLibreMapEngine implements MapEngine {
 
     @Override
     public void setDownloadListener(Runnable listener) {
+        downloadListener = listener;
         offline.setDownloadListener(listener);
     }
 
+    /**
+     * The region's map tiles come first (MapData, from the internet or the organization's server); once they are on
+     * the phone, OsmAnd's map files for the offline search.
+     */
     @Override
     public Download getOfferedDownload() {
+        final MapData.RegionFile tiles = MapData.offer();
+        if (tiles != null) {
+            return new Download(LocaleController.formatString(R.string.PhogramMapsRegionMap, tiles.regionName),
+                    AndroidUtilities.formatFileSize(tiles.size), MapData.isDownloading(), MapData.getProgress());
+        }
         return offline.getOfferedDownload();
     }
 
     @Override
     public void startOfferedDownload() {
-        offline.startOfferedDownload();
+        final MapData.RegionFile tiles = MapData.offer();
+        if (tiles != null) {
+            MapData.download(tiles);
+        } else {
+            offline.startOfferedDownload();
+        }
     }
 
     @Override
     public void cancelOfferedDownload() {
-        offline.cancelOfferedDownload();
+        if (MapData.offer() != null) {
+            MapData.cancel();
+        } else {
+            offline.cancelOfferedDownload();
+        }
     }
+
+    /** A finished download switches the map from the overview to the region's tiles. */
+    private final Runnable mapDataChanged = () -> {
+        if (destroyed) return;
+        final File installed = MapData.installedTiles();
+        if (map != null && installed != null && !installed.equals(currentTiles)) {
+            currentTiles = installed;
+            map.setStyle(new Style.Builder().fromJson(styleJson(installed)), loaded -> {
+                if (destroyed) return;
+                style = loaded;
+                activateLocation();
+            });
+        }
+        if (downloadListener != null) {
+            downloadListener.run();
+        }
+    };
 
     @Override
     public void search(String query, SearchCallback callback) {
@@ -326,6 +378,7 @@ final class MapLibreMapEngine implements MapEngine {
         destroyed = true;
         shownPlace = null;
         offline.destroy();
+        MapData.removeListener(mapDataChanged);
         if (started) {
             view.onStop();
         }

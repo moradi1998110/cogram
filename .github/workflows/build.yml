@@ -9,8 +9,6 @@ on:
 
 permissions:
   contents: write
-  # Reads the map tiles map-data.yml left as a run artifact.
-  actions: read
 
 jobs:
   apk:
@@ -52,28 +50,6 @@ jobs:
       # The osmand-poc branch builds OsmAnd's map engine into the Maps tab.
       - name: Fetch OsmAnd
         run: bash .github/scripts/fetch-osmand.sh
-
-      # The prototype MapLibre map ships the region's tiles inside the app; map-data.yml builds them, and
-      # .github/map-data-run names the run whose files to take.
-      - name: Read which map data to take
-        id: mapdata
-        run: echo "run=$(cat .github/map-data-run 2>/dev/null || true)" >> "$GITHUB_OUTPUT"
-
-      - name: Fetch the map tiles
-        if: steps.mapdata.outputs.run != ''
-        uses: actions/download-artifact@v4
-        with:
-          name: map-data
-          run-id: ${{ steps.mapdata.outputs.run }}
-          github-token: ${{ github.token }}
-          path: ${{ runner.temp }}/map-data
-
-      - name: Put the map tiles in the app
-        if: steps.mapdata.outputs.run != ''
-        run: |
-          mkdir -p TMessagesProj/src/main/assets/phogram_map
-          mv "$RUNNER_TEMP/map-data/iraq.pmtiles" TMessagesProj/src/main/assets/phogram_map/
-          ls -l TMessagesProj/src/main/assets/phogram_map
 
       # Private repository runners have 7 GB of memory, and R8 needs more with the build around it.
       - name: Add swap

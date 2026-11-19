@@ -11668,6 +11668,14 @@
     <string name="PhogramMapsSendToChat">Send to chat</string>
     <string name="PhogramMapsSent">Location sent.</string>
     <string name="PhogramMapsSharedLocation">Location</string>
+    <string name="PhogramMapsServer">Map server</string>
+    <string name="PhogramMapsServerDefault">Internet</string>
+    <string name="PhogramMapsServerInfo">Maps are downloaded from Phogram\'s map data on the internet. To download them from your organization\'s server instead, enter its address. Leave it empty for the internet.</string>
+    <string name="PhogramMapsServerHint">https://maps.example.org</string>
+    <string name="PhogramMapsServerReset">Use internet</string>
+    <string name="PhogramMapsServerInvalid">Enter an address that starts with https://</string>
+    <string name="PhogramMapsDownloadTitle">Map of %1$s</string>
+    <string name="PhogramMapsRegionMap">%1$s map</string>
     <string name="PhogramAssistantTab">Assistant</string>
     <string name="PhogramAssistantGreeting">How can I help you?</string>
     <string name="PhogramAssistantIntro">Ask a question, write or summarize a text, translate, or describe a photo.</string>

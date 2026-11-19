@@ -1281,6 +1281,14 @@
     <string name="PhogramMapsSendToChat">إرسال إلى محادثة</string>
     <string name="PhogramMapsSent">أُرسل الموقع.</string>
     <string name="PhogramMapsSharedLocation">موقع</string>
+    <string name="PhogramMapsServer">خادم الخرائط</string>
+    <string name="PhogramMapsServerDefault">الإنترنت</string>
+    <string name="PhogramMapsServerInfo">تُنزَّل الخرائط من بيانات خرائط Phogram على الإنترنت. لتنزيلها من خادم مؤسستك بدلاً من ذلك، أدخل عنوانه. اتركه فارغاً للإنترنت.</string>
+    <string name="PhogramMapsServerHint">https://maps.example.org</string>
+    <string name="PhogramMapsServerReset">استخدام الإنترنت</string>
+    <string name="PhogramMapsServerInvalid">أدخل عنواناً يبدأ بـ https://</string>
+    <string name="PhogramMapsDownloadTitle">خريطة %1$s</string>
+    <string name="PhogramMapsRegionMap">خريطة %1$s</string>
     <string name="PhogramAssistantTab">المساعد</string>
     <string name="PhogramAssistantGreeting">كيف أستطيع مساعدتك؟</string>
     <string name="PhogramAssistantIntro">اسأل سؤالاً، أو اكتب نصاً أو لخّصه، أو ترجم، أو صف صورة.</string>
