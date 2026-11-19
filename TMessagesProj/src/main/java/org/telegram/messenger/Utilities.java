@@ -15,7 +15,6 @@ import android.graphics.Path;
 import android.graphics.Rect;
 import android.net.Uri;
 
-import com.carrotsearch.randomizedtesting.Xoroshiro128PlusRandom;
 
 import org.telegram.tgnet.ConnectionsManager;
 
@@ -35,7 +34,7 @@ import java.util.regex.Pattern;
 public class Utilities {
     public static Pattern pattern = Pattern.compile("[\\-0-9]+");
     public static SecureRandom random = new SecureRandom();
-    public static Random fastRandom = new Xoroshiro128PlusRandom(random.nextLong());
+    public static Random fastRandom = new Random(random.nextLong());
 
     public static volatile DispatchQueue stageQueue = new DispatchQueue("stageQueue");
     public static volatile DispatchQueue globalQueue = new DispatchQueue("globalQueue");

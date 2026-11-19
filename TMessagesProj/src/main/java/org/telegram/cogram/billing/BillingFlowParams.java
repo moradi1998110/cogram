@@ -36,12 +36,26 @@ public final class BillingFlowParams {
     }
 
     public static final class ProductDetailsParams {
+        private final ProductDetails details;
+
+        private ProductDetailsParams(ProductDetails details) {
+            this.details = details;
+        }
+
+        /** The product's details; Telegram calls Google's obfuscated getter by this name. */
+        public ProductDetails zza() {
+            return details;
+        }
+
         public static Builder newBuilder() {
             return new Builder();
         }
 
         public static final class Builder {
+            private ProductDetails details;
+
             public Builder setProductDetails(ProductDetails details) {
+                this.details = details;
                 return this;
             }
 
@@ -50,7 +64,7 @@ public final class BillingFlowParams {
             }
 
             public ProductDetailsParams build() {
-                return new ProductDetailsParams();
+                return new ProductDetailsParams(details);
             }
         }
     }

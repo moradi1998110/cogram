@@ -145,7 +145,6 @@ import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 import androidx.viewpager.widget.ViewPager;
 
-import com.android.internal.telephony.ITelephony;
 
 import org.telegram.PhoneFormat.PhoneFormat;
 import org.telegram.messenger.browser.Browser;
@@ -3050,10 +3049,11 @@ public class AndroidUtilities {
             Class c = Class.forName(tm.getClass().getName());
             Method m = c.getDeclaredMethod("getITelephony");
             m.setAccessible(true);
-            ITelephony telephonyService = (ITelephony) m.invoke(tm);
-            telephonyService = (ITelephony) m.invoke(tm);
-            telephonyService.silenceRinger();
-            telephonyService.endCall();
+            // Phogram: Android's hidden telephony interface, reached by reflection alone; its compile-time copy
+            // came with Google's libraries, which Phogram does not ship.
+            Object telephonyService = m.invoke(tm);
+            telephonyService.getClass().getMethod("silenceRinger").invoke(telephonyService);
+            telephonyService.getClass().getMethod("endCall").invoke(telephonyService);
         } catch (Throwable e) {
             FileLog.e(e);
         }
