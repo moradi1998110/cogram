@@ -84,6 +84,15 @@ EOF
 # OsmAnd's XML parser library also carries the XmlPull interfaces Android already has, and R8 refuses an app
 # that redefines them. The app takes this copy without them.
 mkdir -p osmand/libs
-curl -sSfL --retry 5 -o osmand/libs/kxml2-2.3.0.jar https://repo1.maven.org/maven2/net/sf/kxml/kxml2/2.3.0/kxml2-2.3.0.jar
+# Maven Central now and then answers 404 to the runners for a file that exists, and curl does not retry a 404,
+# so each mirror is tried a few times.
+KXML=net/sf/kxml/kxml2/2.3.0/kxml2-2.3.0.jar
+for attempt in 1 2 3 4; do
+  for mirror in https://repo1.maven.org/maven2 https://repo.maven.apache.org/maven2; do
+    curl -sSfL --retry 3 -o osmand/libs/kxml2-2.3.0.jar "$mirror/$KXML" && break 2
+  done
+  sleep 15
+done
+test -s osmand/libs/kxml2-2.3.0.jar
 zip -q -d osmand/libs/kxml2-2.3.0.jar 'org/xmlpull/*'
 unzip -l osmand/libs/kxml2-2.3.0.jar | tail -1
