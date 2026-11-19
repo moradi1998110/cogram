@@ -56,7 +56,6 @@ final class MapLibreMapEngine implements MapEngine {
     private boolean resumed;
     private boolean ready;
     private Runnable readyListener;
-    private int[] padding = new int[4];
 
     private Place shownPlace;
     private PinListener pinListener;
@@ -119,7 +118,6 @@ final class MapLibreMapEngine implements MapEngine {
         map.setStyle(new Style.Builder().fromJson(styleJson(tiles)), loaded -> {
             if (destroyed) return;
             style = loaded;
-            applyPadding();
             activateLocation();
             ready = true;
             if (readyListener != null) {
@@ -179,16 +177,13 @@ final class MapLibreMapEngine implements MapEngine {
         }
     }
 
+    /**
+     * The map runs under the header and the tab bar, as Telegram's pages do, and its center stays the view's, as
+     * the OsmAnd map's did. Setting MapLibre's padding here would also stop a camera move under way, such as the
+     * flight to a place the card has just opened for.
+     */
     @Override
     public void setPadding(int left, int top, int right, int bottom) {
-        padding = new int[] { left, top, right, bottom };
-        applyPadding();
-    }
-
-    private void applyPadding() {
-        if (map != null) {
-            map.moveCamera(CameraUpdateFactory.paddingTo(padding[0], padding[1], padding[2], padding[3]));
-        }
     }
 
     @Override
@@ -197,13 +192,26 @@ final class MapLibreMapEngine implements MapEngine {
         activateLocation();
         if (map == null || !map.getLocationComponent().isLocationComponentActivated()) return;
         final LocationComponent location = map.getLocationComponent();
-        final Location last = location.getLastKnownLocation();
-        if (last != null) {
-            map.animateCamera(CameraUpdateFactory.newLatLngZoom(new LatLng(last.getLatitude(), last.getLongitude()),
-                    Math.max(map.getCameraPosition().zoom, MY_LOCATION_ZOOM)), CAMERA_MS);
-        }
         // Follows the position from here on, until the user moves the map, as Telegram's location page does.
         location.setCameraMode(CameraMode.TRACKING);
+        final Location last = location.getLastKnownLocation();
+        if (last != null) {
+            flyTo(last);
+            return;
+        }
+        // MapLibre asks Android's fused provider, which may have no fix stored yet; the GPS's last fix still moves
+        // the map there at once, as Telegram's button does.
+        org.telegram.messenger.ApplicationLoader.getLocationServiceProvider().getLastLocation(fix -> {
+            if (fix != null) {
+                AndroidUtilities.runOnUIThread(() -> flyTo(fix));
+            }
+        });
+    }
+
+    private void flyTo(Location fix) {
+        if (map == null || destroyed) return;
+        map.animateCamera(CameraUpdateFactory.newLatLngZoom(new LatLng(fix.getLatitude(), fix.getLongitude()),
+                Math.max(map.getCameraPosition().zoom, MY_LOCATION_ZOOM)), CAMERA_MS);
     }
 
     @Override
