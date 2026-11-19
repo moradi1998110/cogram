@@ -96,3 +96,67 @@ done
 test -s osmand/libs/kxml2-2.3.0.jar
 zip -q -d osmand/libs/kxml2-2.3.0.jar 'org/xmlpull/*'
 unzip -l osmand/libs/kxml2-2.3.0.jar | tail -1
+# Phogram ships no Google Play services, so OsmAnd goes without its Google Play parts too: location comes from
+# Android's own location service, purchases from a stand-in that sells nothing and asks nobody
+# (osmand-phogram/), and its "rate us" dialog never opens Google Play's review flow.
+cp -r .github/scripts/osmand-phogram osmand/android/OsmAnd/src-phogram
+python3 - <<'EOF'
+import re
+root = 'osmand/android/OsmAnd/'
+
+def patch(path, old, new, count=1):
+    with open(root + path) as f:
+        text = f.read()
+    assert text.count(old) == count, (path, old)
+    with open(root + path, 'w') as f:
+        f.write(text.replace(old, new))
+
+# OsmAnd's library build takes Phogram's purchase stand-in in place of its Google Play sources.
+patch('build-library.gradle', 'java.srcDirs = ["src", "src-gms", "src-google", "src-nogplay"]',
+      'java.srcDirs = ["src", "src-phogram", "src-nogplay"]')
+for dependency in ["implementation 'com.android.billingclient:billing:8.0.0'",
+                   "implementation 'com.google.android.play:review:2.0.2'",
+                   "implementation 'com.google.android.gms:play-services-location:21.3.0'"]:
+    patch('build-common.gradle', dependency, '// Phogram: ' + dependency)
+
+# The Google Play build's map activity hooks have nothing of Google in them, so they are kept.
+import os, shutil
+os.makedirs(root + 'src-phogram/net/osmand/plus/activities', exist_ok=True)
+shutil.copy(root + 'src-google/net/osmand/plus/activities/ExtendedMapActivity.java',
+            root + 'src-phogram/net/osmand/plus/activities/ExtendedMapActivity.java')
+
+# The purchase list without the legacy subscription built from Google Play's product details.
+with open(root + 'src-google/net/osmand/plus/inapp/InAppPurchasesImpl.java') as f:
+    text = f.read()
+text = text.replace('import com.android.billingclient.api.ProductDetails;\n', '')
+text, n = re.subn(r'\n\tpublic static class InAppPurchaseLiveUpdatesOldSubscription extends InAppSubscription \{.*?\n\t\}\n',
+                  '\n', text, count=1, flags=re.S)
+assert n == 1 and 'ProductDetails' not in text
+with open(root + 'src-phogram/net/osmand/plus/inapp/InAppPurchasesImpl.java', 'w') as f:
+    f.write(text)
+
+# Location always from Android's own service, never from Google Play services.
+os.remove(root + 'src/net/osmand/plus/helpers/GmsLocationServiceHelper.java')
+patch('src/net/osmand/plus/OsmandApplication.java',
+      '\t\tif (source == LocationSource.GOOGLE_PLAY_SERVICES) {\n\t\t\treturn new GmsLocationServiceHelper(this);\n\t\t}\n', '')
+
+# The "rate us" dialog is OsmAnd's own sheet, not Google Play's review flow.
+path = 'src/net/osmand/plus/feedback/RateUsHelper.java'
+with open(root + path) as f:
+    text = f.read()
+for line in ['import com.google.android.play.core.review.ReviewInfo;\n',
+             'import com.google.android.play.core.review.ReviewManager;\n',
+             'import com.google.android.play.core.review.ReviewManagerFactory;\n',
+             'import com.google.android.gms.tasks.Task;\n']:
+    assert text.count(line) == 1, line
+    text = text.replace(line, '')
+assert text.count('\t\t\tshowInAppRateDialog(mapActivity);\n') == 1
+text = text.replace('\t\t\tshowInAppRateDialog(mapActivity);\n',
+                    '\t\t\tRateUsBottomSheetDialogFragment.showInstance(mapActivity.getSupportFragmentManager());\n')
+text, n = re.subn(r'\n\tprivate static void showInAppRateDialog\(FragmentActivity activity\) \{.*\n\}\s*$', '\n}\n', text,
+                  count=1, flags=re.S)
+assert n == 1 and 'ReviewManager' not in text
+with open(root + path, 'w') as f:
+    f.write(text)
+print('OsmAnd goes without Google Play services, billing and review')
+EOF
