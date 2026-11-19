@@ -1,0 +1,9 @@
+Phogram's message reactions are Google's Noto Animated Emoji
+(https://googlefonts.github.io/noto-emoji-animation/), Copyright Google LLC,
+licensed under the Creative Commons Attribution 4.0 International License
+(https://creativecommons.org/licenses/by/4.0/).
+
+Each file is the animation's Lottie JSON as Google publishes it, compressed with gzip
+(the .tgs form Telegram plays); the app scales a copy to half size for the reaction's
+center icon. The files were taken once on 2026-11-19 and ship with the app, so the app
+never fetches them.
