@@ -123,6 +123,7 @@ final class MapLibreMapEngine implements MapEngine {
         // The page has its own compass button, as Telegram's location page does.
         map.getUiSettings().setCompassEnabled(false);
         map.getUiSettings().setAttributionEnabled(true);
+        applyAttributionMargins();
         map.setMaxZoomPreference(19);
         map.setCameraPosition(new CameraPosition.Builder()
                 .target(new LatLng(START_LATITUDE, START_LONGITUDE)).zoom(START_ZOOM).build());
@@ -193,13 +194,23 @@ final class MapLibreMapEngine implements MapEngine {
         }
     }
 
+    private int attributionBottom;
+
     /**
-     * The map runs under the header and the tab bar, as Telegram's pages do, and its center stays the view's, as
-     * the OsmAnd map's did. Setting MapLibre's padding here would also stop a camera move under way, such as the
-     * flight to a place the card has just opened for.
+     * The map runs under the status bar and the tab bar, and its center stays the view's, as the OsmAnd map's did:
+     * setting MapLibre's camera padding would also stop a camera move under way, such as the flight to a place the
+     * card has just opened for. Only OpenStreetMap's credit button moves up, out from under the bars.
      */
     @Override
     public void setPadding(int left, int top, int right, int bottom) {
+        attributionBottom = bottom;
+        applyAttributionMargins();
+    }
+
+    private void applyAttributionMargins() {
+        if (map != null) {
+            map.getUiSettings().setAttributionMargins(AndroidUtilities.dp(12), 0, 0, attributionBottom);
+        }
     }
 
     @Override

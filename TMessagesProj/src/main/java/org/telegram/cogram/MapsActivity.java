@@ -7,6 +7,7 @@ import android.Manifest;
 import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.Canvas;
 import android.graphics.Color;
@@ -18,13 +19,18 @@ import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.text.Editable;
+import android.text.TextWatcher;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.MotionEvent;
+import android.view.VelocityTracker;
 import android.view.View;
+import android.view.ViewConfiguration;
 import android.view.ViewGroup;
-import android.widget.EditText;
+import android.view.inputmethod.EditorInfo;
 import android.widget.FrameLayout;
+import android.widget.HorizontalScrollView;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
@@ -47,16 +53,17 @@ import org.telegram.messenger.R;
 import org.telegram.messenger.SendMessagesHelper;
 import org.telegram.messenger.utils.ViewOutlineProviderImpl;
 import org.telegram.tgnet.TLRPC;
-import org.telegram.ui.ActionBar.ActionBar;
-import org.telegram.ui.ActionBar.ActionBarMenu;
-import org.telegram.ui.ActionBar.ActionBarMenuItem;
+import org.json.JSONArray;
+import org.json.JSONObject;
 import org.telegram.ui.ActionBar.AlertDialog;
 import org.telegram.ui.ActionBar.BaseFragment;
 import org.telegram.ui.ActionBar.Theme;
+import org.telegram.ui.Cells.GraySectionCell;
 import org.telegram.ui.Cells.LocationCell;
 import org.telegram.ui.Components.AlertsCreator;
 import org.telegram.ui.Components.Bulletin;
 import org.telegram.ui.Components.BulletinFactory;
+import org.telegram.ui.Components.CubicBezierInterpolator;
 import org.telegram.ui.Components.EditTextBoldCursor;
 import org.telegram.ui.Components.LayoutHelper;
 import org.telegram.ui.Components.LineProgressView;
@@ -73,10 +80,10 @@ import java.util.ArrayList;
  * menu, as Telegram does when Calls holds this slot).
  *
  * In builds with a map engine the page shows Telegram's progress circle until the tab is first opened, then
- * makes the map, so the engine costs nothing to users who never open the tab. The map fills the page under
- * the header and the tab bar; the header gets the page's color so its title stays readable over the map, and
- * the map's buttons are Telegram's round location-page buttons. Builds without a map engine show an empty
- * state in Telegram's style.
+ * makes the map, so the engine costs nothing to users who never open the tab. The map fills the whole page,
+ * under the status bar and the tab bar, with no header: the search is a floating "Where to?" bar at the bottom
+ * that opens a sheet, and the map's buttons are Telegram's round location-page buttons. Builds without a map
+ * engine show an empty state in Telegram's style.
  *
  * While a map is shown, swipes on it move the map instead of switching tabs.
  */
@@ -88,8 +95,8 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
 
     private FrameLayout contentView;
     private FrameLayout mapContainer;
-    private View headerBackground;
-    private View headerDivider;
+    private View topScrim;
+    private ImageView backButton;
     private LinearLayout emptyView;
     private ImageView emptyIcon;
     private TextView emptyTitle;
@@ -105,14 +112,43 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
     private String dismissedDownload;
 
     private static final long SEARCH_DELAY_MS = 300;
-    private ActionBarMenuItem searchItem;
+    /** A search that has not answered by then says it found nothing, so the sheet never waits for good. */
+    private static final long SEARCH_TIMEOUT_MS = 15000;
+    private static final int MAX_RECENT_PLACES = 10;
+    private static final String RECENT_PREFERENCES = "cogram_maps_recent";
+    private static final String RECENT_KEY = "places";
+    private static final int SEARCH_BAR_HEIGHT = 48;
+
+    private FrameLayout searchBar;
+    private ImageView searchBarIcon;
+    private TextView searchBarText;
+    private View sheetScrim;
+    private SearchSheet searchSheet;
+    private View sheetHandle;
+    private ImageView searchClose;
+    private EditTextBoldCursor searchField;
+    private ImageView searchClear;
+    private RadialProgressView searchProgress;
+    private LinearLayout chipsRow;
+    private FrameLayout listFrame;
+    private boolean searchOpen;
+    private boolean searchRunning;
     private RecyclerListView searchList;
     private SearchAdapter searchAdapter;
     private TextView searchEmpty;
     private String searchQuery = "";
     private boolean searchDone;
     private final ArrayList<MapEngine.Place> searchResults = new ArrayList<>();
+    private final ArrayList<MapEngine.Place> recentPlaces = new ArrayList<>();
     private final Runnable searchRunnable = this::runSearch;
+    private final Runnable searchTimeout = () -> {
+        if (searchDone || searchQuery.isEmpty()) return;
+        searchResults.clear();
+        searchDone = true;
+        searchAdapter.notifyDataSetChanged();
+        setSearchRunning(false);
+        updateSearchEmpty();
+    };
 
     private LinearLayout placeCard;
     private LocationCell placeCell;
@@ -192,66 +228,11 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
 
         contentView = new FrameLayout(context);
 
-        if (!hasMainTabs) {
-            actionBar.setBackButtonImage(R.drawable.ic_ab_back);
-        }
-        actionBar.setAllowOverlayTitle(true);
-        actionBar.setTitle(getString(R.string.PhogramMapsTab));
-        actionBar.setActionBarMenuOnItemClick(new ActionBar.ActionBarMenuOnItemClick() {
-            @Override
-            public void onItemClick(int id) {
-                if (id == -1) {
-                    finishFragment();
-                }
-            }
-        });
+        // The page has no header: the map reaches the top of the screen, under the status bar.
         actionBar.setAddToContainer(false);
-        actionBar.setOccupyStatusBar(true);
-        actionBar.setBackgroundColor(Color.TRANSPARENT);
-        actionBar.setBackground(null);
+        loadRecentPlaces();
 
-        // Telegram's header search, as on its location page: the field opens in the header and the results list
-        // covers the map until a place is picked.
-        final ActionBarMenu menu = actionBar.createMenu();
-        searchItem = menu.addItem(0, R.drawable.outline_header_search, getResourceProvider()).setIsSearchField(true)
-                .setActionBarMenuItemSearchListener(new ActionBarMenuItem.ActionBarMenuItemSearchListener() {
-                    @Override
-                    public void onSearchExpand() {
-                        searchList.setVisibility(View.VISIBLE);
-                        updateSearchEmpty();
-                    }
-
-                    @Override
-                    public void onSearchCollapse() {
-                        AndroidUtilities.cancelRunOnUIThread(searchRunnable);
-                        searchQuery = "";
-                        searchResults.clear();
-                        searchAdapter.notifyDataSetChanged();
-                        searchItem.setShowSearchProgress(false);
-                        searchList.setVisibility(View.GONE);
-                        searchEmpty.setVisibility(View.GONE);
-                    }
-
-                    @Override
-                    public void onTextChanged(EditText editText) {
-                        searchQuery = editText.getText().toString().trim();
-                        AndroidUtilities.cancelRunOnUIThread(searchRunnable);
-                        if (searchQuery.isEmpty()) {
-                            searchResults.clear();
-                            searchAdapter.notifyDataSetChanged();
-                            searchItem.setShowSearchProgress(false);
-                            updateSearchEmpty();
-                        } else {
-                            searchItem.setShowSearchProgress(true);
-                            AndroidUtilities.runOnUIThread(searchRunnable, SEARCH_DELAY_MS);
-                        }
-                    }
-                });
-        searchItem.setSearchFieldHint(getString(R.string.Search));
-        searchItem.setContentDescription(getString(R.string.Search));
-        searchItem.setVisibility(View.GONE);
-
-        // The map fills the whole page; the header and the tab bar float above it.
+        // The map fills the whole page; the tab bar floats above it.
         mapContainer = new FrameLayout(context);
         contentView.addView(mapContainer, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
 
@@ -289,19 +270,25 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         progressView = new RadialProgressView(context, getResourceProvider());
         contentView.addView(progressView, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, Gravity.CENTER));
 
-        // Behind the title over the map. The map is drawn on its own surface, which the glass of Telegram's
-        // headers cannot blur, so the header takes the page's color with Telegram's divider.
-        headerBackground = new View(context);
-        headerBackground.setVisibility(View.GONE);
-        contentView.addView(headerBackground, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.TOP));
-        headerDivider = new View(context);
-        headerDivider.setVisibility(View.GONE);
-        contentView.addView(headerDivider, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.TOP));
+        // A soft fade under the status bar, so the clock, the network and the battery stay readable over the map.
+        topScrim = new View(context);
+        topScrim.setVisibility(View.GONE);
+        contentView.addView(topScrim, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.TOP));
 
-        contentView.addView(actionBar, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.FILL_HORIZONTAL | Gravity.TOP));
+        // Opened from a chat (not as a tab), the page leaves by a round back button over the map.
+        backButton = new ImageView(context);
+        ScaleStateListAnimator.apply(backButton);
+        backButton.setTranslationZ(dp(2));
+        backButton.setOutlineProvider(ViewOutlineProviderImpl.BOUNDS_OVAL);
+        backButton.setImageResource(R.drawable.ic_ab_back);
+        backButton.setScaleType(ImageView.ScaleType.CENTER);
+        backButton.setContentDescription(getString(R.string.AccDescrGoBack));
+        backButton.setVisibility(hasMainTabs ? View.GONE : View.VISIBLE);
+        backButton.setOnClickListener(v -> finishFragment());
+        contentView.addView(backButton, LayoutHelper.createFrame(40, 40, Gravity.LEFT | Gravity.TOP, 12, 0, 0, 0));
 
-        // The location page's round buttons: the device's position at the bottom, north up at the top when the
-        // map is turned.
+        // The location page's round buttons on the right, above the search bar: the device's position, and north
+        // up above it when the map is turned.
         locationButton = new ImageView(context);
         ScaleStateListAnimator.apply(locationButton);
         locationButton.setTranslationZ(dp(2));
@@ -325,13 +312,15 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
                 updateCompass();
             }
         });
-        contentView.addView(compassButton, LayoutHelper.createFrame(40, 40, Gravity.RIGHT | Gravity.TOP, 0, 12, 12, 0));
+        contentView.addView(compassButton, LayoutHelper.createFrame(40, 40, Gravity.RIGHT | Gravity.BOTTOM, 0, 0, 12, 0));
 
-        // The offer of a map file to download, in the strip under the header where Telegram plays voice messages
-        // and music: the action on the left, the name in one line, the close button on the right, and a line that
+        // The offer of a map file to download, a small floating card at the top in the colors of Telegram's player
+        // strip: the action on the left, the name in one line, the close button on the right, and a line that
         // fills with the download.
         downloadCard = new FrameLayout(context);
         downloadCard.setVisibility(View.GONE);
+        downloadCard.setTranslationZ(dp(2));
+        downloadCard.setClipToOutline(true);
         downloadCard.setOnClickListener(v -> onDownloadAction());
         downloadButton = new ImageView(context);
         downloadButton.setScaleType(ImageView.ScaleType.CENTER);
@@ -361,7 +350,7 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         downloadCard.addView(downloadClose, LayoutHelper.createFrame(36, 36, Gravity.RIGHT | Gravity.TOP, 0, 0, 2, 0));
         downloadProgress = new LineProgressView(context);
         downloadCard.addView(downloadProgress, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, 2, Gravity.BOTTOM));
-        contentView.addView(downloadCard, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, 36, Gravity.TOP));
+        contentView.addView(downloadCard, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, 36, Gravity.TOP, 8, 0, 8, 0));
 
         // The pin of the place picked from the search: Telegram's map pin, its point on the place.
         placePin = new ImageView(context);
@@ -402,34 +391,14 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         placeShare.setOnClickListener(v -> sendPlaceToChat());
         placeCard.addView(placeShare, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 44, 14, 2, 14, 14));
         contentView.addView(placeCard, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.BOTTOM, 8, 0, 8, 8));
-
-        // The search results, between the header and the tab bar.
-        searchList = new RecyclerListView(context, getResourceProvider());
-        searchList.setLayoutManager(new LinearLayoutManager(context, LinearLayoutManager.VERTICAL, false));
-        searchList.setAdapter(searchAdapter = new SearchAdapter(context));
-        searchList.setClipToPadding(false);
-        searchList.setVisibility(View.GONE);
-        searchList.setOnItemClickListener((view, position) -> {
-            if (position < 0 || position >= searchResults.size()) return;
-            final MapEngine.Place place = searchResults.get(position);
-            actionBar.closeSearchField();
-            showPlace(place);
-        });
-        searchList.setOnScrollListener(new RecyclerView.OnScrollListener() {
-            @Override
-            public void onScrollStateChanged(@NonNull RecyclerView recyclerView, int newState) {
-                if (newState == RecyclerView.SCROLL_STATE_DRAGGING) {
-                    AndroidUtilities.hideKeyboard(searchItem.getSearchField());
-                }
+        // The round buttons stay above the card whatever its height.
+        placeCard.addOnLayoutChangeListener((v, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> {
+            if (bottom - top != oldBottom - oldTop) {
+                AndroidUtilities.runOnUIThread(this::updateLayout);
             }
         });
-        contentView.addView(searchList, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT, Gravity.TOP));
-        searchEmpty = new TextView(context);
-        searchEmpty.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 15);
-        searchEmpty.setGravity(Gravity.CENTER);
-        searchEmpty.setPadding(dp(32), 0, dp(32), 0);
-        searchEmpty.setVisibility(View.GONE);
-        contentView.addView(searchEmpty, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT, Gravity.TOP));
+
+        createSearch(context);
 
         final boolean engineAvailable = MapEngines.isAvailable();
         emptyView.setVisibility(engineAvailable ? View.GONE : View.VISIBLE);
@@ -439,6 +408,367 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         updateLayout();
         ViewCompat.setOnApplyWindowInsetsListener(contentView, this::onApplyWindowInsets);
         return fragmentView = contentView;
+    }
+
+    /**
+     * The search, as Waze has it: a floating "Where to?" bar above the tab bar opens a sheet from the bottom with
+     * the field, the categories, and the recent places until something is typed. Back, the close button, a tap on
+     * the map above the sheet or dragging the sheet down all close it.
+     */
+    private void createSearch(Context context) {
+        searchBar = new FrameLayout(context);
+        searchBar.setVisibility(View.GONE);
+        searchBar.setTranslationZ(dp(3));
+        searchBar.setContentDescription(getString(R.string.PhogramMapsWhereTo));
+        ScaleStateListAnimator.apply(searchBar, 0.02f, 1.2f);
+        searchBar.setOnClickListener(v -> openSearch());
+        searchBarIcon = new ImageView(context);
+        searchBarIcon.setImageResource(R.drawable.outline_header_search);
+        searchBarIcon.setScaleType(ImageView.ScaleType.CENTER);
+        searchBar.addView(searchBarIcon, LayoutHelper.createFrame(48, 48, (LocaleController.isRTL ? Gravity.RIGHT : Gravity.LEFT) | Gravity.CENTER_VERTICAL, 4, 0, 4, 0));
+        searchBarText = new TextView(context);
+        searchBarText.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 16);
+        searchBarText.setSingleLine(true);
+        searchBarText.setText(getString(R.string.PhogramMapsWhereTo));
+        searchBarText.setGravity(Gravity.CENTER_VERTICAL | (LocaleController.isRTL ? Gravity.RIGHT : Gravity.LEFT));
+        searchBar.addView(searchBarText, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT, Gravity.TOP,
+                LocaleController.isRTL ? 16 : 52, 0, LocaleController.isRTL ? 52 : 16, 0));
+        contentView.addView(searchBar, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, SEARCH_BAR_HEIGHT, Gravity.BOTTOM, 12, 0, 12, 0));
+
+        sheetScrim = new View(context);
+        sheetScrim.setVisibility(View.GONE);
+        sheetScrim.setOnClickListener(v -> closeSearch());
+        contentView.addView(sheetScrim, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
+
+        searchSheet = new SearchSheet(context);
+        searchSheet.setOrientation(LinearLayout.VERTICAL);
+        searchSheet.setVisibility(View.GONE);
+        searchSheet.setClickable(true);
+        searchSheet.setTranslationZ(dp(4));
+
+        // Telegram's sheet handle: the sheet is dragged down by it, or anywhere above the list.
+        final FrameLayout handleFrame = new FrameLayout(context);
+        sheetHandle = new View(context);
+        handleFrame.addView(sheetHandle, LayoutHelper.createFrame(36, 4, Gravity.CENTER));
+        searchSheet.addView(handleFrame, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 16));
+
+        final FrameLayout header = new FrameLayout(context);
+        searchClose = new ImageView(context);
+        searchClose.setImageResource(R.drawable.ic_close_white);
+        searchClose.setScaleType(ImageView.ScaleType.CENTER);
+        searchClose.setContentDescription(getString(R.string.Close));
+        searchClose.setOnClickListener(v -> closeSearch());
+        header.addView(searchClose, LayoutHelper.createFrame(48, 48, Gravity.LEFT | Gravity.CENTER_VERTICAL, 4, 0, 0, 0));
+        searchField = new EditTextBoldCursor(context);
+        searchField.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 17);
+        searchField.setBackground(null);
+        searchField.setSingleLine(true);
+        searchField.setPadding(0, 0, 0, 0);
+        searchField.setHint(getString(R.string.PhogramMapsSearchHint));
+        searchField.setGravity(Gravity.CENTER_VERTICAL | (LocaleController.isRTL ? Gravity.RIGHT : Gravity.LEFT));
+        searchField.setImeOptions(EditorInfo.IME_ACTION_SEARCH | EditorInfo.IME_FLAG_NO_EXTRACT_UI);
+        searchField.setCursorSize(dp(20));
+        searchField.setCursorWidth(1.5f);
+        searchField.setOnEditorActionListener((v, actionId, event) -> {
+            if (actionId == EditorInfo.IME_ACTION_SEARCH) {
+                AndroidUtilities.hideKeyboard(searchField);
+                return true;
+            }
+            return false;
+        });
+        searchField.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {
+            }
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+            }
+
+            @Override
+            public void afterTextChanged(Editable s) {
+                onSearchTextChanged(s.toString().trim());
+            }
+        });
+        header.addView(searchField, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, 48, Gravity.TOP, 56, 0, 48, 0));
+        searchClear = new ImageView(context);
+        searchClear.setImageResource(R.drawable.msg_clear_input);
+        searchClear.setScaleType(ImageView.ScaleType.CENTER);
+        searchClear.setContentDescription(getString(R.string.ClearButton));
+        searchClear.setVisibility(View.GONE);
+        searchClear.setOnClickListener(v -> {
+            searchField.setText("");
+            AndroidUtilities.showKeyboard(searchField);
+        });
+        header.addView(searchClear, LayoutHelper.createFrame(48, 48, Gravity.RIGHT | Gravity.CENTER_VERTICAL));
+        searchProgress = new RadialProgressView(context, getResourceProvider());
+        searchProgress.setSize(dp(18));
+        searchProgress.setVisibility(View.GONE);
+        header.addView(searchProgress, LayoutHelper.createFrame(48, 48, Gravity.RIGHT | Gravity.CENTER_VERTICAL));
+        searchSheet.addView(header, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 48));
+
+        // Places to look for with one tap, as the categories under Waze's search; each one searches its word.
+        final HorizontalScrollView chipsScroll = new HorizontalScrollView(context);
+        chipsScroll.setHorizontalScrollBarEnabled(false);
+        chipsScroll.setClipToPadding(false);
+        chipsScroll.setPadding(dp(10), 0, dp(10), 0);
+        chipsRow = new LinearLayout(context);
+        chipsRow.setOrientation(LinearLayout.HORIZONTAL);
+        final int[][] categories = {
+                { R.string.PhogramMapsRestaurants, R.string.PhogramMapsRestaurantsQuery },
+                { R.string.PhogramMapsFuel, R.string.PhogramMapsFuelQuery },
+                { R.string.PhogramMapsHospitals, R.string.PhogramMapsHospitalsQuery },
+                { R.string.PhogramMapsPharmacies, R.string.PhogramMapsPharmaciesQuery },
+                { R.string.PhogramMapsMosques, R.string.PhogramMapsMosquesQuery },
+                { R.string.PhogramMapsAtms, R.string.PhogramMapsAtmsQuery },
+        };
+        for (int[] category : categories) {
+            final TextView chip = new TextView(context);
+            chip.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 14);
+            chip.setGravity(Gravity.CENTER);
+            chip.setSingleLine(true);
+            chip.setPadding(dp(14), 0, dp(14), 0);
+            chip.setText(getString(category[0]));
+            final String query = getString(category[1]);
+            ScaleStateListAnimator.apply(chip, 0.04f, 1.2f);
+            chip.setOnClickListener(v -> {
+                searchField.setText(query);
+                searchField.setSelection(searchField.length());
+                AndroidUtilities.hideKeyboard(searchField);
+            });
+            chipsRow.addView(chip, LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, 32, 0f, Gravity.CENTER_VERTICAL, 3, 0, 3, 0));
+        }
+        chipsScroll.addView(chipsRow, LayoutHelper.createScroll(LayoutHelper.WRAP_CONTENT, 44, Gravity.LEFT));
+        searchSheet.addView(chipsScroll, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 44, 0, 0, 0, 4));
+
+        listFrame = new FrameLayout(context);
+        searchList = new RecyclerListView(context, getResourceProvider());
+        searchList.setLayoutManager(new LinearLayoutManager(context, LinearLayoutManager.VERTICAL, false));
+        searchList.setAdapter(searchAdapter = new SearchAdapter(context));
+        searchList.setClipToPadding(false);
+        searchList.setContentDescription(getString(R.string.PhogramMapsSearchResults));
+        searchList.setOnItemClickListener((view, position) -> {
+            final MapEngine.Place place = searchAdapter.placeAt(position);
+            if (place == null) return;
+            addRecentPlace(place);
+            closeSearch();
+            showPlace(place);
+        });
+        searchList.setOnScrollListener(new RecyclerView.OnScrollListener() {
+            @Override
+            public void onScrollStateChanged(@NonNull RecyclerView recyclerView, int newState) {
+                if (newState == RecyclerView.SCROLL_STATE_DRAGGING) {
+                    AndroidUtilities.hideKeyboard(searchField);
+                }
+            }
+        });
+        listFrame.addView(searchList, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
+        searchEmpty = new TextView(context);
+        searchEmpty.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 15);
+        searchEmpty.setGravity(Gravity.CENTER_HORIZONTAL);
+        searchEmpty.setPadding(dp(32), dp(48), dp(32), 0);
+        searchEmpty.setText(getString(R.string.NoResult));
+        searchEmpty.setVisibility(View.GONE);
+        listFrame.addView(searchEmpty, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.TOP));
+        searchSheet.addView(listFrame, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 0, 1f));
+
+        contentView.addView(searchSheet, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT, Gravity.TOP));
+    }
+
+    private void openSearch() {
+        if (searchOpen || mapEngine == null) return;
+        searchOpen = true;
+        searchAdapter.notifyDataSetChanged();
+        updateSearchEmpty();
+        sheetScrim.setVisibility(View.VISIBLE);
+        sheetScrim.animate().cancel();
+        sheetScrim.animate().alpha(1f).setDuration(250).start();
+        searchSheet.setVisibility(View.VISIBLE);
+        searchSheet.animate().cancel();
+        searchSheet.setTranslationY(contentView.getHeight());
+        searchSheet.animate().translationY(0).setDuration(320).setInterpolator(CubicBezierInterpolator.EASE_OUT_QUINT).start();
+        searchField.requestFocus();
+        AndroidUtilities.showKeyboard(searchField);
+    }
+
+    /** Closes the sheet and forgets what was typed; the recent places stay for the next time. */
+    private void closeSearch() {
+        if (!searchOpen) return;
+        searchOpen = false;
+        AndroidUtilities.hideKeyboard(searchField);
+        AndroidUtilities.cancelRunOnUIThread(searchRunnable);
+        AndroidUtilities.cancelRunOnUIThread(searchTimeout);
+        sheetScrim.animate().cancel();
+        sheetScrim.animate().alpha(0f).setDuration(200).withEndAction(() -> {
+            if (!searchOpen) sheetScrim.setVisibility(View.GONE);
+        }).start();
+        searchSheet.animate().cancel();
+        searchSheet.animate().translationY(Math.max(searchSheet.getHeight(), dp(100))).setDuration(220)
+                .setInterpolator(CubicBezierInterpolator.EASE_IN).withEndAction(() -> {
+                    if (searchOpen) return;
+                    searchSheet.setVisibility(View.GONE);
+                    searchField.setText("");
+                }).start();
+    }
+
+    private void onSearchTextChanged(String query) {
+        if (query.equals(searchQuery)) return;
+        searchQuery = query;
+        AndroidUtilities.cancelRunOnUIThread(searchRunnable);
+        AndroidUtilities.cancelRunOnUIThread(searchTimeout);
+        searchResults.clear();
+        searchDone = false;
+        searchAdapter.notifyDataSetChanged();
+        if (query.isEmpty()) {
+            setSearchRunning(false);
+        } else {
+            setSearchRunning(true);
+            AndroidUtilities.runOnUIThread(searchRunnable, SEARCH_DELAY_MS);
+        }
+        updateSearchEmpty();
+    }
+
+    private void setSearchRunning(boolean running) {
+        searchRunning = running;
+        searchProgress.setVisibility(running ? View.VISIBLE : View.GONE);
+        searchClear.setVisibility(!running && !searchQuery.isEmpty() ? View.VISIBLE : View.GONE);
+    }
+
+    // The recent places, kept on the phone only, newest first.
+
+    private static SharedPreferences recentPreferences() {
+        return ApplicationLoader.applicationContext.getSharedPreferences(RECENT_PREFERENCES, Context.MODE_PRIVATE);
+    }
+
+    private void loadRecentPlaces() {
+        recentPlaces.clear();
+        try {
+            final JSONArray array = new JSONArray(recentPreferences().getString(RECENT_KEY, "[]"));
+            for (int i = 0; i < array.length() && recentPlaces.size() < MAX_RECENT_PLACES; i++) {
+                final JSONObject item = array.getJSONObject(i);
+                recentPlaces.add(new MapEngine.Place(item.optString("name"), item.optString("address"),
+                        item.getDouble("lat"), item.getDouble("lon")));
+            }
+        } catch (Exception e) {
+            FileLog.e(e);
+        }
+    }
+
+    private void addRecentPlace(MapEngine.Place place) {
+        for (int i = recentPlaces.size() - 1; i >= 0; i--) {
+            final MapEngine.Place old = recentPlaces.get(i);
+            if (old.name.equals(place.name) && Math.abs(old.latitude - place.latitude) < 1e-6 && Math.abs(old.longitude - place.longitude) < 1e-6) {
+                recentPlaces.remove(i);
+            }
+        }
+        recentPlaces.add(0, place);
+        while (recentPlaces.size() > MAX_RECENT_PLACES) {
+            recentPlaces.remove(recentPlaces.size() - 1);
+        }
+        saveRecentPlaces();
+    }
+
+    private void clearRecentPlaces() {
+        recentPlaces.clear();
+        saveRecentPlaces();
+        searchAdapter.notifyDataSetChanged();
+    }
+
+    private void saveRecentPlaces() {
+        try {
+            final JSONArray array = new JSONArray();
+            for (MapEngine.Place place : recentPlaces) {
+                final JSONObject item = new JSONObject();
+                item.put("name", place.name);
+                item.put("address", place.address == null ? "" : place.address);
+                item.put("lat", place.latitude);
+                item.put("lon", place.longitude);
+                array.put(item);
+            }
+            recentPreferences().edit().putString(RECENT_KEY, array.toString()).apply();
+        } catch (Exception e) {
+            FileLog.e(e);
+        }
+    }
+
+    /** The search sheet, dragged down by its top or by the list once it is scrolled to its start. */
+    private class SearchSheet extends LinearLayout {
+
+        private final int touchSlop;
+        private float startX;
+        private float startY;
+        private boolean dragging;
+        private VelocityTracker velocityTracker;
+
+        SearchSheet(Context context) {
+            super(context);
+            touchSlop = ViewConfiguration.get(context).getScaledTouchSlop();
+        }
+
+        @Override
+        public boolean onInterceptTouchEvent(MotionEvent ev) {
+            switch (ev.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    startX = ev.getRawX();
+                    startY = ev.getRawY();
+                    dragging = false;
+                    break;
+                case MotionEvent.ACTION_MOVE:
+                    final float dx = ev.getRawX() - startX;
+                    final float dy = ev.getRawY() - startY;
+                    if (!dragging && dy > touchSlop && dy > Math.abs(dx)
+                            && (ev.getY() < listFrame.getTop() || !searchList.canScrollVertically(-1))) {
+                        startDrag(ev);
+                        return true;
+                    }
+                    break;
+            }
+            return dragging;
+        }
+
+        private void startDrag(MotionEvent ev) {
+            dragging = true;
+            startY = ev.getRawY() - getTranslationY();
+            animate().cancel();
+            AndroidUtilities.hideKeyboard(searchField);
+            if (velocityTracker != null) velocityTracker.recycle();
+            velocityTracker = VelocityTracker.obtain();
+        }
+
+        @Override
+        public boolean onTouchEvent(MotionEvent ev) {
+            final int action = ev.getActionMasked();
+            if (action == MotionEvent.ACTION_DOWN) {
+                // A touch on the handle, or on the sheet around its views, drags the sheet at once.
+                startDrag(ev);
+            }
+            if (!dragging) return super.onTouchEvent(ev);
+            if (velocityTracker != null) {
+                // The sheet itself moves, so the speed is taken in screen coordinates.
+                final MotionEvent screen = MotionEvent.obtain(ev);
+                screen.setLocation(ev.getRawX(), ev.getRawY());
+                velocityTracker.addMovement(screen);
+                screen.recycle();
+            }
+            if (action == MotionEvent.ACTION_MOVE) {
+                setTranslationY(Math.max(0, ev.getRawY() - startY));
+            } else if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+                float velocity = 0;
+                if (velocityTracker != null) {
+                    velocityTracker.computeCurrentVelocity(1000);
+                    velocity = velocityTracker.getYVelocity();
+                    velocityTracker.recycle();
+                    velocityTracker = null;
+                }
+                dragging = false;
+                if (getTranslationY() > getHeight() / 4f || velocity > dp(1000)) {
+                    closeSearch();
+                } else {
+                    animate().translationY(0).setDuration(200).setInterpolator(CubicBezierInterpolator.EASE_OUT_QUINT).start();
+                }
+            }
+            return true;
+        }
     }
 
     @Override
@@ -505,24 +835,37 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
     private void runSearch() {
         if (mapEngine == null || searchQuery.isEmpty()) return;
         final String query = searchQuery;
+        searchDone = false;
+        AndroidUtilities.cancelRunOnUIThread(searchTimeout);
+        AndroidUtilities.runOnUIThread(searchTimeout, SEARCH_TIMEOUT_MS);
         mapEngine.search(query, (resultQuery, places) -> {
             if (!resultQuery.equals(searchQuery)) return;
+            // A late answer after the time limit still replaces "No results".
+            AndroidUtilities.cancelRunOnUIThread(searchTimeout);
             searchResults.clear();
             searchResults.addAll(places);
             searchDone = true;
             searchAdapter.notifyDataSetChanged();
-            searchItem.setShowSearchProgress(false);
+            setSearchRunning(false);
             updateSearchEmpty();
         });
-        searchDone = false;
     }
 
     private void updateSearchEmpty() {
         if (searchEmpty == null) return;
-        // Nothing found says so; nothing typed yet leaves the list blank, as Telegram's search does.
-        final boolean show = searchList.getVisibility() == View.VISIBLE && searchDone && !searchQuery.isEmpty() && searchResults.isEmpty();
-        searchEmpty.setText(getString(R.string.NoResult));
+        // Nothing found says so; nothing typed yet shows the recent places, as Telegram's search does.
+        final boolean show = searchOpen && searchDone && !searchQuery.isEmpty() && searchResults.isEmpty();
         searchEmpty.setVisibility(show ? View.VISIBLE : View.GONE);
+    }
+
+    /** The "Where to?" bar shows over the map, except while a place's card takes its spot. */
+    private void updateSearchBar() {
+        if (searchBar == null) return;
+        final boolean show = mapEngine != null && mapContainer.getVisibility() == View.VISIBLE && shownPlace == null;
+        if (show != (searchBar.getVisibility() == View.VISIBLE)) {
+            searchBar.setVisibility(show ? View.VISIBLE : View.GONE);
+            updateLayout();
+        }
     }
 
     private void showPlace(MapEngine.Place place) {
@@ -535,6 +878,8 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         placeCell.setLocation(venue, null, 2, false, false);
         placeCard.setVisibility(View.VISIBLE);
         placePin.setVisibility(View.INVISIBLE);
+        updateSearchBar();
+        updateLayout();
         mapEngine.showPlace(place, (x, y) -> {
             if (shownPlace != place) return;
             // The pin's point is the middle of its bottom edge.
@@ -551,6 +896,8 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         if (mapEngine != null) {
             mapEngine.showPlace(null, null);
         }
+        updateSearchBar();
+        updateLayout();
     }
 
     private void sharePlace() {
@@ -606,6 +953,11 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
 
     @Override
     public boolean onBackPressed(boolean invoked) {
+        // The tabs page passes back to this tab first: it closes the search, then the place's card.
+        if (searchOpen) {
+            if (invoked) closeSearch();
+            return false;
+        }
         // On the screen a chat's location opened, back leaves the screen as Telegram's location screen does.
         if (shownPlace != null && hasMainTabs) {
             if (invoked) hidePlace();
@@ -622,32 +974,62 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
             this.context = context;
         }
 
+        private static final int TYPE_PLACE = 0;
+        private static final int TYPE_HEADER = 1;
+
+        /** Nothing typed: the recent places under Telegram's gray "Recent" header with its Clear button. */
+        private boolean showsRecent() {
+            return searchQuery.isEmpty();
+        }
+
+        MapEngine.Place placeAt(int position) {
+            if (showsRecent()) {
+                return position >= 1 && position <= recentPlaces.size() ? recentPlaces.get(position - 1) : null;
+            }
+            return position >= 0 && position < searchResults.size() ? searchResults.get(position) : null;
+        }
+
         @Override
         public int getItemCount() {
+            if (showsRecent()) {
+                return recentPlaces.isEmpty() ? 0 : recentPlaces.size() + 1;
+            }
             return searchResults.size();
         }
 
         @Override
+        public int getItemViewType(int position) {
+            return showsRecent() && position == 0 ? TYPE_HEADER : TYPE_PLACE;
+        }
+
+        @Override
         public boolean isEnabled(RecyclerView.ViewHolder holder) {
-            return true;
+            return holder.getItemViewType() == TYPE_PLACE;
         }
 
         @NonNull
         @Override
         public RecyclerView.ViewHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
-            final LocationCell cell = new LocationCell(context, false, getResourceProvider());
-            cell.setLayoutParams(new RecyclerView.LayoutParams(RecyclerView.LayoutParams.MATCH_PARENT, RecyclerView.LayoutParams.WRAP_CONTENT));
-            return new RecyclerListView.Holder(cell);
+            final View view = viewType == TYPE_HEADER
+                    ? new GraySectionCell(context, getResourceProvider())
+                    : new LocationCell(context, false, getResourceProvider());
+            view.setLayoutParams(new RecyclerView.LayoutParams(RecyclerView.LayoutParams.MATCH_PARENT, RecyclerView.LayoutParams.WRAP_CONTENT));
+            return new RecyclerListView.Holder(view);
         }
 
         @Override
         public void onBindViewHolder(@NonNull RecyclerView.ViewHolder holder, int position) {
-            final MapEngine.Place place = searchResults.get(position);
+            if (holder.getItemViewType() == TYPE_HEADER) {
+                ((GraySectionCell) holder.itemView).setText(getString(R.string.Recent), getString(R.string.ClearButton), v -> clearRecentPlaces());
+                return;
+            }
+            final MapEngine.Place place = placeAt(position);
+            if (place == null) return;
             final TLRPC.TL_messageMediaVenue venue = new TLRPC.TL_messageMediaVenue();
             venue.title = place.name;
             venue.address = place.address;
             venue.icon = "pin";
-            ((LocationCell) holder.itemView).setLocation(venue, null, position, position != searchResults.size() - 1, false);
+            ((LocationCell) holder.itemView).setLocation(venue, null, position, position != getItemCount() - 1, false);
         }
     }
 
@@ -667,7 +1049,7 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         progressView.setVisibility(View.GONE);
         mapContainer.setVisibility(View.VISIBLE);
         locationButton.setVisibility(View.VISIBLE);
-        searchItem.setVisibility(View.VISIBLE);
+        updateSearchBar();
         updateCompass();
         updateDownloadCard();
         if (openedPlace != null) {
@@ -735,8 +1117,9 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
 
     private void applyMapPadding() {
         if (mapEngine != null) {
+            // The map's own marks (OpenStreetMap's credit) sit above the search bar, clear of the floating views.
             final int[] padding = getMapPadding();
-            mapEngine.setPadding(padding[0], padding[1], padding[2], padding[3]);
+            mapEngine.setPadding(padding[0], padding[1], padding[2], padding[3] + dp(12 + SEARCH_BAR_HEIGHT + 8));
         }
     }
 
@@ -764,19 +1147,25 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         }
         final boolean hasMap = view != null;
         emptyView.setVisibility(hasMap ? View.GONE : View.VISIBLE);
-        headerBackground.setVisibility(hasMap ? View.VISIBLE : View.GONE);
-        headerDivider.setVisibility(hasMap ? View.VISIBLE : View.GONE);
+        topScrim.setVisibility(hasMap ? View.VISIBLE : View.GONE);
         if (!hasMap) {
             locationButton.setVisibility(View.GONE);
         }
         updateCompass();
+        updateStatusBar();
     }
 
-    /** How much of the top and bottom edges the header and the tab bar cover, for the map's own padding. */
+    /** The status bar's icons follow the map's colors: dark on the light map, light on the dark one. */
+    private void updateStatusBar() {
+        if (pageResumed && getParentActivity() != null) {
+            AndroidUtilities.setLightStatusBar(getParentActivity().getWindow(), isLightStatusBar());
+        }
+    }
+
+    /** How much of the top and bottom edges the status bar and the tab bar cover. */
     public int[] getMapPadding() {
-        final int top = statusBarHeight + ActionBar.getCurrentActionBarHeight();
         final int bottom = navigationBarHeight + (hasMainTabs ? dp(DialogsActivity.MAIN_TABS_HEIGHT_WITH_MARGINS) : 0);
-        return new int[] { 0, top, 0, bottom };
+        return new int[] { 0, statusBarHeight, 0, bottom };
     }
 
     private void updateLayout() {
@@ -786,45 +1175,78 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         emptyView.setPadding(dp(32), padding[1], dp(32), padding[3]);
         progressView.setTranslationY((padding[1] - padding[3]) / 2f);
 
-        headerBackground.getLayoutParams().height = padding[1];
-        final FrameLayout.LayoutParams divider = (FrameLayout.LayoutParams) headerDivider.getLayoutParams();
-        divider.height = Math.max(1, AndroidUtilities.getShadowHeight());
-        divider.topMargin = padding[1];
+        topScrim.getLayoutParams().height = padding[1] + dp(20);
+        ((FrameLayout.LayoutParams) backButton.getLayoutParams()).topMargin = padding[1] + dp(8);
+        // The download card floats under the status bar, beside the back button when there is one.
+        final FrameLayout.LayoutParams card = (FrameLayout.LayoutParams) downloadCard.getLayoutParams();
+        card.topMargin = padding[1] + dp(10);
+        card.leftMargin = backButton.getVisibility() == View.VISIBLE ? dp(60) : dp(8);
 
-        ((FrameLayout.LayoutParams) locationButton.getLayoutParams()).bottomMargin = padding[3] + dp(12);
-        // The download strip hangs under the header; Telegram's divider and the north button move below it.
-        final int strip = downloadCard.getVisibility() == View.VISIBLE ? dp(36) : 0;
-        ((FrameLayout.LayoutParams) downloadCard.getLayoutParams()).topMargin = padding[1];
-        divider.topMargin = padding[1] + strip;
-        ((FrameLayout.LayoutParams) compassButton.getLayoutParams()).topMargin = padding[1] + strip + dp(12);
-        // The results start under the header and scroll out from under the tab bar.
-        ((FrameLayout.LayoutParams) searchList.getLayoutParams()).topMargin = padding[1];
-        searchList.setPadding(0, 0, 0, padding[3]);
-        searchEmpty.setPadding(dp(32), padding[1], dp(32), padding[3]);
+        // From the bottom up: the tab bar, the search bar or the place's card, then the round buttons.
+        ((FrameLayout.LayoutParams) searchBar.getLayoutParams()).bottomMargin = padding[3] + dp(12);
         ((FrameLayout.LayoutParams) placeCard.getLayoutParams()).bottomMargin = padding[3] + dp(8);
+        int buttons = padding[3] + dp(12);
+        if (placeCard.getVisibility() == View.VISIBLE) {
+            buttons = padding[3] + dp(8) + placeCard.getHeight() + dp(12);
+        } else if (searchBar.getVisibility() == View.VISIBLE) {
+            buttons += dp(SEARCH_BAR_HEIGHT) + dp(12);
+        }
+        ((FrameLayout.LayoutParams) locationButton.getLayoutParams()).bottomMargin = buttons;
+        ((FrameLayout.LayoutParams) compassButton.getLayoutParams()).bottomMargin = buttons + dp(40 + 12);
+
+        // The sheet rises to just under the status bar, and its list scrolls out from under the tab bar.
+        ((FrameLayout.LayoutParams) searchSheet.getLayoutParams()).topMargin = padding[1] + dp(8);
+        searchList.setPadding(0, 0, 0, padding[3] + dp(8));
         contentView.requestLayout();
+        applyMapPadding();
     }
 
     private void updateColors() {
         if (contentView == null) return;
         contentView.setBackgroundColor(getThemedColor(Theme.key_windowBackgroundGray));
-        actionBar.setTitleColor(getThemedColor(Theme.key_windowBackgroundWhiteBlackText));
-        actionBar.setItemsColor(getThemedColor(Theme.key_windowBackgroundWhiteBlackText), false);
         emptyTitle.setTextColor(getThemedColor(Theme.key_windowBackgroundWhiteBlackText));
         emptyText.setTextColor(getThemedColor(Theme.key_windowBackgroundWhiteGrayText));
         progressView.setProgressColor(getThemedColor(Theme.key_progressCircle));
-        headerBackground.setBackgroundColor(getThemedColor(Theme.key_windowBackgroundWhite));
-        headerDivider.setBackgroundColor(getThemedColor(Theme.key_divider));
+        final boolean dark = Theme.isCurrentThemeDark();
+        topScrim.setBackground(new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[] { dark ? 0x66000000 : 0x99ffffff, 0 }));
+        backButton.setBackground(Theme.createSimpleSelectorCircleDrawable(dp(40), getThemedColor(Theme.key_location_actionBackground), getThemedColor(Theme.key_location_actionPressedBackground)));
+        backButton.setColorFilter(new PorterDuffColorFilter(getThemedColor(Theme.key_location_actionIcon), PorterDuff.Mode.MULTIPLY));
+
+        // The search bar and its sheet, in the colors of Telegram's cards and sheets.
+        final GradientDrawable barBackground = new GradientDrawable();
+        barBackground.setCornerRadius(dp(SEARCH_BAR_HEIGHT / 2));
+        barBackground.setColor(getThemedColor(Theme.key_windowBackgroundWhite));
+        searchBar.setBackground(barBackground);
+        searchBarIcon.setColorFilter(new PorterDuffColorFilter(getThemedColor(Theme.key_windowBackgroundWhiteGrayIcon), PorterDuff.Mode.MULTIPLY));
+        searchBarText.setTextColor(getThemedColor(Theme.key_windowBackgroundWhiteHintText));
+        sheetScrim.setBackgroundColor(0x33000000);
+        final GradientDrawable sheetBackground = new GradientDrawable();
+        sheetBackground.setCornerRadii(new float[] { dp(14), dp(14), dp(14), dp(14), 0, 0, 0, 0 });
+        sheetBackground.setColor(getThemedColor(Theme.key_windowBackgroundWhite));
+        searchSheet.setBackground(sheetBackground);
+        final GradientDrawable handleBackground = new GradientDrawable();
+        handleBackground.setCornerRadius(dp(2));
+        handleBackground.setColor(getThemedColor(Theme.key_sheet_scrollUp));
+        sheetHandle.setBackground(handleBackground);
+        searchClose.setColorFilter(new PorterDuffColorFilter(getThemedColor(Theme.key_windowBackgroundWhiteGrayIcon), PorterDuff.Mode.MULTIPLY));
+        searchClose.setBackground(Theme.createSelectorDrawable(getThemedColor(Theme.key_listSelector), 1, dp(20)));
+        searchClear.setColorFilter(new PorterDuffColorFilter(getThemedColor(Theme.key_windowBackgroundWhiteGrayIcon), PorterDuff.Mode.MULTIPLY));
+        searchClear.setBackground(Theme.createSelectorDrawable(getThemedColor(Theme.key_listSelector), 1, dp(20)));
+        searchProgress.setProgressColor(getThemedColor(Theme.key_progressCircle));
+        searchField.setTextColor(getThemedColor(Theme.key_windowBackgroundWhiteBlackText));
+        searchField.setCursorColor(getThemedColor(Theme.key_windowBackgroundWhiteBlackText));
+        searchField.setHintTextColor(getThemedColor(Theme.key_windowBackgroundWhiteHintText));
+        for (int i = 0; i < chipsRow.getChildCount(); i++) {
+            final TextView chip = (TextView) chipsRow.getChildAt(i);
+            chip.setTextColor(getThemedColor(Theme.key_windowBackgroundWhiteBlackText));
+            chip.setBackground(Theme.createSimpleSelectorRoundRectDrawable(dp(16), getThemedColor(Theme.key_windowBackgroundGray), getThemedColor(Theme.key_listSelector)));
+        }
+        searchEmpty.setTextColor(getThemedColor(Theme.key_windowBackgroundWhiteGrayText));
 
         locationButton.setBackground(Theme.createSimpleSelectorCircleDrawable(dp(40), getThemedColor(Theme.key_location_actionBackground), getThemedColor(Theme.key_location_actionPressedBackground)));
         locationButton.setColorFilter(new PorterDuffColorFilter(getThemedColor(Theme.key_location_actionActiveIcon), PorterDuff.Mode.MULTIPLY));
         compassButton.setBackground(Theme.createSimpleSelectorCircleDrawable(dp(40), getThemedColor(Theme.key_location_actionBackground), getThemedColor(Theme.key_location_actionPressedBackground)));
-        searchList.setBackgroundColor(getThemedColor(Theme.key_windowBackgroundWhite));
-        searchEmpty.setTextColor(getThemedColor(Theme.key_windowBackgroundWhiteGrayText));
-        final EditTextBoldCursor searchField = searchItem.getSearchField();
-        searchField.setTextColor(getThemedColor(Theme.key_windowBackgroundWhiteBlackText));
-        searchField.setCursorColor(getThemedColor(Theme.key_windowBackgroundWhiteBlackText));
-        searchField.setHintTextColor(getThemedColor(Theme.key_windowBackgroundWhiteHintText));
         final GradientDrawable placeBackground = new GradientDrawable();
         placeBackground.setCornerRadius(dp(14));
         placeBackground.setColor(getThemedColor(Theme.key_windowBackgroundWhite));
@@ -836,7 +1258,10 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         placeShare.setTextColor(getThemedColor(Theme.key_featuredStickers_buttonText));
         placeShare.setBackground(Theme.createSimpleSelectorRoundRectDrawable(dp(8), getThemedColor(Theme.key_featuredStickers_addButton), getThemedColor(Theme.key_featuredStickers_addButtonPressed)));
         // The player strip's colors.
-        downloadCard.setBackgroundColor(getThemedColor(Theme.key_inappPlayerBackground));
+        final GradientDrawable cardBackground = new GradientDrawable();
+        cardBackground.setCornerRadius(dp(12));
+        cardBackground.setColor(getThemedColor(Theme.key_inappPlayerBackground));
+        downloadCard.setBackground(cardBackground);
         downloadTitle.setTextColor(getThemedColor(Theme.key_inappPlayerTitle));
         downloadButton.setColorFilter(new PorterDuffColorFilter(getThemedColor(Theme.key_inappPlayerPlayPause), PorterDuff.Mode.MULTIPLY));
         downloadButton.setBackground(Theme.createSelectorDrawable(getThemedColor(Theme.key_inappPlayerPlayPause) & 0x19ffffff, 1, dp(14)));
@@ -943,6 +1368,9 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         Bulletin.removeDelegate(this);
         pageResumed = false;
         AndroidUtilities.cancelRunOnUIThread(compassCheck);
+        if (searchField != null) {
+            AndroidUtilities.hideKeyboard(searchField);
+        }
         // The map pauses so it does not use the battery while another tab is open.
         if (mapEngine != null) {
             mapEngine.onPause();
@@ -951,8 +1379,11 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
 
     @Override
     public boolean isLightStatusBar() {
-        final int key = mapView != null ? Theme.key_windowBackgroundWhite : Theme.key_windowBackgroundGray;
-        return AndroidUtilities.computePerceivedBrightness(getThemedColor(key)) > 0.721f;
+        // Over the map the icons follow its style (light or dark, as the app's theme); before it, the page's color.
+        if (mapView != null) {
+            return !Theme.isCurrentThemeDark();
+        }
+        return AndroidUtilities.computePerceivedBrightness(getThemedColor(Theme.key_windowBackgroundGray)) > 0.721f;
     }
 
     @Override

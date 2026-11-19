@@ -31,6 +31,22 @@ tap_view() {
   adb shell input tap $(( ($1 + $3) / 2 )) $(( ($2 + $4) / 2 ))
 }
 
+# Taps near the top of the first matching view, where a list shows its first row.
+tap_view_top() {
+  local pattern="$1"
+  adb shell uiautomator dump /sdcard/ui.xml > /dev/null || true
+  local bounds
+  bounds=$(adb exec-out cat /sdcard/ui.xml | grep -oE "<node [^>]*${pattern}[^>]*>" | head -1 \
+    | grep -oE 'bounds="\[[0-9]+,[0-9]+\]\[[0-9]+,[0-9]+\]"' | grep -oE '[0-9]+' | tr '\n' ' ')
+  set -- $bounds
+  if [ $# -ne 4 ]; then
+    echo "No view matches $pattern" | tee -a "$OUT/steps.txt"
+    return 1
+  fi
+  echo "Tap top of $pattern" >> "$OUT/steps.txt"
+  adb shell input tap $(( ($1 + $3) / 2 )) $(( $2 + 30 ))
+}
+
 dump_screen() {
   adb exec-out screencap -p > "$OUT/$1.png" || true
   adb shell uiautomator dump /sdcard/ui.xml > /dev/null || true
@@ -165,13 +181,27 @@ for fix in 1 2 3; do
 done
 sleep 5
 adb exec-out screencap -p > "$OUT/7-maps-location.png" || true
+# The search sheet with a word nothing matches: it must say so, and back must close the sheet, not leave it stuck.
+if tap_view 'content-desc="Where to?"'; then
+  sleep 2
+  dump_screen 7-maps-sheet
+  adb shell input text zzqqxx
+  sleep 6
+  dump_screen 7-maps-no-results
+  adb shell input keyevent 4
+  sleep 1
+  adb shell input keyevent 4
+  sleep 2
+  dump_screen 7-maps-sheet-closed
+fi
 # Offline search in the downloaded world map, then the place card of the first result.
-if tap_view 'content-desc="Search"'; then
+if tap_view 'content-desc="Where to?"'; then
   sleep 2
   adb shell input text Mosul
   sleep 6
   dump_screen 7-maps-search
-  adb shell input tap 160 140
+  # The first result, at the top of the results list.
+  tap_view_top 'content-desc="Search results"'
   sleep 5
   dump_screen 7-maps-place
   # The place goes to the demo chat as a location, through Telegram's chat picker.
