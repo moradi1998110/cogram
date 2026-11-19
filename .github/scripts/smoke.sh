@@ -130,6 +130,7 @@ adb exec-out screencap -p > "$OUT/7-maps-later.png" || true
 adb shell dumpsys meminfo "$PACKAGE" > "$OUT/meminfo-maps.txt" || true
 # How smoothly the map pans: frames drawn and janky frames over eight drags across the map.
 adb shell dumpsys gfxinfo "$PACKAGE" reset > /dev/null || true
+adb logcat -c || true
 for drag in 1 2 3 4 5 6 7 8; do
   adb shell input swipe 260 360 60 300 400 || true
   adb shell input swipe 60 300 260 360 400 || true
@@ -137,6 +138,10 @@ done
 sleep 2
 adb shell dumpsys gfxinfo "$PACKAGE" > "$OUT/gfxinfo-maps.txt" || true
 grep -E "Total frames rendered|Janky frames|50th percentile|90th percentile|95th percentile|99th percentile" "$OUT/gfxinfo-maps.txt" | head -6 | tee -a "$OUT/steps.txt"
+# A map drawn on its own GPU surface (MapLibre) reports its frame rate in the log instead.
+adb logcat -d -s PhogramMapFps:D > "$OUT/map-fps.txt" || true
+awk '/PhogramMapFps/ {v=$NF; n++; s+=v; if (min=="" || v<min) min=v; if (v>max) max=v} END {if (n) printf "Map frames per second: %d readings, average %.1f, lowest %.1f, highest %.1f\n", n, s/n, min, max}' \
+  "$OUT/map-fps.txt" | tee -a "$OUT/steps.txt"
 # The app ships without OsmAnd's world map, so the page offers it (about 38 MB from OsmAnd's servers).
 dump_screen 7-maps-offer
 if tap_view 'content-desc="Download"'; then

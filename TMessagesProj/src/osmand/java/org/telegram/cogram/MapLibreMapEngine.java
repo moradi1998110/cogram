@@ -113,6 +113,9 @@ final class MapLibreMapEngine implements MapEngine {
                 .target(new LatLng(START_LATITUDE, START_LONGITUDE)).zoom(START_ZOOM).build());
         map.addOnCameraMoveListener(this::onCameraMoved);
         map.addOnCameraIdleListener(this::onCameraIdle);
+        // MapLibre draws on its own GPU surface, which Android's frame statistics do not see, so it reports its
+        // frame rate itself; the emulator check reads these lines to compare the map's smoothness.
+        map.setOnFpsChangedListener(fps -> android.util.Log.d("PhogramMapFps", String.format(java.util.Locale.US, "%.1f", fps)));
         map.setStyle(new Style.Builder().fromJson(styleJson(tiles)), loaded -> {
             if (destroyed) return;
             style = loaded;
