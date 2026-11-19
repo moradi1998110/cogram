@@ -23,8 +23,12 @@ dependencyCheck {
         retirejs { enabled = false }
         ossIndex { enabled = false }
     }
-    nvd {
-        apiKey = System.getenv('NVD_API_KEY') ?: ''
+    // NIST refuses an empty key, so one is given only when the secret is set; without it the download is slower.
+    def nvdApiKey = System.getenv('NVD_API_KEY')
+    if (nvdApiKey) {
+        nvd {
+            apiKey = nvdApiKey
+        }
     }
     data {
         directory = "${rootDir}/.dependency-check-data"
