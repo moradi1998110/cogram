@@ -63,8 +63,8 @@ final class OsmAndOffline {
     private static final int POLL_MS = 500;
     private static final int TIMEOUT_MS = 20_000;
     private static final int MAX_SEARCH_RESULTS = 40;
-    /** Java routing works within the app's heap; long routes across the country need some room. */
-    private static final int ROUTING_MEMORY_MB = 96;
+    /** Java routing works within the app's large heap (largeHeap); routes across the country need room for their road data. */
+    private static final int ROUTING_MEMORY_MB = 256;
 
     private static final ExecutorService searchExecutor = Executors.newSingleThreadExecutor();
     private static final ExecutorService routeExecutor = Executors.newSingleThreadExecutor();
@@ -428,13 +428,21 @@ final class OsmAndOffline {
         }
         // The region's file holds what the route needs; OsmAnd's world regions are not read for missing maps.
         RoutePlannerFrontEnd.CALCULATE_MISSING_MAPS = false;
+        final long started = android.os.SystemClock.elapsedRealtime();
         final RoutingConfiguration config = routingRules.build("car",
                 new RoutingConfiguration.RoutingMemoryLimits(ROUTING_MEMORY_MB, 0), new LinkedHashMap<>());
         final RoutePlannerFrontEnd planner = new RoutePlannerFrontEnd();
+        // OsmAnd's highway hierarchy (its "HH" routing, run in Java): the map file carries a precomputed network of the
+        // main roads, so a route across the country, such as Basra to Mosul, takes seconds instead of searching every
+        // road on the way; the start and the end are then joined to that network on the detailed roads. Where the file
+        // has no such network, OsmAnd falls back to its classic search over all roads.
+        planner.setDefaultHHRoutingConfig();
         final RoutingContext context = planner.buildRoutingContext(config, null, new BinaryMapIndexReader[] { file },
-                RoutePlannerFrontEnd.RouteCalculationMode.COMPLEX);
+                RoutePlannerFrontEnd.RouteCalculationMode.NORMAL);
         final RouteResultPreparation.RouteCalcResult result = planner.searchRoute(context, start, end, null);
         if (result == null || !result.isCorrect() || result.getList() == null || result.getList().isEmpty()) {
+            android.util.Log.d("PhogramRoute", "no route after " + (android.os.SystemClock.elapsedRealtime() - started)
+                    + " ms: " + (result != null ? result.getError() : "no result"));
             return null;
         }
         final List<double[]> points = new ArrayList<>();
@@ -452,6 +460,9 @@ final class OsmAndOffline {
                 if (i == to) break;
             }
         }
+        // How long the route took to find, for the emulator check and for reports from phones.
+        android.util.Log.d("PhogramRoute", String.format(java.util.Locale.US, "found in %d ms: %.1f km, %d min, %d points",
+                android.os.SystemClock.elapsedRealtime() - started, meters / 1000f, Math.round(seconds / 60f), points.size()));
         return new MapEngine.Route(points, meters, seconds);
     }
 

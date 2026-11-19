@@ -183,14 +183,16 @@ if tap_view 'content-desc="Download"'; then
   adb shell run-as "$PACKAGE" ls -l files 2>/dev/null > "$OUT/files.txt" || true
   adb shell ls -l /sdcard/Android/data/$PACKAGE/files/maps /sdcard/Android/data/$PACKAGE/files/maps/osmand >> "$OUT/files.txt" 2>&1 || true
 fi
-# The emulator reports a fixed position, and the app was given the location permission at install.
-adb emu geo fix 44.3661 33.3152 || true
+# The emulator reports a fixed position, in Basra, where the directions to Mosul start; the app was given the
+# location permission at install, and the emulator's location service is turned on first.
+adb shell cmd location set-location-enabled true || true
+adb emu geo fix 47.7804 30.5085 || true
 tap_view 'content-desc="My location"' || true
 # A phone's GPS keeps reporting; the emulator reports only when told, so the position is sent again while the map
 # listens for it.
 for fix in 1 2 3; do
   sleep 1
-  adb emu geo fix 44.3661 33.3152 || true
+  adb emu geo fix 47.7804 30.5085 || true
 done
 sleep 5
 adb exec-out screencap -p > "$OUT/7-maps-location.png" || true
@@ -219,6 +221,18 @@ if tap_view 'content-desc="Where to?"' || adb shell input tap 160 532; then
   tap_view_top 'content-desc="Search results"' || adb shell input tap 160 175
   sleep 5
   dump_screen 7-maps-place
+  # Directions by car from Basra to Mosul, offline: how long the route takes is written to the log.
+  adb logcat -c || true
+  adb emu geo fix 47.7804 30.5085 || true
+  tap_view 'text="Directions"' || adb shell input tap 88 523
+  for wait in $(seq 1 36); do
+    sleep 5
+    adb logcat -d -s PhogramRoute:D | grep -q PhogramRoute && break
+  done
+  sleep 4
+  adb exec-out screencap -p > "$OUT/7-maps-route.png" || true
+  adb logcat -d -s PhogramRoute:D | tee -a "$OUT/steps.txt" > "$OUT/route.txt" || true
+  adb logcat -d | grep -E "net.osmand|System.err" | tail -40 > "$OUT/route-errors.txt" || true
   # The place goes to the demo chat as a location, through Telegram's chat picker.
   if tap_view 'text="Send to chat"'; then
     sleep 3
