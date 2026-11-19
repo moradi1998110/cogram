@@ -64,6 +64,7 @@ import eu.siacs.conversations.ui.interfaces.OnAvatarPublication;
 import eu.siacs.conversations.xmpp.Jid;
 import im.conversations.android.xmpp.model.muc.Affiliation;
 import eu.siacs.conversations.xmpp.jingle.RtpCapability;
+import eu.siacs.conversations.xmpp.manager.DisplayedManager;
 import eu.siacs.conversations.xmpp.manager.MessageArchiveManager;
 import eu.siacs.conversations.xmpp.manager.ModerationManager;
 import eu.siacs.conversations.xmpp.manager.MultiUserChatManager;
@@ -256,6 +257,7 @@ final class XmppBackend implements GatewayBackend {
         connected.setOnConversationListChangedListener(conversationListener);
         connected.setOnRosterUpdateListener(rosterListener);
         connected.setOnMessageChangeListener(messageChange);
+        DisplayedManager.roomReadListener = roomReadListener;
         Account account;
         synchronized (this) {
             account = account();
@@ -494,6 +496,96 @@ final class XmppBackend implements GatewayBackend {
         return TLRPC.MessageMedia.TLdeserialize(data, data.readInt32(false), false);
     }
 
+    /** A room member's read, kept until Telegram has a number for the message it names. */
+    private static final class RoomRead {
+        final long room;
+        final long reader;
+        final String uuid;
+        final int date;
+
+        RoomRead(long room, long reader, String uuid, int date) {
+            this.room = room;
+            this.reader = reader;
+            this.uuid = uuid;
+            this.date = date;
+        }
+    }
+
+    private final java.util.Queue<RoomRead> pendingRoomReads = new java.util.concurrent.ConcurrentLinkedQueue<>();
+
+    // A method reference, since a lambda here could not read selfId, which the constructor sets.
+    private final DisplayedManager.RoomReadListener roomReadListener = this::onRoomRead;
+
+    private void onRoomRead(Conversation room, Message message, Jid reader, long timeMillis) {
+        long readerId = ids.peerId(reader.asBareJid().toString());
+        if (readerId == selfId) {
+            return;
+        }
+        pendingRoomReads.add(new RoomRead(peerId(room), readerId, message.getUuid(), (int) (timeMillis / 1000)));
+        scheduleSync();
+    }
+
+    /**
+     * Stores the reads whose messages Telegram knows. Numbering a message here would hide it from the sync
+     * that announces new messages, so a read of one not announced yet waits for a later sync.
+     */
+    private void storePendingRoomReads() {
+        ArrayList<RoomRead> waiting = new ArrayList<>();
+        for (RoomRead read = pendingRoomReads.poll(); read != null; read = pendingRoomReads.poll()) {
+            int id = ids.findMessage(read.uuid);
+            if (id == 0) {
+                waiting.add(read);
+            } else {
+                ids.addRoomRead(read.room, read.reader, id, read.date);
+            }
+        }
+        pendingRoomReads.addAll(waiting);
+    }
+
+    /**
+     * Whether a room hides its members' addresses, so nobody can tell who read a message. Telegram asks
+     * while building a message's menu, so this neither waits for the sync's lock nor creates a chat.
+     */
+    @Override
+    public boolean roomReadersUnknown(long channelId) {
+        XmppConnectionService engine = service;
+        String jid = ids.peerJid(channelId);
+        if (engine == null || jid == null) {
+            return false;
+        }
+        List<Account> accounts = engine.getAccounts();
+        Conversation room = accounts.isEmpty() ? null : engine.find(accounts.get(0), Jid.of(jid));
+        return room != null && isRoom(room) && !room.getMucOptions().isPrivateAndNonAnonymous();
+    }
+
+    /** Who read a message of ours in a room and when, newest first, among the room's members today. */
+    @Override
+    public synchronized List<TLRPC.TL_readParticipantDate> roomReaders(long channelId, int messageId) {
+        ArrayList<TLRPC.TL_readParticipantDate> result = new ArrayList<>();
+        Conversation room = room(channelId);
+        if (room == null) {
+            return result;
+        }
+        storePendingRoomReads();
+        Map<Long, Integer> readers = ids.roomReaders(channelId, messageId);
+        for (MucOptions.User member : roomMembers(room)) {
+            Jid real = member.getRealJid();
+            if (real == null) {
+                continue;
+            }
+            long id = ids.peerId(real.asBareJid().toString());
+            Integer date = readers.get(id);
+            if (id != selfId && date != null) {
+                TLRPC.TL_readParticipantDate read = new TLRPC.TL_readParticipantDate();
+                read.user_id = id;
+                read.date = date;
+                result.add(read);
+            }
+        }
+        Collections.sort(result, (a, b) -> Integer.compare(b.date, a.date));
+        return result;
+    }
+
     private void collectUpdates(ArrayList<TLRPC.Updates> updates) {
         {
             for (RoomMemberChange change = memberChanges.poll(); change != null; change = memberChanges.poll()) {
@@ -523,6 +615,10 @@ final class XmppBackend implements GatewayBackend {
                     if (message.getStatus() == Message.STATUS_SEND_DISPLAYED) {
                         readMax = Math.max(readMax, ids.messageId(message.getUuid(), message.getTimeSent()));
                     }
+                }
+                if (isRoom(conversation)) {
+                    storePendingRoomReads();
+                    readMax = Math.max(readMax, ids.roomReadMax(peerId));
                 }
                 Integer known = readOutboxMax.get(peerId);
                 if (readMax > (known == null ? 0 : known)) {
@@ -2203,7 +2299,7 @@ final class XmppBackend implements GatewayBackend {
             long peerId = peerId(conversation);
             int top = messages.isEmpty() ? roomCreatedMessage(conversation).id
                     : ids.messageId(messages.get(messages.size() - 1).getUuid(), messages.get(messages.size() - 1).getTimeSent());
-            int readOutbox = 0;
+            int readOutbox = room ? ids.roomReadMax(peerId) : 0;
             for (Message message : messages) {
                 if (message.getStatus() == Message.STATUS_SEND_DISPLAYED) {
                     readOutbox = Math.max(readOutbox, ids.messageId(message.getUuid(), message.getTimeSent()));
@@ -2537,7 +2633,8 @@ final class XmppBackend implements GatewayBackend {
         full.participants_count = members.size();
         full.admins_count = admins;
         full.read_inbox_max_id = firstUnread == null ? top : ids.messageId(firstUnread.getUuid(), firstUnread.getTimeSent()) - 1;
-        full.read_outbox_max_id = top;
+        // As in Telegram's groups, our message counts as read once any other member has read it.
+        full.read_outbox_max_id = ids.roomReadMax(channelId);
         full.unread_count = room.unreadCount();
         full.chat_photo = new TLRPC.TL_photoEmpty();
         String avatar = options.getAvatar();

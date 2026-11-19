@@ -125,6 +125,18 @@ public final class CogramGateway {
     }
 
     /** Whether a dialog is the assistant's chat, which the chat list leaves out since it has its own tab. */
+    /**
+     * Whether Telegram's "Seen by" must stay hidden for a group: XMPP rooms that hide their members'
+     * addresses never tell who read a message, and an empty list would wrongly say nobody did.
+     */
+    public static boolean hidesReaders(int account, long chatId) {
+        if (!ENABLED) {
+            return false;
+        }
+        GatewayBackend current = getInstance(account).backend;
+        return current != null && current.roomReadersUnknown(chatId);
+    }
+
     public static boolean isAssistantDialog(long dialogId) {
         return ENABLED && AssistantBot.isAssistant(dialogId);
     }
@@ -324,6 +336,11 @@ public final class CogramGateway {
         } else if (request instanceof TLRPC.TL_messages_forwardMessages) {
             TLRPC.TL_messages_forwardMessages forward = (TLRPC.TL_messages_forwardMessages) request;
             return backend.forward(forward.id, forward.random_id, peerId(forward.to_peer));
+        } else if (request instanceof TLRPC.TL_messages_getMessageReadParticipants) {
+            TLRPC.TL_messages_getMessageReadParticipants get = (TLRPC.TL_messages_getMessageReadParticipants) request;
+            Vector<TLRPC.TL_readParticipantDate> result = new Vector<>(TLRPC.TL_readParticipantDate::TLdeserialize);
+            result.objects.addAll(backend.roomReaders(peerId(get.peer), get.msg_id));
+            return result;
         } else if (request instanceof TLRPC.TL_messages_getOutboxReadDate) {
             TLRPC.TL_messages_getOutboxReadDate read = (TLRPC.TL_messages_getOutboxReadDate) request;
             int date = backend.readDate(peerId(read.peer), read.msg_id);

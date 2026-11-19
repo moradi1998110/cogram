@@ -803,7 +803,7 @@ public class MessageParser extends AbstractParser
 
             if (packet.hasExtension(Displayed.class)) {
                 getManager(DisplayedManager.class)
-                        .processDisplayed(packet, selfAddressed, counterpart, query);
+                        .processDisplayed(packet, selfAddressed, counterpart, query, timestamp);
             }
 
             if (packet.hasExtension(Reactions.class)) {

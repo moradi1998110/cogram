@@ -26,7 +26,7 @@ final class XmppIdMap extends SQLiteOpenHelper {
     private final Map<String, Integer> messageIds = new HashMap<>();
 
     XmppIdMap(Context context) {
-        super(context, DATABASE, null, 5);
+        super(context, DATABASE, null, 6);
     }
 
     /** Forgets every id, so the next account starts with fresh message ids and pts. */
@@ -43,6 +43,7 @@ final class XmppIdMap extends SQLiteOpenHelper {
         db.execSQL("CREATE TABLE messages (id INTEGER PRIMARY KEY, uuid TEXT UNIQUE NOT NULL, time INTEGER NOT NULL, pts INTEGER NOT NULL DEFAULT 0, channel INTEGER NOT NULL DEFAULT 0)");
         createReads(db);
         createSendTables(db);
+        createRoomReads(db);
     }
 
     @Override
@@ -58,6 +59,9 @@ final class XmppIdMap extends SQLiteOpenHelper {
         }
         if (oldVersion < 5) {
             db.execSQL("ALTER TABLE messages ADD COLUMN channel INTEGER NOT NULL DEFAULT 0");
+        }
+        if (oldVersion < 6) {
+            createRoomReads(db);
         }
     }
 
@@ -119,6 +123,49 @@ final class XmppIdMap extends SQLiteOpenHelper {
                 new String[]{String.valueOf(peer), String.valueOf(messageId)})) {
             return cursor.moveToFirst() ? cursor.getInt(0) : 0;
         }
+    }
+
+    /**
+     * When each room member had read up to which message: a member who read a message has read every one
+     * before it, as Telegram counts a group read. Rows older than Telegram shows readers for are dropped.
+     */
+    private static void createRoomReads(SQLiteDatabase db) {
+        db.execSQL("CREATE TABLE room_reads (room INTEGER NOT NULL, reader INTEGER NOT NULL, max_id INTEGER NOT NULL, date INTEGER NOT NULL)");
+        db.execSQL("CREATE INDEX room_reads_room ON room_reads (room, max_id)");
+    }
+
+    private static final int ROOM_READS_KEPT_SECONDS = 8 * 86400;
+
+    synchronized void addRoomRead(long room, long reader, int maxId, int date) {
+        SQLiteDatabase db = getWritableDatabase();
+        ContentValues values = new ContentValues();
+        values.put("room", room);
+        values.put("reader", reader);
+        values.put("max_id", maxId);
+        values.put("date", date);
+        db.insert("room_reads", null, values);
+        db.delete("room_reads", "date < ?", new String[]{String.valueOf(date - ROOM_READS_KEPT_SECONDS)});
+    }
+
+    /** The newest message anyone else has read in the room, or 0. */
+    synchronized int roomReadMax(long room) {
+        try (Cursor cursor = getReadableDatabase().rawQuery("SELECT MAX(max_id) FROM room_reads WHERE room = ?",
+                new String[]{String.valueOf(room)})) {
+            return cursor.moveToFirst() ? cursor.getInt(0) : 0;
+        }
+    }
+
+    /** Who has read this room message, each with when they first had read it. */
+    synchronized Map<Long, Integer> roomReaders(long room, int messageId) {
+        Map<Long, Integer> readers = new HashMap<>();
+        try (Cursor cursor = getReadableDatabase().rawQuery(
+                "SELECT reader, MIN(date) FROM room_reads WHERE room = ? AND max_id >= ? GROUP BY reader",
+                new String[]{String.valueOf(room), String.valueOf(messageId)})) {
+            while (cursor.moveToNext()) {
+                readers.put(cursor.getLong(0), cursor.getInt(1));
+            }
+        }
+        return readers;
     }
 
     /** An edit gives the engine's message a new uuid, and Telegram must keep seeing the same message. */

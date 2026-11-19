@@ -27,11 +27,22 @@ public class DisplayedManager extends AbstractManager {
         this.service = service;
     }
 
+    /**
+     * Phogram: hears each room member's displayed marker with when it was sent (the archive's time
+     * for markers fetched later), since Telegram shows who read a group message and when.
+     */
+    public interface RoomReadListener {
+        void onRoomRead(Conversation room, Message message, Jid reader, long timeMillis);
+    }
+
+    public static volatile RoomReadListener roomReadListener;
+
     public void processDisplayed(
             final im.conversations.android.xmpp.model.stanza.Message packet,
             final boolean selfAddressed,
             final Jid counterpart,
-            final MessageArchiveManager.Query query) {
+            final MessageArchiveManager.Query query,
+            final Long timestamp) {
         final var account = getAccount();
         final var isTypeGroupChat =
                 packet.getType()
@@ -70,6 +81,14 @@ public class DisplayedManager extends AbstractManager {
                         this.service.markReadUpTo(conversation, message);
                     }
                 } else if (!counterpart.isBareJid() && user != null && user.getRealJid() != null) {
+                    final RoomReadListener readListener = roomReadListener;
+                    if (readListener != null) {
+                        readListener.onRoomRead(
+                                conversation,
+                                message,
+                                user.getRealJid(),
+                                timestamp != null ? timestamp : System.currentTimeMillis());
+                    }
                     final ReadByMarker readByMarker = ReadByMarker.from(user);
                     if (message.addReadByMarker(readByMarker)) {
                         final var mucOptions =

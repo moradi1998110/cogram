@@ -150,6 +150,16 @@ public interface GatewayBackend {
         return 0;
     }
 
+    /** Who read a message of ours in a room, with when; Telegram shows them under "Seen by". */
+    default List<TLRPC.TL_readParticipantDate> roomReaders(long channelId, int id) {
+        return Collections.emptyList();
+    }
+
+    /** Whether a room keeps its members' addresses hidden, so its readers cannot be known. */
+    default boolean roomReadersUnknown(long channelId) {
+        return false;
+    }
+
     default List<TLRPC.Message> messages(List<Integer> ids) {
         return Collections.emptyList();
     }
