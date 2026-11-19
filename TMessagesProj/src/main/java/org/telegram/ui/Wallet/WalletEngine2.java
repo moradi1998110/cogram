@@ -383,6 +383,8 @@ public class WalletEngine2 implements AutoCloseable {
      * formats; this checks the address format, not whether an account exists on-chain.
      */
     public static boolean isValidAddress(@Nullable String address) {
+        // Phogram ships without the wallet's native engine: no text is a wallet address.
+        if (org.telegram.cogram.CogramGateway.ENABLED) return false;
         return address != null && !address.isEmpty() && nativeIsValidAddress(address);
     }
 
