@@ -20,10 +20,6 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ScheduledFuture;
-import java.util.concurrent.TimeUnit;
 
 /**
  * Phogram's AI assistant, shown to Telegram as a bot with the AI chat view Telegram gives bots with topics: each
@@ -31,7 +27,7 @@ import java.util.concurrent.TimeUnit;
  * send button turns into a stop button meanwhile.
  *
  * The gateway hands it every request about the assistant's chat. Conversations are kept in a file on the phone.
- * This version answers with a written-out sample reply; the organization's AI server takes its place next.
+ * The replies come from an {@link AssistantReplySource}: a sample for now, the organization's AI server next.
  */
 final class AssistantBot {
 
@@ -51,16 +47,10 @@ final class AssistantBot {
     }
 
     private static final String FILE = "assistant.json";
-    private static final int STREAM_STEP_MS = 60;
-    private static final int STREAM_STEP_CHARS = 4;
 
     private final Host host;
     private final File file;
-    private final ScheduledExecutorService streams = Executors.newSingleThreadScheduledExecutor(runnable -> {
-        Thread thread = new Thread(runnable, "cogramAssistant");
-        thread.setDaemon(true);
-        return thread;
-    });
+    private final AssistantReplySource replies;
 
     /** A conversation; Telegram knows it by the id of the service message that opened it. */
     private static final class Topic {
@@ -82,18 +72,51 @@ final class AssistantBot {
     private final ArrayList<Topic> topics = new ArrayList<>();
     private final ArrayList<Entry> entries = new ArrayList<>();
 
-    /** The reply being written out; at most one, as Telegram's stop button stops one. */
-    private final class Stream {
+    /**
+     * The reply being written; at most one, as Telegram's stop button stops one. It hears the reply source and
+     * ignores whatever arrives after it stopped being the current reply.
+     */
+    private final class Stream implements AssistantReplySource.Listener {
         final int topic;
-        final long randomId;
-        final String text;
-        int shown;
-        ScheduledFuture<?> future;
+        final long randomId = Utilities.random.nextLong();
+        final StringBuilder text = new StringBuilder();
+        AssistantReplySource.Call call;
 
-        Stream(int topic, String text) {
+        Stream(int topic) {
             this.topic = topic;
-            this.text = text;
-            this.randomId = Utilities.random.nextLong();
+        }
+
+        @Override
+        public void onText(String more) {
+            String partial;
+            synchronized (AssistantBot.this) {
+                if (stream != this) return;
+                text.append(more);
+                partial = text.toString();
+            }
+            pushDraft(this, partial);
+        }
+
+        @Override
+        public void onDone() {
+            String reply;
+            synchronized (AssistantBot.this) {
+                if (stream != this) return;
+                reply = text.toString();
+            }
+            finish(this, reply);
+        }
+
+        @Override
+        public void onError(String message) {
+            FileLog.e("cogram: the assistant's reply failed: " + message);
+            String reply;
+            synchronized (AssistantBot.this) {
+                if (stream != this) return;
+                reply = text.toString();
+            }
+            String failed = LocaleController.getString(R.string.PhogramAssistantFailed);
+            finish(this, reply.isEmpty() ? failed : reply + "…\n\n" + failed);
         }
     }
 
@@ -102,6 +125,7 @@ final class AssistantBot {
     AssistantBot(Host host, int account) {
         this.host = host;
         this.file = new File(ApplicationLoader.getFilesDirFixed(), account == 0 ? FILE : account + "_" + FILE);
+        this.replies = AssistantReplySource.forAccount(account);
         load();
     }
 
@@ -427,41 +451,46 @@ final class AssistantBot {
         sent.pts_count = 1;
         sent.date = entry.date;
         if (topicId != 0) {
-            final int topic = topicId;
-            final String prompt = request.message;
-            streams.schedule(() -> startReply(topic, prompt), 400, TimeUnit.MILLISECONDS);
+            startReply(topicId);
         }
         return sent;
     }
 
-    /* The reply, written out as Telegram's text drafts, then sent as the bot's message. */
+    /* The reply: the source writes it, Telegram shows it as text drafts, then it is sent as the bot's message. */
 
-    private void startReply(int topicId, String prompt) {
+    private void startReply(int topicId) {
+        Stream current;
+        List<AssistantReplySource.Turn> conversation;
         synchronized (this) {
             cancelStream();
-            stream = new Stream(topicId, sampleReply(prompt));
-            final Stream current = stream;
-            current.future = streams.scheduleWithFixedDelay(() -> step(current), 0, STREAM_STEP_MS, TimeUnit.MILLISECONDS);
+            current = new Stream(topicId);
+            stream = current;
+            conversation = conversation(topicId);
         }
-    }
-
-    private static String sampleReply(String prompt) {
-        return LocaleController.formatString(R.string.PhogramAssistantSampleReply, prompt == null ? "" : prompt.trim());
-    }
-
-    private void step(Stream current) {
-        String partial;
-        boolean done;
+        AssistantReplySource.Call call = replies.reply(topicId, conversation, current);
         synchronized (this) {
-            if (stream != current) return;
-            current.shown = Math.min(current.text.length(), current.shown + STREAM_STEP_CHARS);
-            partial = current.text.substring(0, current.shown);
-            done = current.shown >= current.text.length();
+            if (stream == current) {
+                current.call = call;
+            } else {
+                call.cancel();
+            }
         }
-        pushDraft(current, partial);
-        if (done) {
-            finish(current, current.text);
+    }
+
+    /** A topic's messages, oldest first, without the service message that opened it. */
+    private List<AssistantReplySource.Turn> conversation(int topicId) {
+        ArrayList<Entry> matching = new ArrayList<>();
+        for (Entry entry : entries) {
+            if (entry.topic == topicId && !entry.service) {
+                matching.add(entry);
+            }
         }
+        Collections.sort(matching, (a, b) -> Integer.compare(a.id, b.id));
+        ArrayList<AssistantReplySource.Turn> turns = new ArrayList<>();
+        for (Entry entry : matching) {
+            turns.add(new AssistantReplySource.Turn(entry.out, entry.text));
+        }
+        return turns;
     }
 
     private void pushDraft(Stream current, String text) {
@@ -484,11 +513,12 @@ final class AssistantBot {
     /** Stops the reply Telegram's stop button names; what was written so far stays as the reply. */
     private void stop(long randomId) {
         Stream current;
+        String partial;
         synchronized (this) {
             current = stream;
             if (current == null || current.randomId != randomId) return;
+            partial = current.text.toString();
         }
-        String partial = current.text.substring(0, current.shown);
         finish(current, partial.isEmpty() ? "…" : partial + "…");
     }
 
@@ -517,8 +547,8 @@ final class AssistantBot {
     }
 
     private void cancelStream() {
-        if (stream != null && stream.future != null) {
-            stream.future.cancel(false);
+        if (stream != null && stream.call != null) {
+            stream.call.cancel();
         }
         stream = null;
     }

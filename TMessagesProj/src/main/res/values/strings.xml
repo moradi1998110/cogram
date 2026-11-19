@@ -11682,4 +11682,5 @@
     <string name="PhogramAssistantNoChats">Your conversations with the assistant will appear here.</string>
     <string name="PhogramAssistantNotReady">The assistant will be available soon.</string>
     <string name="PhogramAssistantSampleReply">This is a sample reply, written out the way the assistant\'s answers will appear. The assistant will be connected to the AI service in the next step.\n\nYou wrote: %1$s</string>
+    <string name="PhogramAssistantFailed">The assistant couldn\'t answer this time. Try again in a moment.</string>
 </resources>
