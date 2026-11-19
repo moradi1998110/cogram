@@ -107,6 +107,8 @@ dependencies {
         implementation project(path: ':OsmAnd-java', configuration: 'android')
         implementation project(':OsmAnd-shared')
         implementation 'androidx.multidex:multidex:2.0.1'
+        // MapLibre Native (BSD-2-Clause) draws the map on the GPU; no telemetry, no API key, no Google services.
+        implementation 'org.maplibre.gl:android-sdk:13.7.1'
     }
 }
 
