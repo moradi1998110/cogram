@@ -4,6 +4,10 @@ buildscript {
         mavenCentral()
         google()
         maven { url 'https://developer.huawei.com/repo/' }
+        // The scan plugins below are published on the Gradle Plugin Portal only.
+        if (project.hasProperty('securityScan')) {
+            maven { url 'https://plugins.gradle.org/m2/' }
+        }
     }
     dependencies {
         classpath 'com.android.tools.build:gradle:8.13.2'
