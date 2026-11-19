@@ -1,20 +1,27 @@
 name: Security scans
 
 # OWASP Dependency-Check on the libraries the app ships, then SonarQube on the code (gradle/security.gradle).
-# Runs weekly, on demand, and on security* tags.
+# Only the main branch is scanned: on each push to it, weekly, and on demand.
 on:
   workflow_dispatch:
   schedule:
     - cron: '0 3 * * 1'
   push:
-    tags:
-      - 'security*'
+    branches:
+      - main
 
 permissions:
   contents: read
 
+# A newer push to main replaces a scan still running on an older one.
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   scan:
+    # A manual run started on another branch does nothing.
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 340
     env:
