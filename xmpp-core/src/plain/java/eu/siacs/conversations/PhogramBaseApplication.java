@@ -3,7 +3,7 @@ package eu.siacs.conversations;
 import android.app.Application;
 
 /**
- * The application class Phogram's own one builds on. In builds with OsmAnd's map engine a version of this
- * class from src/osmand builds on OsmAnd's application class instead, which OsmAnd's code needs.
+ * The application class Phogram's own one builds on: a plain Android application. The Maps tab uses OsmAnd's core
+ * library only, which needs no application class of its own.
  */
 public abstract class PhogramBaseApplication extends Application {}

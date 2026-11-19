@@ -1,244 +1,381 @@
 package org.telegram.cogram;
 
+import android.app.DownloadManager;
 import android.content.Context;
+import android.content.SharedPreferences;
+import android.database.Cursor;
+import android.net.Uri;
 import android.text.TextUtils;
+import android.util.Xml;
 
-import androidx.annotation.NonNull;
-
+import net.osmand.binary.BinaryMapIndexReader;
 import net.osmand.data.LatLon;
-import net.osmand.plus.AppInitializeListener;
-import net.osmand.plus.AppInitializer;
-import net.osmand.plus.OsmandApplication;
-import net.osmand.plus.download.DownloadActivityType;
-import net.osmand.plus.download.DownloadIndexesThread;
-import net.osmand.plus.download.DownloadResources;
-import net.osmand.plus.download.IndexItem;
-import net.osmand.plus.settings.backend.OsmandSettings;
+import net.osmand.osm.AbstractPoiType;
+import net.osmand.osm.MapPoiTypes;
+import net.osmand.router.RoutePlannerFrontEnd;
+import net.osmand.router.RouteResultPreparation;
+import net.osmand.router.RouteSegmentResult;
+import net.osmand.router.RoutingConfiguration;
+import net.osmand.router.RoutingContext;
 import net.osmand.search.SearchUICore;
 import net.osmand.search.core.SearchResult;
+import net.osmand.search.core.SearchSettings;
 
 import org.telegram.messenger.AndroidUtilities;
+import org.telegram.messenger.ApplicationLoader;
 import org.telegram.messenger.FileLog;
 import org.telegram.messenger.LocaleController;
 import org.telegram.messenger.R;
+import org.telegram.messenger.Utilities;
+import org.xmlpull.v1.XmlPullParser;
 
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.io.RandomAccessFile;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-
-import eu.siacs.conversations.PhogramBaseApplication;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
 
 /**
- * OsmAnd without its map: the offline search over OsmAnd's map files and the downloads of those files. Another
- * engine draws the map and tells this where its center is. OsmAnd starts with the first instance.
+ * Offline search and routing with OsmAnd's core library (OsmAnd-java) over OsmAnd's map file of the region, without
+ * OsmAnd's app. The file comes from OsmAnd's official download server (open data from OpenStreetMap), through
+ * Android's DownloadManager; it is used only once its zip's checksums pass and OsmAnd's reader opens it. MapLibre
+ * draws the map; this only searches and routes.
  */
 final class OsmAndOffline {
 
-    /** OsmAnd's small world map, the one OsmAnd itself ships inside its app (World_basemap_mini.obf). */
-    private static final String WORLD_MAP_INDEX = "World_basemap_mini_2.obf.zip";
-    /** Below this zoom the center says little about which region the user means. */
-    private static final double REGION_OFFER_MIN_ZOOM = 5;
+    /** OsmAnd's file for Iraq: addresses, places and roads (and map data, which Phogram does not draw). */
+    static final String REGION_FILE = "Iraq_asia_2.obf";
+    private static final String DOWNLOAD_URL = "https://download.osmand.net/download?standard=yes&file=" + REGION_FILE + ".zip";
+    private static final String PREFERENCES = "cogram_osmand";
+    private static final String KEY_DOWNLOAD_ID = "download_id";
+    private static final String KEY_SIZE = "zip_size";
+    private static final int POLL_MS = 500;
+    private static final int TIMEOUT_MS = 20_000;
     private static final int MAX_SEARCH_RESULTS = 40;
+    /** Java routing works within the app's heap; long routes across the country need some room. */
+    private static final int ROUTING_MEMORY_MB = 96;
 
-    private final OsmandApplication app;
-    private boolean ready;
+    private static final ExecutorService searchExecutor = Executors.newSingleThreadExecutor();
+    private static final ExecutorService routeExecutor = Executors.newSingleThreadExecutor();
+    private static final List<Runnable> listeners = new ArrayList<>();
+    private static boolean polling;
+    private static boolean installing;
+    private static float progress;
+    private static boolean sizeAsked;
+
+    // Opened once, then kept: OsmAnd's search core with its place types, and the reader of the region's file.
+    private static SearchUICore core;
+    private static BinaryMapIndexReader reader;
+    private static File readerFile;
+    private static RoutingConfiguration.Builder routingRules;
+
     private boolean destroyed;
-    private Runnable readyListener;
     private Runnable downloadListener;
-    private IndexItem offeredItem;
-    private int offerGeneration;
-    private double centerLatitude;
-    private double centerLongitude;
-    private double centerZoom;
-    private final ExecutorService offerExecutor = Executors.newSingleThreadExecutor();
-    private final ExecutorService searchExecutor = Executors.newSingleThreadExecutor();
-    private volatile int searchRequest;
-    private Runnable pendingSearch;
-
-    OsmAndOffline(Context context) {
-        app = (OsmandApplication) context.getApplicationContext();
-        ((PhogramBaseApplication) app).startOsmAnd();
-        if (app.isApplicationInitializing()) {
-            app.checkApplicationIsBeingInitialized(new AppInitializeListener() {
-                @Override
-                public void onFinish(AppInitializer init) {
-                    if (!destroyed) {
-                        markReady();
-                    }
-                }
-            });
-        } else {
-            markReady();
-        }
-    }
-
-    /** Runs once OsmAnd has read its map files, right away if it has. */
-    void setOnReadyListener(Runnable listener) {
-        readyListener = listener;
-        if (ready && listener != null) {
-            listener.run();
-        }
-    }
-
-    private void markReady() {
-        ready = true;
-        final DownloadIndexesThread thread = app.getDownloadThread();
-        thread.setUiActivity(downloadEvents);
-        if (thread.shouldDownloadIndexes()) {
-            // The list of map files on OsmAnd's servers; the offers follow when it arrives.
-            thread.runReloadIndexFilesSilent();
-        } else {
-            updateOffer();
-        }
-        if (readyListener != null) {
-            readyListener.run();
-        }
-        if (pendingSearch != null) {
-            final Runnable search = pendingSearch;
-            pendingSearch = null;
-            search.run();
-        }
-    }
-
-    /** Where the map's center is now; the offer follows it. */
-    void setCenter(double latitude, double longitude, double zoom) {
-        centerLatitude = latitude;
-        centerLongitude = longitude;
-        centerZoom = zoom;
-        if (ready) {
-            updateOffer();
-        }
-    }
-
-    // Map downloads: OsmAnd's world map first, then the region at the map's center, from OsmAnd's servers through
-    // OsmAnd's own download queue, which also indexes them for the search when done.
-
-    private final DownloadIndexesThread.DownloadEvents downloadEvents = new DownloadIndexesThread.DownloadEvents() {
-        @Override
-        public void onUpdatedIndexesList() {
-            updateOffer();
-        }
-
-        @Override
-        public void downloadInProgress() {
-            notifyDownloadListener();
-        }
-
-        @Override
-        public void downloadingError(@NonNull String error) {
-            notifyDownloadListener();
-        }
-
-        @Override
-        public void downloadHasFinished() {
-            updateOffer();
-        }
-    };
-
-    private void updateOffer() {
-        if (destroyed) return;
-        final DownloadIndexesThread thread = app.getDownloadThread();
-        if (offeredItem != null && thread.isDownloading(offeredItem)) {
-            // A running download stays on the card wherever the map is moved.
-            notifyDownloadListener();
-            return;
-        }
-        final int generation = ++offerGeneration;
-        final IndexItem world = thread.getIndexes().getIndexItem(WORLD_MAP_INDEX);
-        if (world != null && !world.isDownloaded()) {
-            setOffer(world);
-            return;
-        }
-        if (centerZoom < REGION_OFFER_MIN_ZOOM) {
-            setOffer(null);
-            return;
-        }
-        final LatLon center = new LatLon(centerLatitude, centerLongitude);
-        offerExecutor.execute(() -> {
-            IndexItem region = null;
-            try {
-                region = DownloadResources.findSmallestIndexItemAt(app, center, DownloadActivityType.NORMAL_FILE);
-            } catch (Exception e) {
-                FileLog.e(e);
-            }
-            final IndexItem found = region;
-            AndroidUtilities.runOnUIThread(() -> {
-                if (!destroyed && generation == offerGeneration) {
-                    setOffer(found != null && !found.isDownloaded() ? found : null);
-                }
-            });
-        });
-    }
-
-    private void setOffer(IndexItem item) {
-        offeredItem = item;
-        notifyDownloadListener();
-    }
-
-    private void notifyDownloadListener() {
+    private final Runnable listener = () -> {
         if (!destroyed && downloadListener != null) {
             downloadListener.run();
         }
+    };
+    private volatile int searchRequest;
+    private volatile int routeRequest;
+
+    OsmAndOffline(Context context) {
+        listeners.add(listener);
+        startPolling();
+        askSize();
     }
 
     void setDownloadListener(Runnable listener) {
         downloadListener = listener;
     }
 
+    /** The map's center; the region's file is offered wherever the map is, as Phogram serves Iraq. */
+    void setCenter(double latitude, double longitude, double zoom) {
+    }
+
+    // The region's file on the phone.
+
+    private static SharedPreferences preferences() {
+        return ApplicationLoader.applicationContext.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE);
+    }
+
+    private static File dir() {
+        return new File(MapData.mapsDir(), "osmand");
+    }
+
+    static File installedFile() {
+        final File file = new File(dir(), REGION_FILE);
+        return file.exists() && file.length() > 0 ? file : null;
+    }
+
+    private static boolean isDownloading() {
+        return preferences().getLong(KEY_DOWNLOAD_ID, -1) != -1 || installing;
+    }
+
+    private static void notifyListeners() {
+        for (Runnable listener : new ArrayList<>(listeners)) {
+            listener.run();
+        }
+    }
+
+    /** The zip's size, from OsmAnd's server, for the offer's card; asked once per run of the app. */
+    private static void askSize() {
+        if (sizeAsked || installedFile() != null) return;
+        sizeAsked = true;
+        Utilities.globalQueue.postRunnable(() -> {
+            HttpURLConnection connection = null;
+            try {
+                connection = (HttpURLConnection) new URL(DOWNLOAD_URL).openConnection();
+                connection.setRequestMethod("HEAD");
+                connection.setConnectTimeout(TIMEOUT_MS);
+                connection.setReadTimeout(TIMEOUT_MS);
+                final long size = connection.getResponseCode() == 200 ? connection.getContentLengthLong() : -1;
+                if (size > 0) {
+                    preferences().edit().putLong(KEY_SIZE, size).apply();
+                    AndroidUtilities.runOnUIThread(OsmAndOffline::notifyListeners);
+                }
+            } catch (Exception e) {
+                FileLog.e(e);
+                sizeAsked = false;
+            } finally {
+                if (connection != null) connection.disconnect();
+            }
+        });
+    }
+
     MapEngine.Download getOfferedDownload() {
-        final IndexItem item = offeredItem;
-        if (item == null) return null;
-        final DownloadIndexesThread thread = app.getDownloadThread();
-        final boolean downloading = thread.isDownloading(item);
-        final float progress = downloading && thread.getCurrentDownloadingItem() == item ? thread.getCurrentDownloadProgress() : 0;
-        final String name = WORLD_MAP_INDEX.equals(item.getFileName())
-                ? LocaleController.getString(R.string.PhogramMapsWorldMap)
-                : item.getVisibleName(app, app.getRegions(), false);
-        return new MapEngine.Download(name, item.getSizeDescription(app), downloading, Math.max(0, Math.min(100, progress)));
+        if (installedFile() != null && !isDownloading()) return null;
+        final long size = preferences().getLong(KEY_SIZE, 0);
+        final String name = LocaleController.getString(R.string.PhogramMapsSearchData);
+        return new MapEngine.Download(name, size > 0 ? AndroidUtilities.formatFileSize(size) : "", isDownloading(),
+                installing ? 100 : Math.max(0, Math.min(100, progress)));
+    }
+
+    private static DownloadManager downloads() {
+        return (DownloadManager) ApplicationLoader.applicationContext.getSystemService(Context.DOWNLOAD_SERVICE);
     }
 
     void startOfferedDownload() {
-        if (offeredItem != null) {
-            app.getDownloadThread().runDownloadFiles(offeredItem);
-            notifyDownloadListener();
-        }
+        if (isDownloading()) return;
+        final File folder = dir();
+        folder.mkdirs();
+        final File part = new File(folder, REGION_FILE + ".zip.part");
+        part.delete();
+        final DownloadManager.Request request = new DownloadManager.Request(Uri.parse(DOWNLOAD_URL))
+                .setTitle(LocaleController.getString(R.string.PhogramMapsSearchData))
+                .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE)
+                .setDestinationUri(Uri.fromFile(part));
+        final long id = downloads().enqueue(request);
+        preferences().edit().putLong(KEY_DOWNLOAD_ID, id).apply();
+        progress = 0;
+        notifyListeners();
+        startPolling();
     }
 
     void cancelOfferedDownload() {
-        if (offeredItem != null) {
-            app.getDownloadThread().cancelDownload(offeredItem);
-            notifyDownloadListener();
+        final long id = preferences().getLong(KEY_DOWNLOAD_ID, -1);
+        if (id != -1) {
+            downloads().remove(id);
         }
+        preferences().edit().remove(KEY_DOWNLOAD_ID).apply();
+        new File(dir(), REGION_FILE + ".zip.part").delete();
+        notifyListeners();
     }
 
-    // Search: OsmAnd's own offline search over the downloaded map files, around the given point, in the app's language.
+    private static void startPolling() {
+        if (polling || preferences().getLong(KEY_DOWNLOAD_ID, -1) == -1) return;
+        polling = true;
+        AndroidUtilities.runOnUIThread(OsmAndOffline::poll, POLL_MS);
+    }
 
-    void search(String query, double latitude, double longitude, MapEngine.SearchCallback callback) {
-        if (!ready) {
-            // OsmAnd starts when the search is first used; the latest query runs as soon as it has read its maps.
-            pendingSearch = () -> search(query, latitude, longitude, callback);
+    private static void poll() {
+        final long id = preferences().getLong(KEY_DOWNLOAD_ID, -1);
+        if (id == -1) {
+            polling = false;
             return;
         }
+        // DownloadManager's database is asked off the main thread, so the map keeps its frames during a download.
+        Utilities.globalQueue.postRunnable(() -> {
+            int status = DownloadManager.STATUS_FAILED;
+            float done = -1;
+            try (Cursor cursor = downloads().query(new DownloadManager.Query().setFilterById(id))) {
+                if (cursor != null && cursor.moveToFirst()) {
+                    status = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS));
+                    final long bytes = cursor.getLong(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR));
+                    final long total = cursor.getLong(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES));
+                    done = total > 0 ? Math.min(100, bytes * 100f / total) : 0;
+                }
+            } catch (Exception e) {
+                FileLog.e(e);
+            }
+            final int result = status;
+            final float percent = done;
+            AndroidUtilities.runOnUIThread(() -> onPolled(id, result, percent));
+        });
+    }
+
+    private static void onPolled(long id, int status, float percent) {
+        if (id != preferences().getLong(KEY_DOWNLOAD_ID, -1)) {
+            polling = false;
+            startPolling();
+            return;
+        }
+        if (percent >= 0) {
+            progress = percent;
+        }
+        if (status == DownloadManager.STATUS_SUCCESSFUL) {
+            polling = false;
+            preferences().edit().remove(KEY_DOWNLOAD_ID).apply();
+            install();
+        } else if (status == DownloadManager.STATUS_FAILED) {
+            polling = false;
+            preferences().edit().remove(KEY_DOWNLOAD_ID).apply();
+            new File(dir(), REGION_FILE + ".zip.part").delete();
+        } else {
+            AndroidUtilities.runOnUIThread(OsmAndOffline::poll, POLL_MS);
+        }
+        notifyListeners();
+    }
+
+    /**
+     * Unpacks the downloaded zip next to it. Java's zip reader checks every entry's CRC-32, the size must be what
+     * OsmAnd's server announced, and OsmAnd's reader must open the result; otherwise everything is deleted.
+     */
+    private static void install() {
+        installing = true;
+        notifyListeners();
+        Utilities.globalQueue.postRunnable(() -> {
+            final File folder = dir();
+            final File zip = new File(folder, REGION_FILE + ".zip.part");
+            final File temp = new File(folder, REGION_FILE + ".tmp");
+            final File target = new File(folder, REGION_FILE);
+            boolean ok = false;
+            try {
+                final long expected = preferences().getLong(KEY_SIZE, 0);
+                if (expected > 0 && zip.length() != expected) {
+                    throw new IllegalStateException("map file size " + zip.length() + " instead of " + expected);
+                }
+                try (ZipInputStream in = new ZipInputStream(new java.io.BufferedInputStream(new java.io.FileInputStream(zip)))) {
+                    ZipEntry entry;
+                    boolean found = false;
+                    while ((entry = in.getNextEntry()) != null) {
+                        if (entry.isDirectory() || !entry.getName().endsWith(".obf")) continue;
+                        try (OutputStream out = new FileOutputStream(temp)) {
+                            final byte[] buffer = new byte[1 << 16];
+                            int n;
+                            while ((n = in.read(buffer)) > 0) {
+                                out.write(buffer, 0, n);
+                            }
+                        }
+                        found = true;
+                        break;
+                    }
+                    if (!found) throw new IllegalStateException("no map file in the download");
+                }
+                try (RandomAccessFile raf = new RandomAccessFile(temp, "r")) {
+                    final BinaryMapIndexReader check = new BinaryMapIndexReader(raf, temp);
+                    if (check.getIndexes().isEmpty()) throw new IllegalStateException("empty map file");
+                }
+                closeReader();
+                target.delete();
+                ok = temp.renameTo(target);
+            } catch (Throwable e) {
+                FileLog.e(e);
+            } finally {
+                zip.delete();
+                if (!ok) temp.delete();
+            }
+            AndroidUtilities.runOnUIThread(() -> {
+                installing = false;
+                notifyListeners();
+            });
+        });
+    }
+
+    private static synchronized void closeReader() {
+        if (reader != null) {
+            try {
+                reader.close();
+            } catch (Exception e) {
+                FileLog.e(e);
+            }
+        }
+        reader = null;
+        readerFile = null;
+    }
+
+    /** OsmAnd's reader of the region's file, opened on first use; null without the file. */
+    private static synchronized BinaryMapIndexReader reader() throws Exception {
+        final File file = installedFile();
+        if (file == null) {
+            closeReader();
+            return null;
+        }
+        if (reader == null || !file.equals(readerFile)) {
+            closeReader();
+            reader = new BinaryMapIndexReader(new RandomAccessFile(file, "r"), file);
+            readerFile = file;
+        }
+        return reader;
+    }
+
+    private static String language() {
+        final String lang = LocaleController.getInstance().getCurrentLocale().getLanguage();
+        return TextUtils.isEmpty(lang) ? "en" : lang;
+    }
+
+    private static synchronized SearchUICore core() {
+        if (core == null) {
+            final MapPoiTypes types = MapPoiTypes.getDefault();
+            types.setPoiTranslator(new Translator(language()));
+            core = new SearchUICore(types, language(), false);
+            core.init();
+        }
+        return core;
+    }
+
+    // Search: OsmAnd's offline search over the region's file, around the given point, in the app's language.
+
+    boolean hasData() {
+        return installedFile() != null;
+    }
+
+    void search(String query, double latitude, double longitude, MapEngine.SearchCallback callback) {
         final int request = ++searchRequest;
         final LatLon center = new LatLon(latitude, longitude);
         searchExecutor.execute(() -> {
             if (request != searchRequest) return;
             final List<MapEngine.Place> places = new ArrayList<>();
             try {
-                final SearchUICore core = app.getSearchUICore().getCore();
-                final OsmandSettings settings = app.getSettings();
-                core.updateSettings(core.getSearchSettings().setOriginalLocation(center)
-                        .setLangs(app.getLanguage(), settings.MAP_PREFERRED_LOCALE.get(), settings.MAP_TRANSLITERATE_NAMES.get()));
-                final SearchUICore.SearchResultCollection results = core.immediateSearch(query, center);
-                for (SearchResult result : results.getCurrentSearchResults()) {
-                    if (request != searchRequest) return;
-                    if (result.location == null || TextUtils.isEmpty(result.localeName)) continue;
-                    places.add(new MapEngine.Place(result.localeName, describe(result),
-                            result.location.getLatitude(), result.location.getLongitude()));
-                    if (places.size() >= MAX_SEARCH_RESULTS) break;
+                final BinaryMapIndexReader file = reader();
+                if (file != null) {
+                    final SearchUICore search = core();
+                    final List<BinaryMapIndexReader> files = new ArrayList<>();
+                    files.add(file);
+                    final SearchSettings settings = search.getSearchSettings().setLang(language(), false).setOriginalLocation(center);
+                    settings.setOfflineIndexes(files);
+                    search.updateSettings(settings);
+                    final SearchUICore.SearchResultCollection results = search.immediateSearch(query, center);
+                    for (SearchResult result : results.getCurrentSearchResults()) {
+                        if (request != searchRequest) return;
+                        if (result.location == null || TextUtils.isEmpty(result.localeName)) continue;
+                        places.add(new MapEngine.Place(result.localeName, describe(result),
+                                result.location.getLatitude(), result.location.getLongitude()));
+                        if (places.size() >= MAX_SEARCH_RESULTS) break;
+                    }
                 }
-            } catch (Exception e) {
+            } catch (Throwable e) {
                 FileLog.e(e);
             }
             AndroidUtilities.runOnUIThread(() -> {
@@ -256,17 +393,163 @@ final class OsmAndOffline {
                 parts.add(part);
             }
         }
-        return TextUtils.join(", ", parts);
+        return TextUtils.join("، ", parts);
+    }
+
+    // Routing: OsmAnd's car router in Java over the region's file.
+
+    void route(double fromLatitude, double fromLongitude, double toLatitude, double toLongitude, Utilities.Callback<MapEngine.Route> callback) {
+        final int request = ++routeRequest;
+        routeExecutor.execute(() -> {
+            if (request != routeRequest) return;
+            MapEngine.Route route = null;
+            try {
+                final BinaryMapIndexReader file = reader();
+                if (file != null) {
+                    route = calculate(file, new LatLon(fromLatitude, fromLongitude), new LatLon(toLatitude, toLongitude));
+                }
+            } catch (Throwable e) {
+                FileLog.e(e);
+            }
+            final MapEngine.Route result = route;
+            AndroidUtilities.runOnUIThread(() -> {
+                if (!destroyed && request == routeRequest) {
+                    callback.run(result);
+                }
+            });
+        });
+    }
+
+    private static MapEngine.Route calculate(BinaryMapIndexReader file, LatLon start, LatLon end) throws Exception {
+        synchronized (OsmAndOffline.class) {
+            if (routingRules == null) {
+                routingRules = RoutingConfiguration.getDefault();
+            }
+        }
+        // The region's file holds what the route needs; OsmAnd's world regions are not read for missing maps.
+        RoutePlannerFrontEnd.CALCULATE_MISSING_MAPS = false;
+        final RoutingConfiguration config = routingRules.build("car",
+                new RoutingConfiguration.RoutingMemoryLimits(ROUTING_MEMORY_MB, 0), new LinkedHashMap<>());
+        final RoutePlannerFrontEnd planner = new RoutePlannerFrontEnd();
+        final RoutingContext context = planner.buildRoutingContext(config, null, new BinaryMapIndexReader[] { file },
+                RoutePlannerFrontEnd.RouteCalculationMode.COMPLEX);
+        final RouteResultPreparation.RouteCalcResult result = planner.searchRoute(context, start, end, null);
+        if (result == null || !result.isCorrect() || result.getList() == null || result.getList().isEmpty()) {
+            return null;
+        }
+        final List<double[]> points = new ArrayList<>();
+        float meters = 0;
+        float seconds = 0;
+        for (RouteSegmentResult segment : result.getList()) {
+            meters += segment.getDistance();
+            seconds += segment.getSegmentTime();
+            final int from = segment.getStartPointIndex();
+            final int to = segment.getEndPointIndex();
+            final int step = from <= to ? 1 : -1;
+            for (int i = from; ; i += step) {
+                final LatLon point = segment.getPoint(i);
+                points.add(new double[] { point.getLatitude(), point.getLongitude() });
+                if (i == to) break;
+            }
+        }
+        return new MapEngine.Route(points, meters, seconds);
     }
 
     void destroy() {
         destroyed = true;
-        if (ready) {
-            // A running download goes on in OsmAnd's queue; only this page stops listening to it.
-            app.getDownloadThread().resetUiActivity(downloadEvents);
-        }
-        offerExecutor.shutdown();
+        listeners.remove(listener);
         searchRequest++;
-        searchExecutor.shutdown();
+        routeRequest++;
+    }
+
+    /**
+     * Names of OsmAnd's place types in the app's language and in English, from OsmAnd's phrases (copied into the
+     * assets by fetch-osmand.sh). A phrase's synonyms follow its name after a semicolon.
+     */
+    private static final class Translator implements MapPoiTypes.PoiTranslator {
+
+        private final Map<String, String> local;
+        private final Map<String, String> english;
+
+        Translator(String language) {
+            english = load("en");
+            final Map<String, String> own = "en".equals(language) ? english : load(language);
+            local = own.isEmpty() ? english : own;
+        }
+
+        private static Map<String, String> load(String language) {
+            final Map<String, String> phrases = new HashMap<>();
+            try (InputStream in = ApplicationLoader.applicationContext.getAssets().open("osmand_phrases/" + language + ".xml")) {
+                final XmlPullParser parser = Xml.newPullParser();
+                parser.setInput(in, "UTF-8");
+                String name = null;
+                for (int event = parser.getEventType(); event != XmlPullParser.END_DOCUMENT; event = parser.next()) {
+                    if (event == XmlPullParser.START_TAG && "string".equals(parser.getName())) {
+                        name = parser.getAttributeValue(null, "name");
+                    } else if (event == XmlPullParser.TEXT && name != null) {
+                        phrases.put(name, parser.getText().replace("\\'", "'"));
+                    } else if (event == XmlPullParser.END_TAG) {
+                        name = null;
+                    }
+                }
+            } catch (Exception e) {
+                // No phrases in this language: English names are used.
+            }
+            return phrases;
+        }
+
+        private static String name(Map<String, String> phrases, String key) {
+            final String value = phrases.get("poi_" + key);
+            if (value == null) return null;
+            final int semicolon = value.indexOf(';');
+            return semicolon > 0 ? value.substring(0, semicolon) : value;
+        }
+
+        private static String synonyms(Map<String, String> phrases, String key) {
+            final String value = phrases.get("poi_" + key);
+            if (value == null) return "";
+            final int semicolon = value.indexOf(';');
+            return semicolon > 0 ? value.substring(semicolon + 1) : "";
+        }
+
+        private static AbstractPoiType base(AbstractPoiType type) {
+            return type.getBaseLangType() != null ? type.getBaseLangType() : type;
+        }
+
+        @Override
+        public String getTranslation(AbstractPoiType type) {
+            return getTranslation(base(type).getFormattedKeyName());
+        }
+
+        @Override
+        public String getTranslation(String keyName) {
+            return name(local, keyName);
+        }
+
+        @Override
+        public String getEnTranslation(AbstractPoiType type) {
+            return getEnTranslation(base(type).getFormattedKeyName());
+        }
+
+        @Override
+        public String getEnTranslation(String keyName) {
+            final String value = name(english, keyName);
+            return value != null ? value : keyName.replace('_', ' ');
+        }
+
+        @Override
+        public String getSynonyms(AbstractPoiType type) {
+            return getSynonyms(base(type).getFormattedKeyName());
+        }
+
+        @Override
+        public String getSynonyms(String keyName) {
+            return synonyms(local, keyName);
+        }
+
+        @Override
+        public String getAllLanguagesTranslationSuffix() {
+            return "all languages";
+        }
     }
 }

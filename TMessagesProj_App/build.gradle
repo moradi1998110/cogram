@@ -216,15 +216,7 @@ android {
     }
 }
 
-// OsmAnd's map engine (phase 0 of the Maps tab) needs its keep rules: its native renderer calls back into Java by name.
+// OsmAnd's core library (the Maps tab's search and routing) reads some of its classes by reflection.
 if (gradle.ext.has('osmand')) {
-    android.buildTypes.debug.proguardFiles '../osmand/android/OsmAnd/proguard-rules.pro'
-}
-if (gradle.ext.has('osmand')) {
-    // The app class's chain of parents includes OsmAnd's application class.
-    dependencies {
-        implementation project(':OsmAnd')
-        implementation 'androidx.multidex:multidex:2.0.1'
-        implementation files('../osmand/libs/kxml2-2.3.0.jar')
-    }
+    android.buildTypes.each { it.proguardFiles 'osmand-rules.pro' }
 }

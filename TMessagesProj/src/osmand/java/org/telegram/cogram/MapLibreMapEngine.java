@@ -19,6 +19,16 @@ import org.maplibre.android.maps.MapLibreMap;
 import org.maplibre.android.maps.MapLibreMapOptions;
 import org.maplibre.android.maps.MapView;
 import org.maplibre.android.maps.Style;
+import org.maplibre.android.geometry.LatLngBounds;
+import org.maplibre.android.style.layers.LineLayer;
+import org.maplibre.android.style.layers.Property;
+import org.maplibre.android.style.layers.PropertyFactory;
+import org.maplibre.android.style.sources.GeoJsonSource;
+import org.maplibre.geojson.Feature;
+import org.maplibre.geojson.FeatureCollection;
+import org.maplibre.geojson.Geometry;
+import org.maplibre.geojson.LineString;
+import org.maplibre.geojson.Point;
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.LocaleController;
 import org.telegram.messenger.R;
@@ -30,6 +40,8 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Phogram's map drawn by MapLibre on the GPU, so it pans, zooms and turns smoothly, from vector tiles on the phone
@@ -143,6 +155,12 @@ final class MapLibreMapEngine implements MapEngine {
         map.setCameraPosition(new CameraPosition.Builder()
                 .target(new LatLng(START_LATITUDE, START_LONGITUDE)).zoom(START_ZOOM).build());
         map.addOnCameraMoveStartedListener(reason -> AndroidUtilities.cancelRunOnUIThread(startOffline));
+        map.addOnMapClickListener(this::onMapClick);
+        map.addOnMapLongClickListener(point -> {
+            if (tapListener == null) return false;
+            tapListener.onLongPressed(point.getLatitude(), point.getLongitude());
+            return true;
+        });
         map.addOnCameraMoveListener(this::onCameraMoved);
         map.addOnCameraIdleListener(this::onCameraIdle);
         // MapLibre draws on its own GPU surface, which Android's frame statistics do not see, so test builds have it
@@ -154,6 +172,7 @@ final class MapLibreMapEngine implements MapEngine {
             if (destroyed) return;
             style = loaded;
             activateLocation();
+            drawRoute();
             ready = true;
             if (readyListener != null) {
                 readyListener.run();
@@ -349,12 +368,164 @@ final class MapLibreMapEngine implements MapEngine {
                 if (destroyed) return;
                 style = loaded;
                 activateLocation();
+                drawRoute();
             });
         }
         if (downloadListener != null) {
             downloadListener.run();
         }
     };
+
+    // Taps on the map: a named place opens its card; pressing and holding drops a pin there.
+
+    private MapTapListener tapListener;
+    /** The style's layers with named places, the ones a tap looks for, nearest first. */
+    private static final String[] TAPPABLE_LAYERS = { "pois", "places_subplace", "places_locality", "places_region" };
+
+    @Override
+    public void setMapTapListener(MapTapListener listener) {
+        tapListener = listener;
+    }
+
+    private boolean onMapClick(LatLng point) {
+        if (tapListener == null || map == null || style == null) return false;
+        final PointF screen = map.getProjection().toScreenLocation(point);
+        final float slop = AndroidUtilities.dp(12);
+        final List<Feature> features = map.queryRenderedFeatures(
+                new android.graphics.RectF(screen.x - slop, screen.y - slop, screen.x + slop, screen.y + slop), TAPPABLE_LAYERS);
+        final String language = LocaleController.getInstance().getCurrentLocale().getLanguage();
+        for (Feature feature : features) {
+            String name = feature.hasProperty("name:" + language) ? feature.getStringProperty("name:" + language) : null;
+            if (name == null || name.isEmpty()) {
+                name = feature.hasProperty("name") ? feature.getStringProperty("name") : null;
+            }
+            final Geometry geometry = feature.geometry();
+            if (name == null || name.isEmpty() || !(geometry instanceof Point)) continue;
+            final Point at = (Point) geometry;
+            tapListener.onPlaceTapped(new Place(name,
+                    String.format(java.util.Locale.US, "%.5f, %.5f", at.latitude(), at.longitude()), at.latitude(), at.longitude()));
+            return true;
+        }
+        return false;
+    }
+
+    // Routes: OsmAnd's offline car router from the device's position, drawn as a line under the labels.
+
+    private static final String ROUTE_SOURCE = "phogram-route";
+    private static final String ROUTE_CASING = "phogram-route-casing";
+    private static final String ROUTE_LINE = "phogram-route-line";
+    private Route shownRoute;
+
+    @Override
+    public boolean hasSearchData() {
+        return OsmAndOffline.installedFile() != null;
+    }
+
+    @Override
+    @SuppressWarnings("MissingPermission")
+    public void showRoute(Place destination, RouteCallback callback) {
+        if (OsmAndOffline.installedFile() == null) {
+            callback.onRoute(null, ROUTE_NO_DATA);
+            return;
+        }
+        Location here = null;
+        if (map != null && map.getLocationComponent().isLocationComponentActivated()) {
+            here = map.getLocationComponent().getLastKnownLocation();
+        }
+        if (here != null) {
+            routeFrom(here, destination, callback);
+            return;
+        }
+        if (!hasLocationPermission()) {
+            callback.onRoute(null, ROUTE_NO_LOCATION);
+            return;
+        }
+        org.telegram.messenger.ApplicationLoader.getLocationServiceProvider().getLastLocation(fix -> AndroidUtilities.runOnUIThread(() -> {
+            if (destroyed) return;
+            if (fix == null) {
+                callback.onRoute(null, ROUTE_NO_LOCATION);
+            } else {
+                routeFrom(fix, destination, callback);
+            }
+        }));
+    }
+
+    private void routeFrom(Location here, Place destination, RouteCallback callback) {
+        final OsmAndOffline router = offline();
+        if (router == null) {
+            callback.onRoute(null, ROUTE_NOT_FOUND);
+            return;
+        }
+        router.route(here.getLatitude(), here.getLongitude(), destination.latitude, destination.longitude, route -> {
+            if (destroyed) return;
+            if (route == null || route.points.size() < 2) {
+                callback.onRoute(null, ROUTE_NOT_FOUND);
+                return;
+            }
+            shownRoute = route;
+            drawRoute();
+            fitRoute(route);
+            callback.onRoute(route, 0);
+        });
+    }
+
+    @Override
+    public void clearRoute() {
+        shownRoute = null;
+        drawRoute();
+    }
+
+    /** Puts the shown route on the style (again after a style change), or takes it off. */
+    private void drawRoute() {
+        if (style == null) return;
+        final Route route = shownRoute;
+        GeoJsonSource source = style.getSourceAs(ROUTE_SOURCE);
+        if (route == null) {
+            if (source != null) {
+                source.setGeoJson(FeatureCollection.fromFeatures(new Feature[0]));
+            }
+            return;
+        }
+        final List<Point> points = new ArrayList<>(route.points.size());
+        for (double[] point : route.points) {
+            points.add(Point.fromLngLat(point[1], point[0]));
+        }
+        final Feature line = Feature.fromGeometry(LineString.fromLngLats(points));
+        if (source == null) {
+            source = new GeoJsonSource(ROUTE_SOURCE, line);
+            style.addSource(source);
+            // Telegram's blue over a white casing, drawn below the first label layer so names stay readable.
+            final LineLayer casing = new LineLayer(ROUTE_CASING, ROUTE_SOURCE).withProperties(
+                    PropertyFactory.lineColor(0xFFFFFFFF), PropertyFactory.lineWidth(9f),
+                    PropertyFactory.lineCap(Property.LINE_CAP_ROUND), PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND));
+            final LineLayer blue = new LineLayer(ROUTE_LINE, ROUTE_SOURCE).withProperties(
+                    PropertyFactory.lineColor(0xFF3A8EE6), PropertyFactory.lineWidth(5.5f),
+                    PropertyFactory.lineCap(Property.LINE_CAP_ROUND), PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND));
+            if (style.getLayer("address_label") != null) {
+                style.addLayerBelow(casing, "address_label");
+            } else {
+                style.addLayer(casing);
+            }
+            style.addLayerAbove(blue, ROUTE_CASING);
+        } else {
+            source.setGeoJson(line);
+        }
+    }
+
+    private void fitRoute(Route route) {
+        if (map == null || route.points.size() < 2) return;
+        final LatLngBounds.Builder bounds = new LatLngBounds.Builder();
+        for (double[] point : route.points) {
+            bounds.include(new LatLng(point[0], point[1]));
+        }
+        if (map.getLocationComponent().isLocationComponentActivated()) {
+            map.getLocationComponent().setCameraMode(CameraMode.NONE);
+        }
+        // Room for the page's floating buttons on the sides and the place's card at the bottom.
+        final int side = AndroidUtilities.dp(56);
+        map.animateCamera(CameraUpdateFactory.newLatLngBounds(bounds.build(), side, AndroidUtilities.dp(96), side,
+                attributionBottom + AndroidUtilities.dp(140)), CAMERA_MS);
+    }
 
     @Override
     public void search(String query, SearchCallback callback) {

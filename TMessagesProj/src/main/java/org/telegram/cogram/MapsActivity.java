@@ -154,6 +154,12 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
     private LocationCell placeCell;
     private ImageView placeClose;
     private TextView placeShare;
+    private TextView placeRoute;
+    private TextView routeInfo;
+    private ImageView placeSave;
+    private final ArrayList<MapEngine.Place> savedPlaces = new ArrayList<>();
+    private static final String SAVED_KEY = "saved";
+    private static final int MAX_SAVED_PLACES = 50;
     private ImageView placeShareOut;
     private ImageView placePin;
     private MapEngine.Place shownPlace;
@@ -370,7 +376,12 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         placeCard.setClickable(true);
         final FrameLayout placeHeader = new FrameLayout(context);
         placeCell = new LocationCell(context, false, getResourceProvider());
-        placeHeader.addView(placeCell, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.TOP, 0, 0, 80, 0));
+        placeHeader.addView(placeCell, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.TOP, 0, 0, 116, 0));
+        // Saving the place (Telegram's star), sharing it outside the app, then the close button.
+        placeSave = new ImageView(context);
+        placeSave.setScaleType(ImageView.ScaleType.CENTER);
+        placeSave.setOnClickListener(v -> toggleSavedPlace());
+        placeHeader.addView(placeSave, LayoutHelper.createFrame(36, 36, Gravity.RIGHT | Gravity.CENTER_VERTICAL, 0, 0, 80, 0));
         // Sharing outside the app sits beside the close button; sending into a chat is the card's main button.
         placeShareOut = new ImageView(context);
         placeShareOut.setImageResource(R.drawable.msg_share);
@@ -385,6 +396,23 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         placeClose.setOnClickListener(v -> hidePlace());
         placeHeader.addView(placeClose, LayoutHelper.createFrame(36, 36, Gravity.RIGHT | Gravity.CENTER_VERTICAL, 0, 0, 8, 0));
         placeCard.addView(placeHeader, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT));
+        // The way there by car, once asked for: its length and time, or why there is none.
+        routeInfo = new TextView(context);
+        routeInfo.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 14);
+        routeInfo.setGravity(LocaleController.isRTL ? Gravity.RIGHT : Gravity.LEFT);
+        routeInfo.setVisibility(View.GONE);
+        placeCard.addView(routeInfo, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 18, 0, 18, 6));
+        // Two buttons: directions (outlined) and sending into a chat (Telegram's filled button).
+        final LinearLayout placeButtons = new LinearLayout(context);
+        placeButtons.setOrientation(LinearLayout.HORIZONTAL);
+        placeRoute = new TextView(context);
+        placeRoute.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 14);
+        placeRoute.setTypeface(AndroidUtilities.bold());
+        placeRoute.setGravity(Gravity.CENTER);
+        placeRoute.setText(getString(R.string.PhogramMapsRoute));
+        ScaleStateListAnimator.apply(placeRoute, 0.02f, 1.2f);
+        placeRoute.setOnClickListener(v -> showRouteToPlace());
+        placeButtons.addView(placeRoute, LayoutHelper.createLinear(0, 44, 1f, 0, 0, 8, 0));
         placeShare = new TextView(context);
         placeShare.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 14);
         placeShare.setTypeface(AndroidUtilities.bold());
@@ -392,7 +420,8 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         placeShare.setText(getString(R.string.PhogramMapsSendToChat));
         ScaleStateListAnimator.apply(placeShare, 0.02f, 1.2f);
         placeShare.setOnClickListener(v -> sendPlaceToChat());
-        placeCard.addView(placeShare, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 44, 14, 2, 14, 14));
+        placeButtons.addView(placeShare, LayoutHelper.createLinear(0, 44, 1f));
+        placeCard.addView(placeButtons, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 44, 14, 2, 14, 14));
         contentView.addView(placeCard, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.BOTTOM, 8, 0, 8, 8));
         // The round buttons stay above the card whatever its height.
         placeCard.addOnLayoutChangeListener((v, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> {
@@ -644,12 +673,17 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
     }
 
     private void loadRecentPlaces() {
-        recentPlaces.clear();
+        loadPlaces(RECENT_KEY, recentPlaces, MAX_RECENT_PLACES);
+        loadPlaces(SAVED_KEY, savedPlaces, MAX_SAVED_PLACES);
+    }
+
+    private static void loadPlaces(String key, ArrayList<MapEngine.Place> places, int max) {
+        places.clear();
         try {
-            final JSONArray array = new JSONArray(recentPreferences().getString(RECENT_KEY, "[]"));
-            for (int i = 0; i < array.length() && recentPlaces.size() < MAX_RECENT_PLACES; i++) {
+            final JSONArray array = new JSONArray(recentPreferences().getString(key, "[]"));
+            for (int i = 0; i < array.length() && places.size() < max; i++) {
                 final JSONObject item = array.getJSONObject(i);
-                recentPlaces.add(new MapEngine.Place(item.optString("name"), item.optString("address"),
+                places.add(new MapEngine.Place(item.optString("name"), item.optString("address"),
                         item.getDouble("lat"), item.getDouble("lon")));
             }
         } catch (Exception e) {
@@ -657,30 +691,64 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         }
     }
 
+    private static boolean samePlace(MapEngine.Place a, MapEngine.Place b) {
+        return a.name.equals(b.name) && Math.abs(a.latitude - b.latitude) < 1e-6 && Math.abs(a.longitude - b.longitude) < 1e-6;
+    }
+
+    private static int indexOfPlace(ArrayList<MapEngine.Place> places, MapEngine.Place place) {
+        for (int i = 0; i < places.size(); i++) {
+            if (samePlace(places.get(i), place)) return i;
+        }
+        return -1;
+    }
+
     private void addRecentPlace(MapEngine.Place place) {
-        for (int i = recentPlaces.size() - 1; i >= 0; i--) {
-            final MapEngine.Place old = recentPlaces.get(i);
-            if (old.name.equals(place.name) && Math.abs(old.latitude - place.latitude) < 1e-6 && Math.abs(old.longitude - place.longitude) < 1e-6) {
-                recentPlaces.remove(i);
-            }
+        int index;
+        while ((index = indexOfPlace(recentPlaces, place)) >= 0) {
+            recentPlaces.remove(index);
         }
         recentPlaces.add(0, place);
         while (recentPlaces.size() > MAX_RECENT_PLACES) {
             recentPlaces.remove(recentPlaces.size() - 1);
         }
-        saveRecentPlaces();
+        savePlaces(RECENT_KEY, recentPlaces);
     }
 
     private void clearRecentPlaces() {
         recentPlaces.clear();
-        saveRecentPlaces();
+        savePlaces(RECENT_KEY, recentPlaces);
         searchAdapter.notifyDataSetChanged();
     }
 
-    private void saveRecentPlaces() {
+    /** Saves the shown place, or takes it off the saved places when it is there. */
+    private void toggleSavedPlace() {
+        final MapEngine.Place place = shownPlace;
+        if (place == null) return;
+        final int index = indexOfPlace(savedPlaces, place);
+        if (index >= 0) {
+            savedPlaces.remove(index);
+        } else {
+            savedPlaces.add(0, place);
+            while (savedPlaces.size() > MAX_SAVED_PLACES) {
+                savedPlaces.remove(savedPlaces.size() - 1);
+            }
+        }
+        savePlaces(SAVED_KEY, savedPlaces);
+        updatePlaceSave();
+        searchAdapter.notifyDataSetChanged();
+    }
+
+    private void updatePlaceSave() {
+        if (placeSave == null) return;
+        final boolean saved = shownPlace != null && indexOfPlace(savedPlaces, shownPlace) >= 0;
+        placeSave.setImageResource(saved ? R.drawable.msg_unfave : R.drawable.msg_fave);
+        placeSave.setContentDescription(getString(saved ? R.string.PhogramMapsUnsave : R.string.PhogramMapsSave));
+    }
+
+    private static void savePlaces(String key, ArrayList<MapEngine.Place> places) {
         try {
             final JSONArray array = new JSONArray();
-            for (MapEngine.Place place : recentPlaces) {
+            for (MapEngine.Place place : places) {
                 final JSONObject item = new JSONObject();
                 item.put("name", place.name);
                 item.put("address", place.address == null ? "" : place.address);
@@ -688,10 +756,53 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
                 item.put("lon", place.longitude);
                 array.put(item);
             }
-            recentPreferences().edit().putString(RECENT_KEY, array.toString()).apply();
+            recentPreferences().edit().putString(key, array.toString()).apply();
         } catch (Exception e) {
             FileLog.e(e);
         }
+    }
+
+    // Directions: the offline route by car from the device's position to the shown place.
+
+    private void showRouteToPlace() {
+        final MapEngine.Place place = shownPlace;
+        if (place == null || mapEngine == null) return;
+        final Activity activity = getParentActivity();
+        if (activity != null && Build.VERSION.SDK_INT >= 23 && !hasLocationPermission(activity)) {
+            // The route starts where the user is, so the position is asked for first, as the location button does.
+            onLocationButtonClick();
+            return;
+        }
+        routeInfo.setText(getString(R.string.PhogramMapsRouting));
+        routeInfo.setVisibility(View.VISIBLE);
+        mapEngine.showRoute(place, (route, error) -> {
+            if (shownPlace != place) return;
+            if (route != null) {
+                routeInfo.setText(LocaleController.formatString(R.string.PhogramMapsRouteInfo,
+                        formatDistance(route.meters), formatDuration(route.seconds)));
+            } else if (error == MapEngine.ROUTE_NO_DATA) {
+                routeInfo.setText(getString(R.string.PhogramMapsRouteNeedsData));
+            } else if (error == MapEngine.ROUTE_NO_LOCATION) {
+                routeInfo.setText(getString(R.string.PhogramMapsRouteNeedsLocation));
+            } else {
+                routeInfo.setText(getString(R.string.PhogramMapsNoRoute));
+            }
+        });
+    }
+
+    private static String formatDistance(float meters) {
+        if (meters < 1000) {
+            return LocaleController.formatString(R.string.PhogramMapsMeters, Math.round(meters / 10f) * 10);
+        }
+        return LocaleController.formatString(R.string.PhogramMapsKilometers, meters / 1000f);
+    }
+
+    private static String formatDuration(float seconds) {
+        final int minutes = Math.max(1, Math.round(seconds / 60f));
+        if (minutes < 60) {
+            return LocaleController.formatString(R.string.PhogramMapsMinutes, minutes);
+        }
+        return LocaleController.formatString(R.string.PhogramMapsHoursMinutes, minutes / 60, minutes % 60);
     }
 
     /** The search sheet, dragged down by its top or by the list once it is scrolled to its start. */
@@ -811,6 +922,20 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         }
         mapEngine.setDownloadListener(this::updateDownloadCard);
         mapEngine.setOnReadyListener(this::onMapReady);
+        // A tap on a named place opens its card; pressing and holding anywhere drops a pin there with its card.
+        mapEngine.setMapTapListener(new MapEngine.MapTapListener() {
+            @Override
+            public void onPlaceTapped(MapEngine.Place place) {
+                if (!searchOpen) showPlace(place);
+            }
+
+            @Override
+            public void onLongPressed(double latitude, double longitude) {
+                if (searchOpen) return;
+                showPlace(new MapEngine.Place(getString(R.string.PhogramMapsDroppedPin),
+                        String.format(java.util.Locale.US, "%.5f, %.5f", latitude, longitude), latitude, longitude));
+            }
+        });
     }
 
     private void updateDownloadCard() {
@@ -859,6 +984,9 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         if (searchEmpty == null) return;
         // Nothing found says so; nothing typed yet shows the recent places, as Telegram's search does.
         final boolean show = searchOpen && searchDone && !searchQuery.isEmpty() && searchResults.isEmpty();
+        // Without the region's search data only the map's own names exist, so the page says what to download.
+        final boolean noData = mapEngine != null && !mapEngine.hasSearchData();
+        searchEmpty.setText(getString(noData ? R.string.PhogramMapsNeedSearchData : R.string.NoResult));
         searchEmpty.setVisibility(show ? View.VISIBLE : View.GONE);
     }
 
@@ -880,6 +1008,10 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         venue.address = place.address;
         venue.icon = "pin";
         placeCell.setLocation(venue, null, 2, false, false);
+        // A new place takes the previous one's route off the map.
+        mapEngine.clearRoute();
+        routeInfo.setVisibility(View.GONE);
+        updatePlaceSave();
         placeCard.setVisibility(View.VISIBLE);
         placePin.setVisibility(View.INVISIBLE);
         updateSearchBar();
@@ -899,6 +1031,7 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         placePin.setVisibility(View.GONE);
         if (mapEngine != null) {
             mapEngine.showPlace(null, null);
+            mapEngine.clearRoute();
         }
         updateSearchBar();
         updateLayout();
@@ -981,14 +1114,30 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         private static final int TYPE_PLACE = 0;
         private static final int TYPE_HEADER = 1;
 
-        /** Nothing typed: the recent places under Telegram's gray "Recent" header with its Clear button. */
+        /**
+         * Nothing typed: the saved places, then the recent ones, each under Telegram's gray header (the recent ones
+         * with its Clear button). The rows are the header of a section followed by its places.
+         */
         private boolean showsRecent() {
             return searchQuery.isEmpty();
         }
 
+        private int savedRows() {
+            return savedPlaces.isEmpty() ? 0 : savedPlaces.size() + 1;
+        }
+
+        private int recentRows() {
+            return recentPlaces.isEmpty() ? 0 : recentPlaces.size() + 1;
+        }
+
         MapEngine.Place placeAt(int position) {
             if (showsRecent()) {
-                return position >= 1 && position <= recentPlaces.size() ? recentPlaces.get(position - 1) : null;
+                final int saved = savedRows();
+                if (position < saved) {
+                    return position >= 1 ? savedPlaces.get(position - 1) : null;
+                }
+                final int recent = position - saved;
+                return recent >= 1 && recent <= recentPlaces.size() ? recentPlaces.get(recent - 1) : null;
             }
             return position >= 0 && position < searchResults.size() ? searchResults.get(position) : null;
         }
@@ -996,14 +1145,16 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         @Override
         public int getItemCount() {
             if (showsRecent()) {
-                return recentPlaces.isEmpty() ? 0 : recentPlaces.size() + 1;
+                return savedRows() + recentRows();
             }
             return searchResults.size();
         }
 
         @Override
         public int getItemViewType(int position) {
-            return showsRecent() && position == 0 ? TYPE_HEADER : TYPE_PLACE;
+            if (!showsRecent()) return TYPE_PLACE;
+            final int saved = savedRows();
+            return position == 0 && saved > 0 || position == saved ? TYPE_HEADER : TYPE_PLACE;
         }
 
         @Override
@@ -1024,7 +1175,12 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         @Override
         public void onBindViewHolder(@NonNull RecyclerView.ViewHolder holder, int position) {
             if (holder.getItemViewType() == TYPE_HEADER) {
-                ((GraySectionCell) holder.itemView).setText(getString(R.string.Recent), getString(R.string.ClearButton), v -> clearRecentPlaces());
+                final GraySectionCell header = (GraySectionCell) holder.itemView;
+                if (position == 0 && savedRows() > 0) {
+                    header.setText(getString(R.string.PhogramMapsSaved));
+                } else {
+                    header.setText(getString(R.string.Recent), getString(R.string.ClearButton), v -> clearRecentPlaces());
+                }
                 return;
             }
             final MapEngine.Place place = placeAt(position);
@@ -1259,6 +1415,15 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         placeClose.setBackground(Theme.createSelectorDrawable(getThemedColor(Theme.key_listSelector), 1, dp(14)));
         placeShareOut.setColorFilter(new PorterDuffColorFilter(getThemedColor(Theme.key_windowBackgroundWhiteGrayIcon), PorterDuff.Mode.MULTIPLY));
         placeShareOut.setBackground(Theme.createSelectorDrawable(getThemedColor(Theme.key_listSelector), 1, dp(14)));
+        placeSave.setColorFilter(new PorterDuffColorFilter(getThemedColor(Theme.key_windowBackgroundWhiteGrayIcon), PorterDuff.Mode.MULTIPLY));
+        placeSave.setBackground(Theme.createSelectorDrawable(getThemedColor(Theme.key_listSelector), 1, dp(14)));
+        routeInfo.setTextColor(getThemedColor(Theme.key_windowBackgroundWhiteGrayText));
+        // Directions as Telegram's outlined secondary button, beside the filled send button.
+        final GradientDrawable routeBackground = new GradientDrawable();
+        routeBackground.setCornerRadius(dp(8));
+        routeBackground.setStroke(dp(1), getThemedColor(Theme.key_featuredStickers_addButton));
+        placeRoute.setBackground(routeBackground);
+        placeRoute.setTextColor(getThemedColor(Theme.key_featuredStickers_addButton));
         placeShare.setTextColor(getThemedColor(Theme.key_featuredStickers_buttonText));
         placeShare.setBackground(Theme.createSimpleSelectorRoundRectDrawable(dp(8), getThemedColor(Theme.key_featuredStickers_addButton), getThemedColor(Theme.key_featuredStickers_addButtonPressed)));
         // The player strip's colors.

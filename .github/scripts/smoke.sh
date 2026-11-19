@@ -164,11 +164,24 @@ dump_screen 7-maps-offer
 if tap_view 'content-desc="Download"'; then
   sleep 4
   dump_screen 7-maps-downloading
-  # The download runs in OsmAnd's foreground service, so it goes on when the app is in the background.
-  adb shell dumpsys activity services "$PACKAGE" > "$OUT/services-downloading.txt" || true
+  # The download runs in Android's DownloadManager, so it goes on when the app is in the background.
   adb shell dumpsys notification --noredact > "$OUT/notifications-downloading.txt" || true
   sleep 40
   dump_screen 7-maps-downloaded
+fi
+# Then the offer of OsmAnd's file for the search and the directions (about 170 MB from OsmAnd's server, unpacked on
+# the phone), which the page offers once the map has been still for a few seconds.
+sleep 8
+if tap_view 'content-desc="Download"'; then
+  for wait in $(seq 1 30); do
+    sleep 10
+    adb shell uiautomator dump /sdcard/ui.xml > /dev/null 2>&1 || true
+    adb exec-out cat /sdcard/ui.xml | grep -q 'content-desc="Cancel"' || break
+  done
+  sleep 20
+  dump_screen 7-maps-search-data
+  adb shell run-as "$PACKAGE" ls -l files 2>/dev/null > "$OUT/files.txt" || true
+  adb shell ls -l /sdcard/Android/data/$PACKAGE/files/maps /sdcard/Android/data/$PACKAGE/files/maps/osmand >> "$OUT/files.txt" 2>&1 || true
 fi
 # The emulator reports a fixed position, and the app was given the location permission at install.
 adb emu geo fix 44.3661 33.3152 || true

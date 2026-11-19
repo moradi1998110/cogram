@@ -100,12 +100,20 @@ dependencies {
 
     coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.5'
 
-    // OsmAnd's map engine for the Maps tab, when its sources are in the build (see settings.gradle).
+    // The Maps tab, when OsmAnd's core library is in the build (see settings.gradle): OsmAnd-java searches and routes
+    // offline over OsmAnd's map files. Its "android" jar leaves out its desktop PlatformUtil (the app has its own) and
+    // brings no libraries, so the ones its search and routing use are listed here.
     if (gradle.ext.has('osmand')) {
-        implementation project(':OsmAnd')
-        // The map view's types come from OsmAnd's core library, which OsmAnd's own module keeps to itself.
         implementation project(path: ':OsmAnd-java', configuration: 'android')
         implementation project(':OsmAnd-shared')
+        implementation files('../osmand/android/OsmAnd-java/libs/gnu-trove-osmand.jar')
+        implementation files('../osmand/android/OsmAnd-java/libs/icu4j-49_1_patched.jar')
+        implementation files('../osmand/libs/kxml2-2.3.0.jar')
+        implementation 'commons-logging:commons-logging:1.2'
+        implementation 'org.apache.commons:commons-compress:1.27.1'
+        implementation 'com.moparisthebest:junidecode:0.1.1'
+        implementation 'com.vividsolutions:jts-core:1.14.0'
+        implementation 'com.google.openlocationcode:openlocationcode:1.0.4'
         implementation 'androidx.multidex:multidex:2.0.1'
         // MapLibre Native (BSD-2-Clause) draws the map on the GPU; no telemetry, no API key, no Google services.
         implementation 'org.maplibre.gl:android-sdk:13.7.1'
@@ -114,7 +122,8 @@ dependencies {
 
 android.sourceSets.main.java.srcDirs += (gradle.ext.has('osmand') ? 'src/osmand/java' : 'src/plain/java')
 if (gradle.ext.has('osmand')) {
-    android.sourceSets.main.res.srcDirs += 'src/osmand/res'
+    // OsmAnd's place type names in English and Arabic, copied in by fetch-osmand.sh.
+    android.sourceSets.main.assets.srcDirs += 'src/osmand/assets'
 }
 
 android {

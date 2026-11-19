@@ -93,6 +93,54 @@ public interface MapEngine {
     /** Moves the map to the place and reports where it is as the map moves; null stops that. */
     void showPlace(Place place, PinListener listener);
 
+    /** False until the region's search data is on the phone, so the page can say what to download. */
+    default boolean hasSearchData() {
+        return true;
+    }
+
+    /** A route found offline: its points (latitude, longitude), its length and the time it takes by car. */
+    final class Route {
+        public final java.util.List<double[]> points;
+        public final float meters;
+        public final float seconds;
+
+        public Route(java.util.List<double[]> points, float meters, float seconds) {
+            this.points = points;
+            this.meters = meters;
+            this.seconds = seconds;
+        }
+    }
+
+    /** Why a route could not be shown. */
+    int ROUTE_NO_LOCATION = 1;
+    int ROUTE_NO_DATA = 2;
+    int ROUTE_NOT_FOUND = 3;
+
+    interface RouteCallback {
+        /** On the main thread: the route drawn on the map, or null with the reason. */
+        void onRoute(Route route, int error);
+    }
+
+    /** Finds the way by car from the device's position to the place, offline, and draws it on the map. */
+    default void showRoute(Place destination, RouteCallback callback) {
+        callback.onRoute(null, ROUTE_NOT_FOUND);
+    }
+
+    /** Takes the drawn route off the map. */
+    default void clearRoute() {
+    }
+
+    interface MapTapListener {
+        /** A named place drawn on the map was tapped. */
+        void onPlaceTapped(Place place);
+
+        /** The map was pressed and held at this point. */
+        void onLongPressed(double latitude, double longitude);
+    }
+
+    default void setMapTapListener(MapTapListener listener) {
+    }
+
     void onResume();
 
     void onPause();
