@@ -19,7 +19,16 @@ buildscript {
         } else {
             classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:2.1.0"
         }
+        // The security scans (gradle/security.gradle) join the build only when CI asks for them.
+        if (project.hasProperty('securityScan')) {
+            classpath 'org.owasp:dependency-check-gradle:13.0.0'
+            classpath 'org.sonarsource.scanner.gradle:sonarqube-gradle-plugin:7.5.0.8588'
+        }
     }
+}
+
+if (project.hasProperty('securityScan')) {
+    apply from: 'gradle/security.gradle'
 }
 
 if (gradle.ext.has('osmand')) {

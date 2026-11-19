@@ -1,0 +1,67 @@
+// Phogram's security scans, run by .github/workflows/security.yml with -PsecurityScan.
+//
+// OWASP Dependency-Check lists the libraries the app ships that have known vulnerabilities (OWASP Top 10, A06),
+// from NIST's vulnerability database (NVD) and CISA's list of exploited ones. SonarQube analyses the code itself
+// on the organization's server. Neither runs in ordinary builds.
+
+apply plugin: 'org.owasp.dependencycheck'
+
+dependencyCheck {
+    format = 'ALL'
+    // Reports only for now: the first scans show what Telegram's own libraries carry, and a threshold
+    // (for example 7, high) is set once those are dealt with.
+    failBuildOnCVSS = 11.0f
+    skipTestGroups = true
+    // What ends up in the APK: the app's build and the libraries' debug builds.
+    scanConfigurations = ['afatDebugRuntimeClasspath', 'debugRuntimeClasspath']
+    // Only NVD and CISA: Sonatype's OSS Index needs an account, and the JavaScript, Node and .NET analyzers
+    // have nothing to look at here.
+    analyzers {
+        assemblyEnabled = false
+        nodeEnabled = false
+        nodeAuditEnabled = false
+        retirejs { enabled = false }
+        ossIndex { enabled = false }
+    }
+    nvd {
+        apiKey = System.getenv('NVD_API_KEY') ?: ''
+    }
+    data {
+        directory = "${rootDir}/.dependency-check-data"
+    }
+}
+
+apply plugin: 'org.sonarqube'
+
+// OsmAnd is fetched while CI builds and is not Phogram's code; its own project analyses it.
+['OsmAnd', 'OsmAnd-java', 'OsmAnd-api', 'OsmAnd-shared'].each { name ->
+    def p = rootProject.findProject(":${name}")
+    if (p != null) {
+        p.afterEvaluate { it.sonar { skipProject = true } }
+    }
+}
+
+sonar {
+    properties {
+        property 'sonar.projectKey', System.getenv('SONAR_PROJECT_KEY') ?: 'phogram'
+        property 'sonar.projectName', 'Phogram'
+        // Sonar reads the server and token from SONAR_HOST_URL and SONAR_TOKEN in the environment.
+        property 'sonar.sourceEncoding', 'UTF-8'
+        // The assistant's proxy server, which is Python, outside every Gradle module.
+        property 'sonar.sources', 'server'
+        // Native code needs Sonar's C/C++ build wrapper; vendored and generated code is not Phogram's.
+        property 'sonar.exclusions', '**/jni/**,**/third_party/**,**/build/**,vendor/**,osmand/**'
+        property 'sonar.dependencyCheck.htmlReportPath', 'build/reports/dependency-check-report.html'
+        property 'sonar.dependencyCheck.jsonReportPath', 'build/reports/dependency-check-report.json'
+    }
+}
+
+project(':TMessagesProj_App') {
+    afterEvaluate {
+        sonar {
+            properties {
+                property 'sonar.androidVariant', 'afatDebug'
+            }
+        }
+    }
+}

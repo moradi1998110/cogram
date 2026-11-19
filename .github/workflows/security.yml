@@ -1,0 +1,97 @@
+name: Security scans
+
+# OWASP Dependency-Check on the libraries the app ships, then SonarQube on the code (gradle/security.gradle).
+# Runs weekly, on demand, and on security* tags.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 3 * * 1'
+  push:
+    tags:
+      - 'security*'
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 340
+    env:
+      NDK_VERSION: 27.2.12479018
+    steps:
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/boost
+
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          # Sonar reads the history to date each issue and tell new code from old.
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      - name: Install the Android SDK parts the build needs
+        run: |
+          SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKM" --licenses > /dev/null || true
+          "$SDKM" "platforms;android-36" "build-tools;36.0.0" "ndk;$NDK_VERSION" "cmake;3.22.1" > /dev/null
+
+      - name: Fetch OsmAnd
+        run: bash .github/scripts/fetch-osmand.sh
+
+      - name: Add swap and limit Gradle memory
+        run: |
+          sudo fallocate -l 8G /mnt/cogram-swap
+          sudo chmod 600 /mnt/cogram-swap
+          sudo mkswap /mnt/cogram-swap
+          sudo swapon /mnt/cogram-swap
+          mkdir -p ~/.gradle
+          {
+            echo "org.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1g"
+            echo "org.gradle.parallel=false"
+          } >> ~/.gradle/gradle.properties
+
+      # NIST's database is large; a copy from earlier runs is only brought up to date.
+      - name: Restore the vulnerability database
+        uses: actions/cache@v4
+        with:
+          path: .dependency-check-data
+          key: dependency-check-${{ github.run_id }}
+          restore-keys: dependency-check-
+
+      - name: OWASP Dependency-Check
+        env:
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+        run: |
+          if [ -z "$NVD_API_KEY" ]; then
+            echo "::warning::NVD_API_KEY is not set; the first download of NIST's database can take hours without it."
+          fi
+          chmod +x gradlew
+          ./gradlew --no-daemon --stacktrace -PsecurityScan -Pandroid.injected.build.abi=arm64-v8a dependencyCheckAggregate
+
+      - name: Upload the Dependency-Check report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-check-report
+          path: build/reports/dependency-check-report.*
+          if-no-files-found: ignore
+
+      - name: SonarQube
+        env:
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_PROJECT_KEY: ${{ secrets.SONAR_PROJECT_KEY }}
+        run: |
+          if [ -z "$SONAR_HOST_URL" ] || [ -z "$SONAR_TOKEN" ]; then
+            echo "::warning::SONAR_HOST_URL and SONAR_TOKEN are not set, so SonarQube is skipped."
+            exit 0
+          fi
+          # Sonar analyses compiled Java, so the app's Java is compiled first (without the native build).
+          ./gradlew --no-daemon --stacktrace -PsecurityScan -Pandroid.injected.build.abi=arm64-v8a \
+            :TMessagesProj_App:compileAfatDebugJavaWithJavac sonar
