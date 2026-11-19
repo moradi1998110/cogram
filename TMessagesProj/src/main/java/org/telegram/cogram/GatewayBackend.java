@@ -155,6 +155,11 @@ public interface GatewayBackend {
         return Collections.emptyList();
     }
 
+    /** Who reacted to a message, with which emoji (all of them when {@code only} is null). */
+    default TLObject reactionsList(long peerId, int id, String only) {
+        return null;
+    }
+
     /** Whether a room keeps its members' addresses hidden, so its readers cannot be known. */
     default boolean roomReadersUnknown(long channelId) {
         return false;

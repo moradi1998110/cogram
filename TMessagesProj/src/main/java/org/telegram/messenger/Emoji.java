@@ -242,6 +242,31 @@ public class Emoji {
         return info;
     }
 
+    /**
+     * Phogram: an emoji's picture from the bundled pack, read now on the calling thread, or null when the
+     * pack has no picture for it. Phogram's reactions are drawn from it, as Telegram's come from its server.
+     */
+    public static Bitmap getEmojiBitmap(CharSequence code) {
+        DrawableInfo info = code == null ? null : getDrawableInfo(code);
+        if (info == null) {
+            String fixed = code == null ? null : fixEmoji(code.toString());
+            info = fixed == null ? null : getDrawableInfo(fixed);
+        }
+        if (info == null) {
+            return null;
+        }
+        Bitmap loaded = emojiBmp[info.page][info.page2];
+        if (loaded != null) {
+            return loaded;
+        }
+        try {
+            return EmojiPack.getInstance().getEmoji(info.page, info.page2);
+        } catch (Exception e) {
+            FileLog.e(e);
+            return null;
+        }
+    }
+
     public static boolean isValidEmoji(CharSequence code) {
         if (TextUtils.isEmpty(code)) {
             return false;

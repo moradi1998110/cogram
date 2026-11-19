@@ -805,6 +805,10 @@ public class NotificationService {
     }
 
     private void pushMissedCall(final Message message) {
+        // Telegram's NotificationsController reports missed calls in Cogram, from the call entries.
+        if (message != null) {
+            return;
+        }
         final Conversational conversation = message.getConversation();
         final MissedCallsInfo info = mMissedCalls.get(conversation);
         if (info == null) {

@@ -410,7 +410,7 @@ final class XmppBackend implements GatewayBackend {
         TLRPC.MessageMedia media = storedMedia(id);
         boolean room = isRoom(message);
         PendingSend send = track(message, randomId, () -> room ? roomSent(message, userId, randomId)
-                : media != null ? mediaSent(userId, id, date, media, randomId) : textSent(id, date));
+                : media != null ? mediaSent(userId, id, date, media, randomId) : textSent(id, date, shownText(message)));
         scheduleSync();
         return send;
     }
@@ -439,7 +439,7 @@ final class XmppBackend implements GatewayBackend {
         });
     }
 
-    private TLRPC.TL_updateShortSentMessage textSent(int id, int date) {
+    private TLRPC.TL_updateShortSentMessage textSent(int id, int date, String text) {
         pts++;
         savePts();
         TLRPC.TL_updateShortSentMessage sent = new TLRPC.TL_updateShortSentMessage();
@@ -449,6 +449,10 @@ final class XmppBackend implements GatewayBackend {
         sent.pts = pts;
         sent.pts_count = 1;
         sent.date = date;
+        // Telegram takes the sent message's links from this answer, as it would from its server.
+        if (addLinkEntities(text, sent.entities)) {
+            sent.flags |= TLObject.FLAG_7;
+        }
         return sent;
     }
 
@@ -603,7 +607,7 @@ final class XmppBackend implements GatewayBackend {
                 }
                 for (Message message : loadedMessages(conversation)) {
                     int known = ids.findMessage(message.getUuid());
-                    if (known == 0 && !(isMedia(message) && isDownloading(message))) {
+                    if (known == 0 && !(isMedia(message) && isDownloading(message)) && !callUnsettled(message)) {
                         updates.add(createNewMessageUpdate(message, peerId));
                         snapshots.put(ids.findMessage(message.getUuid()), snapshot(message));
                     } else if (known != 0) {
@@ -674,6 +678,10 @@ final class XmppBackend implements GatewayBackend {
         update.pts = pts;
         update.pts_count = 1;
         update.date = tl.date;
+        if (!tl.entities.isEmpty()) {
+            update.entities = tl.entities;
+            update.flags |= TLObject.FLAG_7;
+        }
         return update;
     }
 
@@ -813,13 +821,13 @@ final class XmppBackend implements GatewayBackend {
     }
 
     /** Reactions counted by emoji, with ours marked chosen so Telegram lets us take them back. */
-    private static TLRPC.TL_messageReactions reactionsOf(Message message) {
+    private TLRPC.TL_messageReactions reactionsOf(Message message) {
         LinkedHashMap<String, int[]> counts = new LinkedHashMap<>();
         for (eu.siacs.conversations.entities.Reaction reaction : message.getReactions()) {
-            int[] count = counts.get(reaction.normalizedReaction());
+            int[] count = counts.get(ReactionCatalog.telegramForm(reaction.normalizedReaction()));
             if (count == null) {
                 count = new int[2];
-                counts.put(reaction.normalizedReaction(), count);
+                counts.put(ReactionCatalog.telegramForm(reaction.normalizedReaction()), count);
             }
             count[0]++;
             if (!reaction.received) {
@@ -841,7 +849,64 @@ final class XmppBackend implements GatewayBackend {
             }
             reactions.results.add(count);
         }
+        // Who reacted, so Telegram shows their pictures on the message and lists them on a long press.
+        int date = (int) (message.getTimeSent() / 1000);
+        for (eu.siacs.conversations.entities.Reaction reaction : message.getReactions()) {
+            long reactor = reactorId(message, reaction);
+            if (reactor == 0) {
+                continue;
+            }
+            TLRPC.TL_messagePeerReaction peer = new TLRPC.TL_messagePeerReaction();
+            peer.peer_id = peerUser(reactor);
+            TLRPC.TL_reactionEmoji emoji = new TLRPC.TL_reactionEmoji();
+            emoji.emoticon = ReactionCatalog.telegramForm(reaction.normalizedReaction());
+            peer.reaction = emoji;
+            peer.date = date;
+            reactions.recent_reactions.add(peer);
+        }
+        if (!reactions.recent_reactions.isEmpty()) {
+            reactions.can_see_list = true;
+            reactions.flags |= TLObject.FLAG_1 | TLObject.FLAG_2;
+        }
         return reactions;
+    }
+
+    /** The Telegram user behind a reaction, or 0 when a room hides who gave it. */
+    private long reactorId(Message message, eu.siacs.conversations.entities.Reaction reaction) {
+        if (!reaction.received) {
+            return selfId;
+        }
+        if (isRoom(message)) {
+            if (reaction.trueJid == null) {
+                return 0;
+            }
+            long id = ids.peerId(reaction.trueJid.asBareJid().toString());
+            if (user(id) == null && account() != null) {
+                // A member who reacted but never wrote: Telegram needs the user to show their picture.
+                roomUsers.put(id, memberUser(reaction.trueJid.asBareJid(), null, false));
+            }
+            return id;
+        }
+        Jid from = reaction.from != null ? reaction.from : message.getConversation().getAddress();
+        return from == null ? 0 : ids.peerId(from.asBareJid().toString());
+    }
+
+    @Override
+    public synchronized TLObject reactionsList(long peerId, int id, String only) {
+        Message message = engineMessage(id);
+        TLRPC.TL_messages_messageReactionsList result = new TLRPC.TL_messages_messageReactionsList();
+        if (message == null) {
+            return result;
+        }
+        for (TLRPC.MessagePeerReaction peer : reactionsOf(message).recent_reactions) {
+            String emoji = ((TLRPC.TL_reactionEmoji) peer.reaction).emoticon;
+            if (only == null || only.equals(emoji)) {
+                result.reactions.add(peer);
+            }
+        }
+        result.count = result.reactions.size();
+        result.users.addAll(users());
+        return result;
     }
 
     /**
@@ -1269,13 +1334,68 @@ final class XmppBackend implements GatewayBackend {
     private List<Message> loadedMessages(Conversation conversation) {
         ArrayList<Message> loaded = new ArrayList<>();
         conversation.populateWithMessages(loaded);
+        Map<String, Message> calls = callEntries(loaded);
         ArrayList<Message> shown = new ArrayList<>();
         for (Message message : loaded) {
-            if (isShown(message)) {
+            if (isShown(message) && (!isLoggedCall(message) || calls.get(message.getRemoteMsgId()) == message)) {
                 shown.add(message);
             }
         }
         return shown;
+    }
+
+    private static boolean isLoggedCall(Message message) {
+        return message.getType() == Message.TYPE_RTP_SESSION && message.getRemoteMsgId() != null;
+    }
+
+    /**
+     * One entry per call. The engine may log a call twice: once from the proposal it finds while catching
+     * up, as not answered, and again when the call ends. The answered one wins, else the newest.
+     */
+    private static Map<String, Message> callEntries(List<Message> messages) {
+        Map<String, Message> calls = new HashMap<>();
+        for (Message message : messages) {
+            if (!isLoggedCall(message)) {
+                continue;
+            }
+            Message kept = calls.get(message.getRemoteMsgId());
+            boolean answered = RtpSessionStatus.of(message.getBody()).successful;
+            if (kept == null || answered || !RtpSessionStatus.of(kept.getBody()).successful) {
+                calls.put(message.getRemoteMsgId(), message);
+            }
+        }
+        return calls;
+    }
+
+    /** Longer than a call rings, so a call the engine logged as soon as it was proposed has settled. */
+    private static final long CALL_SETTLE_MS = 45_000;
+    private final java.util.concurrent.ScheduledExecutorService settleTimer =
+            Executors.newSingleThreadScheduledExecutor();
+
+    /**
+     * Whether a call entry that says "not answered" may still be answered. Telegram's server only logs a
+     * call once it ended, and Telegram shows a "missed call" notification for every unanswered entry, so
+     * such an entry waits while its call is going on and for a while after it was proposed.
+     */
+    private boolean callUnsettled(Message message) {
+        if (!isLoggedCall(message) || RtpSessionStatus.of(message.getBody()).successful) {
+            return false;
+        }
+        Account account = account();
+        if (account != null) {
+            eu.siacs.conversations.xmpp.jingle.JingleRtpConnection ongoing = account.getXmppConnection()
+                    .getManager(eu.siacs.conversations.xmpp.manager.JingleManager.class).getOngoingRtpConnection();
+            if (ongoing != null && message.getRemoteMsgId().equals(ongoing.getId().sessionId)) {
+                settleTimer.schedule(this::scheduleSync, 5, java.util.concurrent.TimeUnit.SECONDS);
+                return true;
+            }
+        }
+        long left = message.getTimeSent() + CALL_SETTLE_MS - System.currentTimeMillis();
+        if (left > 0) {
+            settleTimer.schedule(this::scheduleSync, left + 500, java.util.concurrent.TimeUnit.MILLISECONDS);
+            return true;
+        }
+        return false;
     }
 
     private static boolean isShown(Message message) {
@@ -1345,9 +1465,50 @@ final class XmppBackend implements GatewayBackend {
             tl.reactions = reactionsOf(message);
             tl.flags |= TLObject.FLAG_20;
         }
+        if (addLinkEntities(tl.message, tl.entities)) {
+            tl.flags |= TLObject.FLAG_7;
+        }
         // What Telegram now holds, so a later download, edit or reaction reaches it as an edit.
         snapshots.putIfAbsent(tl.id, snapshot(message));
         return tl;
+    }
+
+    /**
+     * Marks the web addresses and e-mail addresses in a text. Telegram only makes a link of what the
+     * server marked, and XMPP messages carry plain text, so the gateway marks them as Telegram's server would.
+     */
+    static boolean addLinkEntities(String text, ArrayList<TLRPC.MessageEntity> entities) {
+        if (TextUtils.isEmpty(text)) {
+            return false;
+        }
+        boolean added = false;
+        java.util.regex.Matcher url = android.util.Patterns.WEB_URL.matcher(text);
+        while (url.find()) {
+            // A word that only looks like a domain, such as "file.txt", is not a link without a scheme or www.
+            String found = url.group();
+            String lower = found.toLowerCase(Locale.ROOT);
+            if (!lower.startsWith("http://") && !lower.startsWith("https://") && !lower.startsWith("www.")
+                    && !found.contains("/")) {
+                continue;
+            }
+            TLRPC.TL_messageEntityUrl entity = new TLRPC.TL_messageEntityUrl();
+            entity.offset = url.start();
+            entity.length = url.end() - url.start();
+            entities.add(entity);
+            added = true;
+        }
+        java.util.regex.Matcher email = android.util.Patterns.EMAIL_ADDRESS.matcher(text);
+        while (email.find()) {
+            TLRPC.TL_messageEntityEmail entity = new TLRPC.TL_messageEntityEmail();
+            entity.offset = email.start();
+            entity.length = email.end() - email.start();
+            entities.add(entity);
+            added = true;
+        }
+        if (added) {
+            Collections.sort(entities, (a, b) -> Integer.compare(a.offset, b.offset));
+        }
+        return added;
     }
 
     /** A point, or a venue when the URI names the place as Android's "?q=lat,lon(name)" does. */
@@ -2463,7 +2624,7 @@ final class XmppBackend implements GatewayBackend {
         int id = ids.messageId(message.getUuid(), message.getTimeSent());
         int date = (int) (message.getTimeSent() / 1000);
         boolean room = isRoom(conversation);
-        PendingSend send = track(message, randomId, () -> room ? roomSent(message, userId, randomId) : textSent(id, date));
+        PendingSend send = track(message, randomId, () -> room ? roomSent(message, userId, randomId) : textSent(id, date, text));
         whenEncryptionDecided(conversation, message, () -> failSend(send), () -> service.sendMessage(message));
         return send.reply;
     }

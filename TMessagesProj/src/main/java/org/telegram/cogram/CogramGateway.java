@@ -73,8 +73,11 @@ public final class CogramGateway {
     private final UploadParts uploads = new UploadParts();
     private volatile GatewayBackend backend;
 
+    private final NotifySettingsStore notifySettings;
+
     private CogramGateway(int account) {
         this.account = account;
+        this.notifySettings = new NotifySettingsStore(account);
         selectBackend();
     }
 
@@ -196,7 +199,14 @@ public final class CogramGateway {
         return new TLRPC.TL_auth_loggedOut();
     }
 
-    public void dispatch(TLObject request, Reply reply) {
+    public void dispatch(TLObject request, Reply answer) {
+        // Chats' notification settings live on the phone, and every answer carrying them gets them here.
+        Reply reply = (response, error) -> {
+            if (response != null) {
+                notifySettings.fill(response);
+            }
+            answer.run(response, error);
+        };
         GatewayBackend current = backend;
         if (current == null) {
             replyUnsupported(request, reply);
@@ -288,6 +298,25 @@ public final class CogramGateway {
         TLObject stickers = noStickers(request);
         if (stickers != null) {
             return stickers;
+        }
+        if (request instanceof TL_account.updateNotifySettings) {
+            TL_account.updateNotifySettings update = (TL_account.updateNotifySettings) request;
+            String key = NotifySettingsStore.key(update.peer);
+            if (key != null && update.settings != null) {
+                notifySettings.put(key, update.settings);
+            }
+            return new TLRPC.TL_boolTrue();
+        } else if (request instanceof TL_account.getNotifySettings) {
+            return notifySettings.get(NotifySettingsStore.key(((TL_account.getNotifySettings) request).peer));
+        } else if (request instanceof TL_account.resetNotifySettings) {
+            notifySettings.reset();
+            return new TLRPC.TL_boolTrue();
+        } else if (request instanceof TLRPC.TL_messages_getAvailableReactions) {
+            return ReactionCatalog.availableReactions(((TLRPC.TL_messages_getAvailableReactions) request).hash);
+        } else if (request instanceof TLRPC.TL_messages_getMessageReactionsList) {
+            TLRPC.TL_messages_getMessageReactionsList get = (TLRPC.TL_messages_getMessageReactionsList) request;
+            String only = get.reaction instanceof TLRPC.TL_reactionEmoji ? ((TLRPC.TL_reactionEmoji) get.reaction).emoticon : null;
+            return backend.reactionsList(peerId(get.peer), get.id, only);
         }
         TLObject roomResponse = room(request);
         if (roomResponse != null) {
@@ -793,6 +822,9 @@ public final class CogramGateway {
     private TLObject file(TLRPC.TL_upload_getFile request) {
         if (isMediaRequest(request)) {
             return backend.mediaFile(request.location.id, request.offset, request.limit);
+        }
+        if (request.location instanceof TLRPC.TL_inputDocumentFileLocation && ReactionCatalog.isReactionDocument(request.location.id)) {
+            return ReactionCatalog.file(request.location.id, request.offset, request.limit);
         }
         long photoId;
         if (request.location instanceof TLRPC.TL_inputPeerPhotoFileLocation) {
