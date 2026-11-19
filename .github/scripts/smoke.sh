@@ -156,6 +156,12 @@ fi
 # The emulator reports a fixed position, and the app was given the location permission at install.
 adb emu geo fix 44.3661 33.3152 || true
 tap_view 'content-desc="My location"' || true
+# A phone's GPS keeps reporting; the emulator reports only when told, so the position is sent again while the map
+# listens for it.
+for fix in 1 2 3; do
+  sleep 1
+  adb emu geo fix 44.3661 33.3152 || true
+done
 sleep 5
 adb exec-out screencap -p > "$OUT/7-maps-location.png" || true
 # Offline search in the downloaded world map, then the place card of the first result.
