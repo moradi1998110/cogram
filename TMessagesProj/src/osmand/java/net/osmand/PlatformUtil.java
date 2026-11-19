@@ -7,7 +7,13 @@ import org.xmlpull.v1.XmlPullParser;
 import org.xmlpull.v1.XmlPullParserException;
 import org.xmlpull.v1.XmlSerializer;
 
+import org.telegram.messenger.ApplicationLoader;
+
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 
 /**
  * OsmAnd's core library asks this class for its logs and XML parsers. Its own copy, for desktop Java, is left out of
@@ -28,9 +34,31 @@ public class PlatformUtil {
         osmandRegions = or;
     }
 
-    public static OsmandRegions getOsmandRegions() throws IOException {
+    /**
+     * OsmAnd's list of world regions, which its search reads at start. The desktop copy writes the list from the
+     * library's resources to the current folder, which on Android is read-only; here it goes to the app's own files.
+     */
+    public static synchronized OsmandRegions getOsmandRegions() throws IOException {
         if (osmandRegions == null) {
-            osmandRegions = new OsmandRegions(null);
+            final File file = new File(ApplicationLoader.applicationContext.getFilesDir(), "osmand-regions.ocbf");
+            try (InputStream in = OsmandRegions.class.getResourceAsStream(OsmandRegions.REGIONS_OCBF)) {
+                if (in == null) {
+                    throw new IOException("OsmAnd's region list is missing from the app");
+                }
+                final File temp = new File(file.getPath() + ".tmp");
+                try (OutputStream out = new FileOutputStream(temp)) {
+                    final byte[] buffer = new byte[1 << 16];
+                    int n;
+                    while ((n = in.read(buffer)) > 0) {
+                        out.write(buffer, 0, n);
+                    }
+                }
+                // Written afresh on each start of the app, so an update of the app brings its newer list.
+                if (!temp.renameTo(file)) {
+                    throw new IOException("could not place OsmAnd's region list");
+                }
+            }
+            osmandRegions = new OsmandRegions(file.getAbsolutePath());
         }
         return osmandRegions;
     }
