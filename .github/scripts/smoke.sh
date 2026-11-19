@@ -128,6 +128,15 @@ dump_screen 7-maps
 sleep 5
 adb exec-out screencap -p > "$OUT/7-maps-later.png" || true
 adb shell dumpsys meminfo "$PACKAGE" > "$OUT/meminfo-maps.txt" || true
+# How smoothly the map pans: frames drawn and janky frames over eight drags across the map.
+adb shell dumpsys gfxinfo "$PACKAGE" reset > /dev/null || true
+for drag in 1 2 3 4 5 6 7 8; do
+  adb shell input swipe 260 360 60 300 400 || true
+  adb shell input swipe 60 300 260 360 400 || true
+done
+sleep 2
+adb shell dumpsys gfxinfo "$PACKAGE" > "$OUT/gfxinfo-maps.txt" || true
+grep -E "Total frames rendered|Janky frames|50th percentile|90th percentile|95th percentile|99th percentile" "$OUT/gfxinfo-maps.txt" | head -6 | tee -a "$OUT/steps.txt"
 # The app ships without OsmAnd's world map, so the page offers it (about 38 MB from OsmAnd's servers).
 dump_screen 7-maps-offer
 if tap_view 'content-desc="Download"'; then
