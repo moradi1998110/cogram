@@ -16,6 +16,7 @@ import org.maplibre.android.location.LocationComponentActivationOptions;
 import org.maplibre.android.location.modes.CameraMode;
 import org.maplibre.android.location.modes.RenderMode;
 import org.maplibre.android.maps.MapLibreMap;
+import org.maplibre.android.maps.MapLibreMapOptions;
 import org.maplibre.android.maps.MapView;
 import org.maplibre.android.maps.Style;
 import org.telegram.messenger.AndroidUtilities;
@@ -51,9 +52,17 @@ final class MapLibreMapEngine implements MapEngine {
     private static final String OVERVIEW_ASSET = "phogram_map/iraq-overview.pmtiles";
     private static final String OVERVIEW_FILE = "maps/iraq-overview.pmtiles";
 
+    /**
+     * OsmAnd (search and its map files) starts only once the map has been still this long, or when the user
+     * searches, so its start never competes with the first pans of the map.
+     */
+    private static final long OFFLINE_START_DELAY_MS = 5000;
+
     private final Context context;
     private final MapView view;
-    private final OsmAndOffline offline;
+    private OsmAndOffline offline;
+    private Runnable cameraListener;
+    private final Runnable startOffline = this::offline;
     private MapLibreMap map;
     private Style style;
     private boolean destroyed;
@@ -70,9 +79,15 @@ final class MapLibreMapEngine implements MapEngine {
     MapLibreMapEngine(Context context) {
         this.context = context;
         MapLibre.getInstance(context.getApplicationContext());
-        view = new MapView(context);
+        // Labels of the tiles and of the device's position are placed apart, which spares the collision work
+        // on every frame of a pan; tiles around the view and at lower zooms are fetched ahead (MapLibre's default).
+        // Until the tiles draw, the map shows the theme's background instead of MapLibre's beige.
+        final MapLibreMapOptions options = MapLibreMapOptions.createFromAttributes(context)
+                .crossSourceCollisions(false)
+                .setPrefetchZoomDelta(4)
+                .foregroundLoadColor(Theme.getColor(Theme.key_windowBackgroundGray));
+        view = new MapView(context, options);
         view.onCreate(null);
-        offline = new OsmAndOffline(context);
         MapData.addListener(mapDataChanged);
         MapData.refreshCatalog();
         MapData.startPolling();
@@ -127,11 +142,14 @@ final class MapLibreMapEngine implements MapEngine {
         map.setMaxZoomPreference(19);
         map.setCameraPosition(new CameraPosition.Builder()
                 .target(new LatLng(START_LATITUDE, START_LONGITUDE)).zoom(START_ZOOM).build());
+        map.addOnCameraMoveStartedListener(reason -> AndroidUtilities.cancelRunOnUIThread(startOffline));
         map.addOnCameraMoveListener(this::onCameraMoved);
         map.addOnCameraIdleListener(this::onCameraIdle);
-        // MapLibre draws on its own GPU surface, which Android's frame statistics do not see, so it reports its
-        // frame rate itself; the emulator check reads these lines to compare the map's smoothness.
-        map.setOnFpsChangedListener(fps -> android.util.Log.d("PhogramMapFps", String.format(java.util.Locale.US, "%.1f", fps)));
+        // MapLibre draws on its own GPU surface, which Android's frame statistics do not see, so test builds have it
+        // report its frame rate; the emulator check reads these lines to compare the map's smoothness.
+        if (org.telegram.messenger.BuildVars.DEBUG_VERSION) {
+            map.setOnFpsChangedListener(fps -> android.util.Log.d("PhogramMapFps", String.format(java.util.Locale.US, "%.1f", fps)));
+        }
         map.setStyle(new Style.Builder().fromJson(styleJson(tiles)), loaded -> {
             if (destroyed) return;
             style = loaded;
@@ -260,10 +278,32 @@ final class MapLibreMapEngine implements MapEngine {
 
     // Downloads and search: OsmAnd's map files, which the offline search reads.
 
+    /** OsmAnd, started the first time it is needed. */
+    private OsmAndOffline offline() {
+        if (offline == null && !destroyed) {
+            AndroidUtilities.cancelRunOnUIThread(startOffline);
+            offline = new OsmAndOffline(context);
+            offline.setDownloadListener(downloadListener);
+            if (map != null) {
+                final CameraPosition camera = map.getCameraPosition();
+                offline.setCenter(camera.target.getLatitude(), camera.target.getLongitude(), camera.zoom);
+            }
+        }
+        return offline;
+    }
+
     @Override
     public void setDownloadListener(Runnable listener) {
         downloadListener = listener;
-        offline.setDownloadListener(listener);
+        if (offline != null) {
+            offline.setDownloadListener(listener);
+        }
+    }
+
+    @Override
+    public boolean setCameraMoveListener(Runnable listener) {
+        cameraListener = listener;
+        return true;
     }
 
     /**
@@ -277,7 +317,7 @@ final class MapLibreMapEngine implements MapEngine {
             return new Download(LocaleController.formatString(R.string.PhogramMapsRegionMap, tiles.regionName),
                     AndroidUtilities.formatFileSize(tiles.size), MapData.isDownloading(), MapData.getProgress());
         }
-        return offline.getOfferedDownload();
+        return offline != null ? offline.getOfferedDownload() : null;
     }
 
     @Override
@@ -285,7 +325,7 @@ final class MapLibreMapEngine implements MapEngine {
         final MapData.RegionFile tiles = MapData.offer();
         if (tiles != null) {
             MapData.download(tiles);
-        } else {
+        } else if (offline != null) {
             offline.startOfferedDownload();
         }
     }
@@ -294,7 +334,7 @@ final class MapLibreMapEngine implements MapEngine {
     public void cancelOfferedDownload() {
         if (MapData.offer() != null) {
             MapData.cancel();
-        } else {
+        } else if (offline != null) {
             offline.cancelOfferedDownload();
         }
     }
@@ -319,7 +359,10 @@ final class MapLibreMapEngine implements MapEngine {
     @Override
     public void search(String query, SearchCallback callback) {
         final LatLng center = map != null ? map.getCameraPosition().target : new LatLng(START_LATITUDE, START_LONGITUDE);
-        offline.search(query, center.getLatitude(), center.getLongitude(), callback);
+        final OsmAndOffline search = offline();
+        if (search != null) {
+            search.search(query, center.getLatitude(), center.getLongitude(), callback);
+        }
     }
 
     // The shown place: the camera flies to it, and every camera move reports where it is so the page keeps its pin on it.
@@ -340,13 +383,23 @@ final class MapLibreMapEngine implements MapEngine {
 
     private void onCameraMoved() {
         reportPin();
+        if (cameraListener != null) {
+            cameraListener.run();
+        }
     }
 
     private void onCameraIdle() {
         reportPin();
-        if (map != null) {
+        if (cameraListener != null) {
+            cameraListener.run();
+        }
+        if (map == null || destroyed) return;
+        if (offline != null) {
             final CameraPosition camera = map.getCameraPosition();
             offline.setCenter(camera.target.getLatitude(), camera.target.getLongitude(), camera.zoom);
+        } else {
+            AndroidUtilities.cancelRunOnUIThread(startOffline);
+            AndroidUtilities.runOnUIThread(startOffline, OFFLINE_START_DELAY_MS);
         }
     }
 
@@ -388,7 +441,10 @@ final class MapLibreMapEngine implements MapEngine {
     public void onDestroy() {
         destroyed = true;
         shownPlace = null;
-        offline.destroy();
+        AndroidUtilities.cancelRunOnUIThread(startOffline);
+        if (offline != null) {
+            offline.destroy();
+        }
         MapData.removeListener(mapDataChanged);
         if (started) {
             view.onStop();

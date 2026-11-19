@@ -28,6 +28,14 @@ public interface MapEngine {
     /** Turns the map back to north up. */
     void resetRotation();
 
+    /**
+     * Runs the listener on the main thread whenever the camera moves or stops, so the page follows the rotation
+     * without checking it on a timer. False when this map cannot tell, and the page checks on a timer instead.
+     */
+    default boolean setCameraMoveListener(Runnable listener) {
+        return false;
+    }
+
     /** A map file the page offers to download: the world map first, then the region at the map's center. */
     final class Download {
         public final String name;

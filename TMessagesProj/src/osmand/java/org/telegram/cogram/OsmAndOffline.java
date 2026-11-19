@@ -54,6 +54,7 @@ final class OsmAndOffline {
     private final ExecutorService offerExecutor = Executors.newSingleThreadExecutor();
     private final ExecutorService searchExecutor = Executors.newSingleThreadExecutor();
     private volatile int searchRequest;
+    private Runnable pendingSearch;
 
     OsmAndOffline(Context context) {
         app = (OsmandApplication) context.getApplicationContext();
@@ -92,6 +93,11 @@ final class OsmAndOffline {
         }
         if (readyListener != null) {
             readyListener.run();
+        }
+        if (pendingSearch != null) {
+            final Runnable search = pendingSearch;
+            pendingSearch = null;
+            search.run();
         }
     }
 
@@ -209,6 +215,11 @@ final class OsmAndOffline {
     // Search: OsmAnd's own offline search over the downloaded map files, around the given point, in the app's language.
 
     void search(String query, double latitude, double longitude, MapEngine.SearchCallback callback) {
+        if (!ready) {
+            // OsmAnd starts when the search is first used; the latest query runs as soon as it has read its maps.
+            pendingSearch = () -> search(query, latitude, longitude, callback);
+            return;
+        }
         final int request = ++searchRequest;
         final LatLon center = new LatLon(latitude, longitude);
         searchExecutor.execute(() -> {

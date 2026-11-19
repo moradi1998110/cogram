@@ -352,16 +352,36 @@ public final class MapData {
             polling = false;
             return;
         }
-        int status = DownloadManager.STATUS_FAILED;
-        try (Cursor cursor = downloads().query(new DownloadManager.Query().setFilterById(id))) {
-            if (cursor != null && cursor.moveToFirst()) {
-                status = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS));
-                final long done = cursor.getLong(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR));
-                final long total = cursor.getLong(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES));
-                progress = total > 0 ? Math.min(100, done * 100f / total) : 0;
+        // DownloadManager is a database behind another process, so it is asked off the main thread, where the map
+        // would otherwise miss frames every half second of a download.
+        Utilities.globalQueue.postRunnable(() -> {
+            int status = DownloadManager.STATUS_FAILED;
+            float done = -1;
+            try (Cursor cursor = downloads().query(new DownloadManager.Query().setFilterById(id))) {
+                if (cursor != null && cursor.moveToFirst()) {
+                    status = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS));
+                    final long bytes = cursor.getLong(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR));
+                    final long total = cursor.getLong(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES));
+                    done = total > 0 ? Math.min(100, bytes * 100f / total) : 0;
+                }
+            } catch (Exception e) {
+                FileLog.e(e);
             }
-        } catch (Exception e) {
-            FileLog.e(e);
+            final int result = status;
+            final float percent = done;
+            AndroidUtilities.runOnUIThread(() -> onPolled(id, result, percent));
+        });
+    }
+
+    private static void onPolled(long id, int status, float percent) {
+        if (id != preferences().getLong(KEY_DOWNLOAD_ID, -1)) {
+            // Cancelled or replaced while the question was out.
+            polling = false;
+            startPolling();
+            return;
+        }
+        if (percent >= 0) {
+            progress = percent;
         }
         if (status == DownloadManager.STATUS_SUCCESSFUL) {
             polling = false;

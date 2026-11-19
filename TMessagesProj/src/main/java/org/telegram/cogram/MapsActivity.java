@@ -167,11 +167,14 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
     private int statusBarHeight;
     private int navigationBarHeight;
 
+    /** The map reports its camera moves, so the north button follows them without a timer. */
+    private boolean cameraEvents;
+
     private final Runnable compassCheck = new Runnable() {
         @Override
         public void run() {
             updateCompass();
-            if (pageResumed && mapEngine != null) {
+            if (pageResumed && mapEngine != null && !cameraEvents) {
                 AndroidUtilities.runOnUIThread(this, COMPASS_CHECK_MS);
             }
         }
@@ -801,6 +804,7 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         mapContainer.setVisibility(View.INVISIBLE);
         setMapView(mapEngine.getView());
         applyMapPadding();
+        cameraEvents = mapEngine.setCameraMoveListener(this::updateCompass);
         if (pageResumed) {
             mapEngine.onResume();
             AndroidUtilities.runOnUIThread(compassCheck, COMPASS_CHECK_MS);
