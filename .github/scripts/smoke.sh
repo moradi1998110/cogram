@@ -90,10 +90,11 @@ adb exec-out screencap -p > "$OUT/3-typed.png" || true
 adb shell input keycombination 113 66 || true
 sleep "$ECHO_SECONDS"
 adb exec-out screencap -p > "$OUT/4-echo.png" || true
-# A long press on the echoed message opens Telegram's menu with the reaction bar, served by the gateway.
+# A tap on the echoed message opens Telegram's menu with the reaction bar, served by the gateway (a long press
+# selects the message instead).
 adb shell input keyevent 4 || true
 sleep 1
-adb shell input swipe 120 470 120 470 900 || true
+adb shell input tap 100 555 || true
 sleep 3
 dump_screen 4-reactions
 adb shell input keyevent 4 || true
