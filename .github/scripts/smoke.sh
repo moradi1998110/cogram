@@ -182,7 +182,8 @@ done
 sleep 5
 adb exec-out screencap -p > "$OUT/7-maps-location.png" || true
 # The search sheet with a word nothing matches: it must say so, and back must close the sheet, not leave it stuck.
-if tap_view 'content-desc="Where to?"'; then
+# The moving position marker can keep the screen reader from reading the page; the bar is then tapped where it is.
+if tap_view 'content-desc="Where to?"' || adb shell input tap 160 532; then
   sleep 2
   dump_screen 7-maps-sheet
   adb shell input text zzqqxx
@@ -195,13 +196,14 @@ if tap_view 'content-desc="Where to?"'; then
   dump_screen 7-maps-sheet-closed
 fi
 # Offline search in the downloaded world map, then the place card of the first result.
-if tap_view 'content-desc="Where to?"'; then
+# The moving position marker can keep the screen reader from reading the page; the bar is then tapped where it is.
+if tap_view 'content-desc="Where to?"' || adb shell input tap 160 532; then
   sleep 2
   adb shell input text Mosul
   sleep 6
   dump_screen 7-maps-search
   # The first result, at the top of the results list.
-  tap_view_top 'content-desc="Search results"'
+  tap_view_top 'content-desc="Search results"' || adb shell input tap 160 175
   sleep 5
   dump_screen 7-maps-place
   # The place goes to the demo chat as a location, through Telegram's chat picker.
