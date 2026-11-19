@@ -162,8 +162,16 @@ sleep 3
 adb shell input tap 160 160
 sleep 4
 dump_screen 7-chat-location
-adb shell input keyevent 4
-sleep 3
+
+# Back presses above may leave the app, so the next steps start from the chats page through the launcher.
+back_to_chats() {
+  adb shell am start -n "$PACKAGE/org.telegram.messenger.DefaultIcon" > /dev/null
+  sleep 5
+  tap_view 'text="Chats"' || true
+  sleep 2
+}
+
+back_to_chats
 tap_view 'content-desc="More options"' || true
 sleep 2
 dump_screen 8-chats-menu
@@ -172,7 +180,8 @@ sleep 3
 dump_screen 9-settings
 # Phogram's assistant tab, where Telegram has the Profile tab.
 adb shell input keyevent 4
-sleep 3
+sleep 2
+back_to_chats
 tap_view 'text="Assistant"' || true
 sleep 3
 dump_screen 10-assistant
