@@ -1,0 +1,56 @@
+name: Mirror to GitLab
+
+# Work stays on GitHub; every push here (a branch or a tag) is copied to the organization's GitLab, so GitLab always
+# holds the same branches and tags. Deleted branches and tags are deleted there too. Needs two repository secrets:
+#   GITLAB_MIRROR_URL    the GitLab project's HTTPS address, e.g. https://gitlab.example.org/group/cogram.git
+#   GITLAB_MIRROR_TOKEN  a GitLab project access token with the write_repository scope (Maintainer role, so it may
+#                        push to protected branches such as main)
+on:
+  push:
+    branches: ['**']
+    tags: ['**']
+  delete:
+  workflow_dispatch:
+  schedule:
+    # A catch-up copy every six hours, for changes no push on a branch with this file announced.
+    - cron: '17 */6 * * *'
+
+permissions:
+  contents: read
+
+# A newer copy includes everything an older one would have pushed.
+concurrency:
+  group: mirror-gitlab
+  cancel-in-progress: true
+
+jobs:
+  mirror:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Copy all branches and tags to GitLab
+        env:
+          GITLAB_MIRROR_URL: ${{ secrets.GITLAB_MIRROR_URL }}
+          GITLAB_MIRROR_TOKEN: ${{ secrets.GITLAB_MIRROR_TOKEN }}
+          GITHUB_REPO_TOKEN: ${{ github.token }}
+        run: |
+          if [ -z "$GITLAB_MIRROR_URL" ] || [ -z "$GITLAB_MIRROR_TOKEN" ]; then
+            echo "::warning::GITLAB_MIRROR_URL and GITLAB_MIRROR_TOKEN are not set, so nothing is copied to GitLab."
+            exit 0
+          fi
+          case "$GITLAB_MIRROR_URL" in
+            https://*) ;;
+            *) echo "::error::GITLAB_MIRROR_URL must start with https://"; exit 1 ;;
+          esac
+          # The tokens travel in headers, never in a URL that git could print.
+          GH_AUTH=$(printf 'x-access-token:%s' "$GITHUB_REPO_TOKEN" | base64 -w0)
+          GL_AUTH=$(printf 'oauth2:%s' "$GITLAB_MIRROR_TOKEN" | base64 -w0)
+          echo "::add-mask::$GH_AUTH"
+          echo "::add-mask::$GL_AUTH"
+          # A bare clone holds every branch under refs/heads and every tag, without GitHub's pull request refs.
+          git -c http.extraHeader="Authorization: Basic $GH_AUTH" clone --bare --quiet \
+            "https://github.com/${GITHUB_REPOSITORY}.git" repo.git
+          cd repo.git
+          git -c http.extraHeader="Authorization: Basic $GL_AUTH" push --prune "$GITLAB_MIRROR_URL" \
+            '+refs/heads/*:refs/heads/*' '+refs/tags/*:refs/tags/*'
+          echo "Copied $(git for-each-ref refs/heads | wc -l) branches and $(git for-each-ref refs/tags | wc -l) tags to GitLab."
