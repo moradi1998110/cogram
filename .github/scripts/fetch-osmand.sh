@@ -84,16 +84,10 @@ EOF
 # OsmAnd's XML parser library also carries the XmlPull interfaces Android already has, and R8 refuses an app
 # that redefines them. The app takes this copy without them.
 mkdir -p osmand/libs
-# Maven Central now and then answers 404 to the runners for a file that exists, and curl does not retry a 404,
-# so each mirror is tried a few times.
-KXML=net/sf/kxml/kxml2/2.3.0/kxml2-2.3.0.jar
-for attempt in 1 2 3 4; do
-  for mirror in https://repo1.maven.org/maven2 https://repo.maven.apache.org/maven2; do
-    curl -sSfL --retry 3 -o osmand/libs/kxml2-2.3.0.jar "$mirror/$KXML" && break 2
-  done
-  sleep 15
-done
-test -s osmand/libs/kxml2-2.3.0.jar
+# Maven Central kept answering 404 to the runners for this file, so a copy is kept in the repository (vendor/,
+# BSD licensed, 43 KB) and checked against Maven Central's SHA-1, ccbc77a5fd907ef863c29f3596c6f54ffa4e9442.
+cp .github/scripts/vendor/kxml2-2.3.0.jar osmand/libs/kxml2-2.3.0.jar
+echo "f264dd9f79a1fde10ce5ecc53221eff24be4c9331c830b7d52f2f08a7b633de2  osmand/libs/kxml2-2.3.0.jar" | sha256sum -c -
 zip -q -d osmand/libs/kxml2-2.3.0.jar 'org/xmlpull/*'
 unzip -l osmand/libs/kxml2-2.3.0.jar | tail -1
 # Phogram ships no Google Play services, so OsmAnd goes without its Google Play parts too: location comes from
