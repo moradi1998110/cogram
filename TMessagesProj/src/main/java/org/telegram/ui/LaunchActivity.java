@@ -86,7 +86,6 @@ import androidx.core.graphics.ColorUtils;
 import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
 
-import com.google.android.gms.common.api.Status;
 import com.google.common.primitives.Longs;
 
 import org.telegram.PhoneFormat.PhoneFormat;
@@ -7581,12 +7580,7 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
                 }
             }
         } else if (id == NotificationCenter.needShowPlayServicesAlert) {
-            try {
-                final Status status = (Status) args[0];
-                status.startResolutionForResult(this, PLAY_SERVICES_REQUEST_CHECK_SETTINGS);
-            } catch (Throwable ignore) {
-
-            }
+            // Phogram: Google Play services are not used, so there is nothing to resolve.
         } else if (id == NotificationCenter.fileLoaded) {
             String path = (String) args[0];
             if (loadingThemeFileName != null) {

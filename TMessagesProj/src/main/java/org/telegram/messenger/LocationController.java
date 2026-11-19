@@ -1017,6 +1017,8 @@ public class LocationController extends BaseController implements NotificationCe
             TLRPC.TL_messageMediaVenue streetLocation = null;
             TL_stories.TL_geoPointAddress streetAddress = new TL_stories.TL_geoPointAddress();
             try {
+                // Phogram: Android's address lookup asks Google's servers on most phones, so it is not used.
+                if (org.telegram.cogram.CogramGateway.ENABLED) throw new java.io.IOException("no address lookup");
                 Geocoder gcd = new Geocoder(ApplicationLoader.applicationContext, finalLocale);
                 List<Address> addresses = gcd.getFromLocation(location.getLatitude(), location.getLongitude(), 1);
                 List<Address> engAddresses = null;

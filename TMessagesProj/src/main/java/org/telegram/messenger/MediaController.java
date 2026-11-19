@@ -80,8 +80,8 @@ import androidx.media3.extractor.jpeg.MotionPhotoDescription;
 import androidx.media3.extractor.jpeg.XmpMotionPhotoDescriptionParser;
 
 import org.telegram.ui.AspectRatioFrameLayout;
-import com.google.android.gms.cast.MediaMetadata;
-import com.google.android.gms.common.images.WebImage;
+import org.telegram.messenger.chromecast.MediaMetadata;
+import org.telegram.messenger.chromecast.WebImage;
 
 import org.telegram.cogram.CogramGateway;
 import org.telegram.cogram.VoiceWaveform;

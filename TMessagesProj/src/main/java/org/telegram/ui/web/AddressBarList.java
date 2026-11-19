@@ -416,6 +416,9 @@ public class AddressBarList extends FrameLayout {
             }
             return;
         }
+        if (SearchEngine.getCurrent().getAutocompleteURL(input) == null) {
+            return;
+        }
 
         lastTask = new HttpGetTask(result -> AndroidUtilities.runOnUIThread(() -> {
             suggestions.clear();

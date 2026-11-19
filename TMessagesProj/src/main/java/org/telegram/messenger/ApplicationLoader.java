@@ -33,8 +33,6 @@ import android.view.ViewGroup;
 
 import androidx.annotation.NonNull;
 
-import com.google.android.gms.common.ConnectionResult;
-import com.google.android.gms.common.GooglePlayServicesUtil;
 
 import org.json.JSONObject;
 import org.telegram.cogram.CogramGateway;
@@ -95,7 +93,7 @@ public class ApplicationLoader extends Conversations {
     }
 
     protected ILocationServiceProvider onCreateLocationServiceProvider() {
-        return new GoogleLocationProvider();
+        return new org.telegram.cogram.DeviceLocationProvider();
     }
 
     public static IMapsProvider getMapsProvider() {
@@ -106,7 +104,7 @@ public class ApplicationLoader extends Conversations {
     }
 
     protected IMapsProvider onCreateMapsProvider() {
-        return new GoogleMapsProvider();
+        return new org.telegram.cogram.NoMapsProvider();
     }
 
     public static PushListenerController.IPushListenerServiceProvider getPushProvider() {
@@ -430,15 +428,6 @@ public class ApplicationLoader extends Conversations {
         }, 1000);
     }
 
-    private boolean checkPlayServices() {
-        try {
-            int resultCode = GooglePlayServicesUtil.isGooglePlayServicesAvailable(this);
-            return resultCode == ConnectionResult.SUCCESS;
-        } catch (Exception e) {
-            FileLog.e(e);
-        }
-        return true;
-    }
 
     private static long lastNetworkCheck = -1;
     private static void ensureCurrentNetworkGet() {

@@ -578,7 +578,7 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
     /** Telegram's chat picker, then the place goes to each picked chat as a venue, as Telegram sends one. */
     private void sendPlaceToChat() {
         final MapEngine.Place place = shownPlace;
-        if (place == null) return;
+        if (place == null || sendToTarget(place)) return;
         final Bundle args = new Bundle();
         args.putBoolean("onlySelect", true);
         args.putInt("dialogsType", DialogsActivity.DIALOGS_TYPE_FORWARD);
@@ -673,7 +673,64 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         if (openedPlace != null) {
             showPlace(openedPlace);
             openedPlace = null;
+        } else if (sendTarget != null) {
+            // Opened from a chat's attach menu: the card first offers where the user is, as Telegram's does.
+            ApplicationLoader.getLocationServiceProvider().getLastLocation(location -> AndroidUtilities.runOnUIThread(() -> {
+                if (location == null || mapEngine == null || shownPlace != null) return;
+                showPlace(new MapEngine.Place(getString(R.string.SendLocation),
+                        String.format(java.util.Locale.US, "%.5f, %.5f", location.getLatitude(), location.getLongitude()),
+                        location.getLatitude(), location.getLongitude()));
+                myLocationShown = true;
+            }));
         }
+    }
+
+    /** The chat whose attach menu opened the map; its place card sends there directly. */
+    private org.telegram.ui.ChatActivity sendTarget;
+    private boolean myLocationShown;
+
+    /**
+     * Opens the map for a chat's attach menu, in place of Telegram's location picker on Google's map. False when
+     * this build has no map engine, so Telegram's picker opens as before.
+     */
+    public static boolean openForAttach(org.telegram.ui.Components.ChatAttachAlert alert, BaseFragment fragment) {
+        if (!MapEngines.isAvailable() || !(fragment instanceof org.telegram.ui.ChatActivity)) {
+            return false;
+        }
+        final MapsActivity maps = new MapsActivity(new Bundle());
+        maps.sendTarget = (org.telegram.ui.ChatActivity) fragment;
+        alert.dismiss(true);
+        fragment.presentFragment(maps);
+        return true;
+    }
+
+    /** Sends the shown place to the chat that opened the map: a point for where the user is, else a venue. */
+    private boolean sendToTarget(MapEngine.Place place) {
+        if (sendTarget == null) {
+            return false;
+        }
+        final TLRPC.MessageMedia media;
+        if (myLocationShown && getString(R.string.SendLocation).equals(place.name)) {
+            final TLRPC.TL_messageMediaGeo geo = new TLRPC.TL_messageMediaGeo();
+            geo.geo = new TLRPC.TL_geoPoint();
+            geo.geo.lat = place.latitude;
+            geo.geo._long = place.longitude;
+            media = geo;
+        } else {
+            final TLRPC.TL_messageMediaVenue venue = new TLRPC.TL_messageMediaVenue();
+            venue.geo = new TLRPC.TL_geoPoint();
+            venue.geo.lat = place.latitude;
+            venue.geo._long = place.longitude;
+            venue.title = place.name;
+            venue.address = place.address == null ? "" : place.address;
+            venue.provider = "";
+            venue.venue_id = "";
+            venue.venue_type = "";
+            media = venue;
+        }
+        sendTarget.didSelectLocation(media, 0, true, 0, 0);
+        finishFragment();
+        return true;
     }
 
     private void applyMapPadding() {

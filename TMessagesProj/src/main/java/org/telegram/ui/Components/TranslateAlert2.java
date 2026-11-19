@@ -566,6 +566,11 @@ public class TranslateAlert2 extends BottomSheet implements NotificationCenter.N
     }
     private static void alternativeTranslateInternal(String text, String fromLng, String toLng, Utilities.Callback2<String, Boolean> done) {
         if (done == null) return;
+        if (org.telegram.cogram.CogramGateway.ENABLED) {
+            // Phogram: Telegram's fallback translator is Google's web service, which Phogram never contacts.
+            done.run(null, false);
+            return;
+        }
         new Thread() {
             @Override
             public void run() {

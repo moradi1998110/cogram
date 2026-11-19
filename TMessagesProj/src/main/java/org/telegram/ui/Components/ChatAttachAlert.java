@@ -2847,6 +2847,10 @@ public class ChatAttachAlert extends BottomSheet implements NotificationCenter.N
                     if (!plainTextEnabled && checkCanRemoveRestrictionsByBoosts()) {
                         return;
                     }
+                    // Phogram: OsmAnd's map on the phone, not Telegram's picker on Google's map.
+                    if (plainTextEnabled && org.telegram.cogram.MapsActivity.openForAttach(this, baseFragment)) {
+                        return;
+                    }
                     if (!AndroidUtilities.isMapsInstalled(baseFragment)) {
                         return;
                     }
@@ -4530,6 +4534,9 @@ public class ChatAttachAlert extends BottomSheet implements NotificationCenter.N
             }
             openAudioLayout(true);
         } else if (layoutType == LAYOUT_TYPE_LOCATION) {
+            if (org.telegram.cogram.MapsActivity.openForAttach(this, baseFragment)) {
+                return;
+            }
             if (!AndroidUtilities.isMapsInstalled(baseFragment)) {
                 return;
             }

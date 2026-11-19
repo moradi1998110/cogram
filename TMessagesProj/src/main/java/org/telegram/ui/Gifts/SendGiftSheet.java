@@ -32,9 +32,9 @@ import androidx.annotation.Nullable;
 import androidx.recyclerview.widget.DefaultItemAnimator;
 import androidx.recyclerview.widget.RecyclerView;
 
-import com.android.billingclient.api.BillingClient;
-import com.android.billingclient.api.BillingFlowParams;
-import com.android.billingclient.api.ProductDetails;
+import org.telegram.cogram.billing.BillingClient;
+import org.telegram.cogram.billing.BillingFlowParams;
+import org.telegram.cogram.billing.ProductDetails;
 
 import org.telegram.messenger.AccountInstance;
 import org.telegram.messenger.AndroidUtilities;

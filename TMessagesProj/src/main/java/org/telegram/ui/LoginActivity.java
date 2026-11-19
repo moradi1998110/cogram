@@ -99,17 +99,11 @@ import androidx.annotation.Nullable;
 import androidx.core.content.ContextCompat;
 import androidx.core.graphics.ColorUtils;
 
-import com.android.billingclient.api.BillingClient;
-import com.android.billingclient.api.BillingFlowParams;
-import com.android.billingclient.api.ProductDetails;
-import com.android.billingclient.api.Purchase;
-import com.android.billingclient.api.QueryProductDetailsParams;
-import com.google.android.gms.auth.api.signin.GoogleSignIn;
-import com.google.android.gms.auth.api.signin.GoogleSignInAccount;
-import com.google.android.gms.auth.api.signin.GoogleSignInClient;
-import com.google.android.gms.auth.api.signin.GoogleSignInOptions;
-import com.google.android.gms.common.api.ApiException;
-import com.google.android.gms.tasks.Task;
+import org.telegram.cogram.billing.BillingClient;
+import org.telegram.cogram.billing.BillingFlowParams;
+import org.telegram.cogram.billing.ProductDetails;
+import org.telegram.cogram.billing.Purchase;
+import org.telegram.cogram.billing.QueryProductDetailsParams;
 
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -218,6 +212,17 @@ import java.util.concurrent.atomic.AtomicReference;
 
 @SuppressLint("HardwareIds")
 public class LoginActivity extends BaseFragment implements NotificationCenter.NotificationCenterDelegate {
+
+    /** Phogram: Google sign-in is not shipped, so no account ever comes from it; the views keep their checks. */
+    private static final class GoogleSignInAccount {
+        String getEmail() {
+            return null;
+        }
+
+        String getIdToken() {
+            return null;
+        }
+    }
     public final static boolean ENABLE_PASTED_TEXT_PROCESSING = false;
     private final static int SHOW_DELAY = SharedConfig.getDevicePerformanceClass() <= SharedConfig.PERFORMANCE_CLASS_AVERAGE ? 150 : 100;
 
@@ -6090,7 +6095,7 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
             signInWithGoogleView.setMaxLines(2);
 
             SpannableStringBuilder str = new SpannableStringBuilder("d ");
-            Drawable dr = ContextCompat.getDrawable(context, com.google.android.gms.base.R.drawable.googleg_standard_color_18);
+            Drawable dr = ContextCompat.getDrawable(context, R.drawable.msg_link);
             dr.setBounds(0, AndroidUtilities.dp(9), AndroidUtilities.dp(18), AndroidUtilities.dp(18 + 9));
             str.setSpan(new ImageSpan(dr, ImageSpan.ALIGN_BOTTOM), 0, 1, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
             str.setSpan(new ReplacementSpan() {
@@ -6117,36 +6122,8 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
             addView(bottomContainer, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT));
             VerticalPositionAutoAnimator.attach(bottomContainer);
 
+            // Phogram: Google sign-in is not shipped; this option is never shown.
             bottomContainer.setOnClickListener(view -> {
-                NotificationCenter.getGlobalInstance().addObserver(new NotificationCenter.NotificationCenterDelegate() {
-                    @Override
-                    public void didReceivedNotification(int id, int account, Object... args) {
-                        int request = (int) args[0];
-                        int result = (int) args[1];
-                        Intent data = (Intent) args[2];
-                        NotificationCenter.getGlobalInstance().removeObserver(this, NotificationCenter.onActivityResultReceived);
-
-                        if (request == BasePermissionsActivity.REQUEST_CODE_SIGN_IN_WITH_GOOGLE) {
-                            try {
-                                googleAccount = GoogleSignIn.getSignedInAccountFromIntent(data).getResult(ApiException.class);
-                                onNextPressed(null);
-                            } catch (ApiException e) {
-                                FileLog.e(e);
-                            }
-                        }
-                    }
-                }, NotificationCenter.onActivityResultReceived);
-
-                GoogleSignInClient googleClient = GoogleSignIn.getClient(getContext(), new GoogleSignInOptions.Builder()
-                        .requestIdToken(BuildVars.GOOGLE_AUTH_CLIENT_ID)
-                        .requestEmail()
-                        .build());
-                googleClient.signOut().addOnCompleteListener(command -> {
-                    if (getParentActivity() == null || getParentActivity().isFinishing()) {
-                        return;
-                    }
-                    getParentActivity().startActivityForResult(googleClient.getSignInIntent(), BasePermissionsActivity.REQUEST_CODE_SIGN_IN_WITH_GOOGLE);
-                });
             });
         }
 
@@ -6436,7 +6413,7 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
             signInWithGoogleView.setMaxLines(2);
 
             SpannableStringBuilder str = new SpannableStringBuilder("d ");
-            Drawable dr = ContextCompat.getDrawable(context, com.google.android.gms.base.R.drawable.googleg_standard_color_18);
+            Drawable dr = ContextCompat.getDrawable(context, R.drawable.msg_link);
             dr.setBounds(0, AndroidUtilities.dp(9), AndroidUtilities.dp(18), AndroidUtilities.dp(18 + 9));
             str.setSpan(new ImageSpan(dr, ImageSpan.ALIGN_BOTTOM), 0, 1, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
             str.setSpan(new ReplacementSpan() {
@@ -6451,36 +6428,8 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
             str.append(getString(R.string.SignInWithGoogle));
             signInWithGoogleView.setText(str);
 
+            // Phogram: Google sign-in is not shipped; this option is never shown.
             signInWithGoogleView.setOnClickListener(view -> {
-                NotificationCenter.getGlobalInstance().addObserver(new NotificationCenter.NotificationCenterDelegate() {
-                    @Override
-                    public void didReceivedNotification(int id, int account, Object... args) {
-                        int request = (int) args[0];
-                        int result = (int) args[1];
-                        Intent data = (Intent) args[2];
-                        NotificationCenter.getGlobalInstance().removeObserver(this, NotificationCenter.onActivityResultReceived);
-
-                        if (request == BasePermissionsActivity.REQUEST_CODE_SIGN_IN_WITH_GOOGLE) {
-                            try {
-                                googleAccount = GoogleSignIn.getSignedInAccountFromIntent(data).getResult(ApiException.class);
-                                onNextPressed(null);
-                            } catch (ApiException e) {
-                                FileLog.e(e);
-                            }
-                        }
-                    }
-                }, NotificationCenter.onActivityResultReceived);
-
-                GoogleSignInClient googleClient = GoogleSignIn.getClient(getContext(), new GoogleSignInOptions.Builder()
-                                .requestIdToken(BuildVars.GOOGLE_AUTH_CLIENT_ID)
-                                .requestEmail()
-                                .build());
-                googleClient.signOut().addOnCompleteListener(command -> {
-                    if (getParentActivity() == null) {
-                        return;
-                    }
-                    getParentActivity().startActivityForResult(googleClient.getSignInIntent(), BasePermissionsActivity.REQUEST_CODE_SIGN_IN_WITH_GOOGLE);
-                });
             });
 
             cantAccessEmailFrameLayout = new FrameLayout(context);

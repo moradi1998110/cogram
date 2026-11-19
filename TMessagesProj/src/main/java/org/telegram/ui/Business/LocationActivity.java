@@ -537,6 +537,8 @@ public class LocationActivity extends BaseFragment implements NotificationCenter
             progressDialog.showDelayed(200);
             Utilities.searchQueue.postRunnable(() -> {
                 try {
+                    // Phogram: Android's address lookup asks Google's servers on most phones, so it is not used.
+                    if (org.telegram.cogram.CogramGateway.ENABLED) throw new java.io.IOException("no address lookup");
                     Geocoder geocoder = new Geocoder(getContext(), LocaleController.getInstance().getCurrentLocale());
                     List<Address> addresses = geocoder.getFromLocationName(address, 1);
                     if (!addresses.isEmpty()) {

@@ -12,7 +12,7 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.os.Build;
 
-import com.android.billingclient.api.ProductDetails;
+import org.telegram.cogram.billing.ProductDetails;
 
 import java.util.Objects;
 

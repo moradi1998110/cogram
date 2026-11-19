@@ -1750,6 +1750,8 @@ public class ThemeActivity extends BaseFragment implements NotificationCenter.No
         Utilities.globalQueue.postRunnable(() -> {
             String name;
             try {
+                // Phogram: Android's address lookup asks Google's servers on most phones, so it is not used.
+                if (org.telegram.cogram.CogramGateway.ENABLED) throw new java.io.IOException("no address lookup");
                 Geocoder gcd = new Geocoder(ApplicationLoader.applicationContext, Locale.getDefault());
                 List<Address> addresses = gcd.getFromLocation(Theme.autoNightLocationLatitude, Theme.autoNightLocationLongitude, 1);
                 if (addresses.size() > 0) {

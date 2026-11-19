@@ -3,8 +3,8 @@ package org.telegram.ui.Components.Paint;
 import android.graphics.Bitmap;
 import android.graphics.PointF;
 
-import com.google.android.gms.vision.face.Face;
-import com.google.android.gms.vision.face.Landmark;
+import org.telegram.cogram.vision.Face;
+import org.telegram.cogram.vision.Landmark;
 
 import org.telegram.ui.Components.Size;
 

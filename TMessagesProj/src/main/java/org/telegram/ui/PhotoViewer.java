@@ -151,10 +151,9 @@ import androidx.media3.common.Format;
 import androidx.media3.exoplayer.analytics.AnalyticsListener;
 import androidx.media3.exoplayer.video.VideoFrameMetadataListener;
 import androidx.media3.common.VideoSize;
-import com.google.android.gms.cast.framework.CastContext;
-import com.google.android.gms.vision.Frame;
-import com.google.android.gms.vision.face.Face;
-import com.google.android.gms.vision.face.FaceDetector;
+import org.telegram.cogram.vision.Frame;
+import org.telegram.cogram.vision.Face;
+import org.telegram.cogram.vision.FaceDetector;
 import org.telegram.messenger.AccountInstance;
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.AnimationNotificationsLocker;
@@ -5839,7 +5838,7 @@ public class PhotoViewer implements NotificationCenter.NotificationCenterDelegat
         };
         boolean castAvailable = true;
         try {
-            castItemButton.setRouteSelector(CastContext.getSharedInstance(activityContext).getMergedSelector());
+            castAvailable = false; // Phogram: no Chromecast library, so no cast item.
         } catch (Exception e) {
             FileLog.e(e);
             castAvailable = false;

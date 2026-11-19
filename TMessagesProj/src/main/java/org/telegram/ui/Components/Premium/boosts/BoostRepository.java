@@ -4,10 +4,10 @@ import android.os.Build;
 import android.text.TextUtils;
 import android.util.Pair;
 
-import com.android.billingclient.api.BillingClient;
-import com.android.billingclient.api.BillingFlowParams;
-import com.android.billingclient.api.ProductDetails;
-import com.android.billingclient.api.QueryProductDetailsParams;
+import org.telegram.cogram.billing.BillingClient;
+import org.telegram.cogram.billing.BillingFlowParams;
+import org.telegram.cogram.billing.ProductDetails;
+import org.telegram.cogram.billing.QueryProductDetailsParams;
 
 import org.json.JSONObject;
 import org.telegram.messenger.AccountInstance;

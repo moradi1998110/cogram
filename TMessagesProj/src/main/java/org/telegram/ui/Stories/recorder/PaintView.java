@@ -61,9 +61,9 @@ import androidx.dynamicanimation.animation.FloatValueHolder;
 import androidx.dynamicanimation.animation.SpringAnimation;
 import androidx.dynamicanimation.animation.SpringForce;
 
-import com.google.android.gms.vision.Frame;
-import com.google.android.gms.vision.face.Face;
-import com.google.android.gms.vision.face.FaceDetector;
+import org.telegram.cogram.vision.Frame;
+import org.telegram.cogram.vision.Face;
+import org.telegram.cogram.vision.FaceDetector;
 import com.google.zxing.common.detector.MathUtils;
 
 import org.telegram.messenger.AndroidUtilities;
@@ -2156,6 +2156,8 @@ public class PaintView extends SizeNotifierFrameLayoutPhoto implements IPhotoPai
                         }
                         Utilities.globalQueue.postRunnable(() -> {
                             try {
+                                // Phogram: Android's address lookup asks Google's servers on most phones, so it is not used.
+                                if (org.telegram.cogram.CogramGateway.ENABLED) throw new java.io.IOException("no address lookup");
                                 Geocoder gcd = new Geocoder(ApplicationLoader.applicationContext, LocaleController.getInstance().getCurrentLocale());
                                 List<Address> addresses = gcd.getFromLocationName(location.title, 1);
                                 if (addresses.size() <= 0) {

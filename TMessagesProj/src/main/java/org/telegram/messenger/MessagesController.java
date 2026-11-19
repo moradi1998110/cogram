@@ -1598,7 +1598,8 @@ public class MessagesController extends BaseController implements NotificationCe
         maxFolderPinnedDialogsCountPremium = mainPreferences.getInt("maxFolderPinnedDialogsCountPremium", 100);
         maxMessageLength = mainPreferences.getInt("maxMessageLength", 4096);
         maxCaptionLength = mainPreferences.getInt("maxCaptionLength", 1024);
-        mapProvider = mainPreferences.getInt("mapProvider", 0);
+        // Phogram: map pictures in chats are asked of the gateway ("telegram"), never of Google or Yandex.
+        mapProvider = org.telegram.cogram.CogramGateway.ENABLED ? 2 : mainPreferences.getInt("mapProvider", 0);
         availableMapProviders = mainPreferences.getInt("availableMapProviders", 3);
         mapKey = mainPreferences.getString("pk", null);
         installReferer = mainPreferences.getString("installReferer", null);

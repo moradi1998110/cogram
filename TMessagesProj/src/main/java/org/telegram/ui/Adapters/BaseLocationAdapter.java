@@ -211,6 +211,8 @@ public abstract class BaseLocationAdapter extends AdapterWithDiffUtils {
                 final ArrayList<TLRPC.TL_messageMediaVenue> locations = new ArrayList<>();
                 try {
                     final int maxCount = biz ? 10 : 5;
+                    // Phogram: Android's address lookup asks Google's servers on most phones, so it is not used.
+                    if (org.telegram.cogram.CogramGateway.ENABLED) throw new java.io.IOException("no address lookup");
                     Geocoder geocoder = new Geocoder(ApplicationLoader.applicationContext, locale);
                     List<Address> addresses = geocoder.getFromLocationName(finalQuery, 5);
                     List<Address> engAddresses = null;

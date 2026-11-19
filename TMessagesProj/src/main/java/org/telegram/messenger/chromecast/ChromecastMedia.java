@@ -2,9 +2,7 @@ package org.telegram.messenger.chromecast;
 
 import android.net.Uri;
 
-import com.google.android.gms.cast.MediaInfo;
-import com.google.android.gms.cast.MediaMetadata;
-
+/** Phogram: kept so Telegram's players compile; with no Chromecast library nothing is ever cast. */
 public class ChromecastMedia {
     public static final String IMAGE_JPEG = "image/jpeg";
     public static final String IMAGE_PNG = "image/png";
@@ -31,14 +29,6 @@ public class ChromecastMedia {
 
     public String getExternalUri (String host) {
         return ChromecastFileServer.getUrlToSource(host, externalPath);
-    }
-
-    public MediaInfo buildMediaInfo (String host, String options) {
-        return new MediaInfo.Builder(getExternalUri(host) + options)
-            .setContentType(mimeType)
-            .setMetadata(mediaMetadata)
-            .setStreamType(MediaInfo.STREAM_TYPE_BUFFERED)
-            .build();
     }
 
     /* */

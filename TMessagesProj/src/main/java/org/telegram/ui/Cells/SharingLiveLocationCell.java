@@ -183,6 +183,8 @@ public class SharingLiveLocationCell extends FrameLayout {
             loading = true;
             Utilities.globalQueue.postRunnable(() -> {
                 try {
+                    // Phogram: Android's address lookup asks Google's servers on most phones, so it is not used.
+                    if (org.telegram.cogram.CogramGateway.ENABLED) throw new java.io.IOException("no address lookup");
                     Geocoder geocoder = new Geocoder(ApplicationLoader.applicationContext, LocaleController.getInstance().getCurrentLocale());
                     List<Address> addresses = geocoder.getFromLocation(lat, _long, 1);
                     if (addresses.isEmpty()) {

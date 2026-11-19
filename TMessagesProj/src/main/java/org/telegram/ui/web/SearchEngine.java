@@ -52,7 +52,8 @@ public class SearchEngine {
     }
 
     public String getAutocompleteURL(String query) {
-        if (autocomplete_url == null) return null;
+        // Phogram: what the user types in the address bar is not sent to a search engine while typing.
+        if (autocomplete_url == null || org.telegram.cogram.CogramGateway.ENABLED) return null;
         return autocomplete_url + URLEncoder.encode(query);
     }
 

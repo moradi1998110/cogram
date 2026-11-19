@@ -10,8 +10,8 @@ import androidx.core.util.Pair;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.common.util.Util;
 
-import com.android.billingclient.api.AccountIdentifiers;
-import com.android.billingclient.api.Purchase;
+import org.telegram.cogram.billing.AccountIdentifiers;
+import org.telegram.cogram.billing.Purchase;
 
 import com.google.common.base.Charsets;
 

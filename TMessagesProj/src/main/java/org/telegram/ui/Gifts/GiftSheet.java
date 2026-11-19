@@ -57,9 +57,9 @@ import androidx.core.graphics.ColorUtils;
 import androidx.recyclerview.widget.DefaultItemAnimator;
 import androidx.recyclerview.widget.GridLayoutManager;
 
-import com.android.billingclient.api.BillingClient;
-import com.android.billingclient.api.ProductDetails;
-import com.android.billingclient.api.QueryProductDetailsParams;
+import org.telegram.cogram.billing.BillingClient;
+import org.telegram.cogram.billing.ProductDetails;
+import org.telegram.cogram.billing.QueryProductDetailsParams;
 
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.BillingController;
