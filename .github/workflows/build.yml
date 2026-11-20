@@ -1,11 +1,22 @@
 name: Build APK
 
+# A release is made on GitHub's Releases page ("Draft a new release", a new tag v..., the notes, Publish), which
+# builds it and sends it to the organization's GitLab; a v tag pushed with git still works the same way. A release
+# published for a tag pushed with git is built once (see concurrency). build* tags are test builds.
 on:
   workflow_dispatch:
+  release:
+    types: [published]
   push:
     tags:
       - 'v*'
       - 'build*'
+
+# One build per release: making a release on GitHub also creates its tag, and both start this workflow; the later
+# one replaces the earlier, so a release is built and sent to GitLab once.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: write
@@ -170,14 +181,20 @@ jobs:
           retention-days: 14
           if-no-files-found: error
 
-      - name: Attach APK to a draft release
+      # A release made on GitHub's Releases page already exists: the APK is added to it. A tag pushed with git gets
+      # a draft release of its own.
+      - name: Attach APK to the release
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           cp dist/cogram-arm64-debug.apk "phogram-${GITHUB_REF_NAME}-arm64-debug.apk"
-          gh release create "$GITHUB_REF_NAME" "phogram-${GITHUB_REF_NAME}-arm64-debug.apk" \
-            --draft --prerelease --title "$GITHUB_REF_NAME" --notes "Automated build of $GITHUB_SHA"
+          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "phogram-${GITHUB_REF_NAME}-arm64-debug.apk" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "phogram-${GITHUB_REF_NAME}-arm64-debug.apk" \
+              --draft --prerelease --title "$GITHUB_REF_NAME" --notes "Automated build of $GITHUB_SHA"
+          fi
 
       # The release goes to the releases project on the organization's GitLab, where the app finds it: the APK as a
       # generic package of its version, then update.json (version, code, SHA-256, what is new) as the "latest" one.
@@ -188,6 +205,7 @@ jobs:
           GITLAB_API_URL: ${{ vars.GITLAB_API_URL || secrets.GITLAB_API_URL }}
           GITLAB_RELEASES_PROJECT: ${{ vars.GITLAB_RELEASES_PROJECT || secrets.GITLAB_RELEASES_PROJECT }}
           GITLAB_RELEASES_TOKEN: ${{ secrets.GITLAB_RELEASES_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           if [ -z "$GITLAB_API_URL" ] || [ -z "$GITLAB_RELEASES_PROJECT" ] || [ -z "$GITLAB_RELEASES_TOKEN" ]; then
             echo "The GitLab releases project is not set up; the release stays on GitHub only."
@@ -199,8 +217,13 @@ jobs:
           cp dist/cogram-arm64-debug.apk "$APK"
           CODE=$("$ANDROID_HOME/build-tools/36.0.0/aapt2" dump badging "$APK" | sed -n "s/.*versionCode='\([0-9]*\)'.*/\1/p" | head -1)
           SHA=$(sha256sum "$APK" | cut -d' ' -f1)
-          git fetch -q --depth=1 origin "+refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME" || true
-          NOTES=$(git tag -l --format='%(contents)' "$GITHUB_REF_NAME" | sed '/^-----BEGIN PGP/,$d')
+          # What is new: the text of the release written on GitHub's Releases page, else the tag's message.
+          NOTES=$(gh release view "$GITHUB_REF_NAME" --json body --jq .body 2>/dev/null | tr -d '\r' || true)
+          case "$NOTES" in "Automated build of"*) NOTES="";; esac
+          if [ -z "$NOTES" ]; then
+            git fetch -q --depth=1 origin "+refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME" || true
+            NOTES=$(git tag -l --format='%(contents)' "$GITHUB_REF_NAME" | sed '/^-----BEGIN PGP/,$d')
+          fi
           MIN=0
           if printf '%s' "$NOTES" | grep -q '^\[required\]'; then MIN=$CODE; fi
           NOTES=$(printf '%s\n' "$NOTES" | grep -v '^\[required\]')
