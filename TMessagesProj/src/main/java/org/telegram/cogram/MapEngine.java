@@ -62,18 +62,44 @@ public interface MapEngine {
 
     void cancelOfferedDownload();
 
+    /** What kind of place a search result or a tapped place is; it picks the place's emoji and color. */
+    int KIND_OTHER = 0;
+    int KIND_FOOD = 1;
+    int KIND_FUEL = 2;
+    int KIND_HEALTH = 3;
+    int KIND_PHARMACY = 4;
+    int KIND_WORSHIP = 5;
+    int KIND_EDUCATION = 6;
+    int KIND_MONEY = 7;
+    int KIND_LODGING = 8;
+    int KIND_SHOP = 9;
+    int KIND_PARKING = 10;
+    int KIND_CITY = 11;
+    int KIND_STREET = 12;
+    int KIND_PIN = 13;
+
     /** A place found by the search. */
     final class Place {
         public final String name;
         public final String address;
         public final double latitude;
         public final double longitude;
+        /** One of the KIND_ values. */
+        public final int kind;
+        /** The place's type in the app's language ("Restaurant", "City"), or empty. */
+        public final String type;
 
         public Place(String name, String address, double latitude, double longitude) {
+            this(name, address, latitude, longitude, KIND_OTHER, "");
+        }
+
+        public Place(String name, String address, double latitude, double longitude, int kind, String type) {
             this.name = name;
             this.address = address;
             this.latitude = latitude;
             this.longitude = longitude;
+            this.kind = kind;
+            this.type = type == null ? "" : type;
         }
     }
 
@@ -98,17 +124,76 @@ public interface MapEngine {
         return true;
     }
 
-    /** A route found offline: its points (latitude, longitude), its length and the time it takes by car. */
+    /** A turn on a route, where the driver is told what to do. */
+    final class Maneuver {
+        public static final int STRAIGHT = 0;
+        public static final int SLIGHT_LEFT = 1;
+        public static final int LEFT = 2;
+        public static final int SHARP_LEFT = 3;
+        public static final int SLIGHT_RIGHT = 4;
+        public static final int RIGHT = 5;
+        public static final int SHARP_RIGHT = 6;
+        public static final int KEEP_LEFT = 7;
+        public static final int KEEP_RIGHT = 8;
+        public static final int U_TURN = 9;
+        public static final int ROUNDABOUT = 10;
+        public static final int ARRIVE = 11;
+
+        public final int type;
+        /** The exit to take at a roundabout, from 1; 0 otherwise. */
+        public final int exit;
+        /** The road the turn leads onto, or empty. */
+        public final String street;
+        /** Where the turn is: its index in the route's points, and its distance from the start in meters. */
+        public final int pointIndex;
+        public final float distance;
+
+        public Maneuver(int type, int exit, String street, int pointIndex, float distance) {
+            this.type = type;
+            this.exit = exit;
+            this.street = street == null ? "" : street;
+            this.pointIndex = pointIndex;
+            this.distance = distance;
+        }
+    }
+
+    /**
+     * A route found offline: its points (latitude, longitude), its length and the time it takes by car, its turns,
+     * and the main road it follows.
+     */
     final class Route {
         public final java.util.List<double[]> points;
         public final float meters;
         public final float seconds;
+        public final java.util.List<Maneuver> maneuvers;
+        /** The road the route spends most of its length on, or empty. */
+        public final String via;
+        /** The distance from the start of each point, in meters. */
+        public final float[] along;
+        /** Where the route goes, kept for finding it again after a wrong turn. */
+        public Place destination;
 
-        public Route(java.util.List<double[]> points, float meters, float seconds) {
+        public Route(java.util.List<double[]> points, float meters, float seconds, java.util.List<Maneuver> maneuvers, String via) {
             this.points = points;
             this.meters = meters;
             this.seconds = seconds;
+            this.maneuvers = maneuvers;
+            this.via = via == null ? "" : via;
+            along = new float[points.size()];
+            for (int i = 1; i < along.length; i++) {
+                along[i] = along[i - 1] + (float) MapEngine.distance(points.get(i - 1)[0], points.get(i - 1)[1], points.get(i)[0], points.get(i)[1]);
+            }
         }
+    }
+
+    /** Distance between two points on the Earth, in meters. */
+    static double distance(double lat1, double lon1, double lat2, double lon2) {
+        final double r = 6371000;
+        final double dLat = Math.toRadians(lat2 - lat1);
+        final double dLon = Math.toRadians(lon2 - lon1);
+        final double a = Math.sin(dLat / 2) * Math.sin(dLat / 2)
+                + Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2)) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+        return 2 * r * Math.asin(Math.min(1, Math.sqrt(a)));
     }
 
     /** Why a route could not be shown. */
@@ -117,17 +202,57 @@ public interface MapEngine {
     int ROUTE_NOT_FOUND = 3;
 
     interface RouteCallback {
-        /** On the main thread: the route drawn on the map, or null with the reason. */
-        void onRoute(Route route, int error);
+        /** On the main thread: the routes found, the best first (others are alternatives), or none with the reason. */
+        void onRoutes(java.util.List<Route> routes, int error);
     }
 
-    /** Finds the way by car from the device's position to the place, offline, and draws it on the map. */
-    default void showRoute(Place destination, RouteCallback callback) {
-        callback.onRoute(null, ROUTE_NOT_FOUND);
+    /**
+     * Finds the ways by car from the device's position to the place, offline, and draws them on the map with the
+     * first one chosen. Motorways can be avoided.
+     */
+    default void showRoutes(Place destination, boolean avoidMotorways, RouteCallback callback) {
+        callback.onRoutes(java.util.Collections.emptyList(), ROUTE_NOT_FOUND);
     }
 
-    /** Takes the drawn route off the map. */
+    /** Draws this one of the shown routes as the chosen one. */
+    default void selectRoute(int index) {
+    }
+
+    /** Takes the drawn routes off the map. */
     default void clearRoute() {
+    }
+
+    /** Where the driver is on a route, for the page's guidance. */
+    final class NavigationState {
+        /** The next turn, and the one after it (null at the end). */
+        public Maneuver next;
+        public Maneuver then;
+        public float toNext;
+        public float remainingMeters;
+        public float remainingSeconds;
+        /** 0 at the start, 1 at the end. */
+        public float progress;
+        public boolean arrived;
+        /** A new route is being found after the driver left this one. */
+        public boolean rerouting;
+        public Route route;
+    }
+
+    interface NavigationListener {
+        /** On the main thread, on each new position. */
+        void onNavigation(NavigationState state);
+    }
+
+    /** Follows the route with the device's position: the camera follows the driver, the listener gets guidance. */
+    default void startNavigation(Route route, NavigationListener listener) {
+    }
+
+    default void stopNavigation() {
+    }
+
+    /** The device's last known position (latitude, longitude), or null. */
+    default double[] getPosition() {
+        return null;
     }
 
     interface MapTapListener {

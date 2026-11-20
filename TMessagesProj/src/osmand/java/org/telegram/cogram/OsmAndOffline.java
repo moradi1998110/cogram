@@ -17,6 +17,8 @@ import net.osmand.router.RouteResultPreparation;
 import net.osmand.router.RouteSegmentResult;
 import net.osmand.router.RoutingConfiguration;
 import net.osmand.router.RoutingContext;
+import net.osmand.router.TurnType;
+import net.osmand.binary.RouteDataObject;
 import net.osmand.search.SearchUICore;
 import net.osmand.search.core.SearchResult;
 import net.osmand.search.core.SearchSettings;
@@ -371,7 +373,7 @@ final class OsmAndOffline {
                         if (request != searchRequest) return;
                         if (result.location == null || TextUtils.isEmpty(result.localeName)) continue;
                         places.add(new MapEngine.Place(result.localeName, describe(result),
-                                result.location.getLatitude(), result.location.getLongitude()));
+                                result.location.getLatitude(), result.location.getLongitude(), kindOf(result), typeOf(search, result)));
                         if (places.size() >= MAX_SEARCH_RESULTS) break;
                     }
                 }
@@ -386,6 +388,83 @@ final class OsmAndOffline {
         });
     }
 
+    /** The kind of a found place, from OsmAnd's place type (amenity subtype and category) or its address level. */
+    private static int kindOf(SearchResult result) {
+        if (result.objectType == null) return MapEngine.KIND_OTHER;
+        switch (result.objectType) {
+            case CITY:
+            case VILLAGE:
+            case BOUNDARY:
+                return MapEngine.KIND_CITY;
+            case STREET:
+            case HOUSE:
+            case STREET_INTERSECTION:
+                return MapEngine.KIND_STREET;
+            default:
+                break;
+        }
+        if (!(result.object instanceof net.osmand.data.Amenity)) return MapEngine.KIND_OTHER;
+        final net.osmand.data.Amenity amenity = (net.osmand.data.Amenity) result.object;
+        final String subtype = amenity.getSubType() == null ? "" : amenity.getSubType();
+        final String category = amenity.getType() == null ? "" : amenity.getType().getKeyName();
+        switch (subtype) {
+            case "fuel":
+            case "charging_station":
+                return MapEngine.KIND_FUEL;
+            case "pharmacy":
+            case "chemist":
+                return MapEngine.KIND_PHARMACY;
+            case "hospital":
+            case "clinic":
+            case "doctors":
+            case "dentist":
+                return MapEngine.KIND_HEALTH;
+            case "place_of_worship":
+            case "mosque":
+                return MapEngine.KIND_WORSHIP;
+            case "school":
+            case "university":
+            case "college":
+            case "kindergarten":
+                return MapEngine.KIND_EDUCATION;
+            case "bank":
+            case "atm":
+            case "bureau_de_change":
+                return MapEngine.KIND_MONEY;
+            case "hotel":
+            case "motel":
+            case "hostel":
+            case "guest_house":
+                return MapEngine.KIND_LODGING;
+            case "parking":
+                return MapEngine.KIND_PARKING;
+            default:
+                break;
+        }
+        if ("sustenance".equals(category)) return MapEngine.KIND_FOOD;
+        if ("shop".equals(category)) return MapEngine.KIND_SHOP;
+        if ("healthcare".equals(category)) return MapEngine.KIND_HEALTH;
+        if ("education".equals(category)) return MapEngine.KIND_EDUCATION;
+        if ("finance".equals(category)) return MapEngine.KIND_MONEY;
+        if ("tourism".equals(category) && subtype.contains("hotel")) return MapEngine.KIND_LODGING;
+        return MapEngine.KIND_OTHER;
+    }
+
+    /** The place's type in the app's language: OsmAnd's name for its amenity type, or empty for addresses. */
+    private static String typeOf(SearchUICore search, SearchResult result) {
+        try {
+            if (result.object instanceof net.osmand.data.Amenity) {
+                final net.osmand.data.Amenity amenity = (net.osmand.data.Amenity) result.object;
+                if (amenity.getSubType() != null) {
+                    return MapPoiTypes.getDefault().getPoiTranslation(amenity.getSubType());
+                }
+            }
+        } catch (Exception e) {
+            FileLog.e(e);
+        }
+        return "";
+    }
+
     private static String describe(SearchResult result) {
         final List<String> parts = new ArrayList<>();
         for (String part : new String[] { result.addressName, result.localeRelatedObjectName, result.cityName }) {
@@ -398,20 +477,22 @@ final class OsmAndOffline {
 
     // Routing: OsmAnd's car router in Java over the region's file.
 
-    void route(double fromLatitude, double fromLongitude, double toLatitude, double toLongitude, Utilities.Callback<MapEngine.Route> callback) {
+    /** The ways by car between two points, the best first; an empty list when there is none. */
+    void route(double fromLatitude, double fromLongitude, double toLatitude, double toLongitude, boolean avoidMotorways,
+               Utilities.Callback<List<MapEngine.Route>> callback) {
         final int request = ++routeRequest;
         routeExecutor.execute(() -> {
             if (request != routeRequest) return;
-            MapEngine.Route route = null;
+            List<MapEngine.Route> routes = new ArrayList<>();
             try {
                 final BinaryMapIndexReader file = reader();
                 if (file != null) {
-                    route = calculate(file, new LatLon(fromLatitude, fromLongitude), new LatLon(toLatitude, toLongitude));
+                    routes = calculate(file, new LatLon(fromLatitude, fromLongitude), new LatLon(toLatitude, toLongitude), avoidMotorways);
                 }
             } catch (Throwable e) {
                 FileLog.e(e);
             }
-            final MapEngine.Route result = route;
+            final List<MapEngine.Route> result = routes;
             AndroidUtilities.runOnUIThread(() -> {
                 if (!destroyed && request == routeRequest) {
                     callback.run(result);
@@ -420,7 +501,10 @@ final class OsmAndOffline {
         });
     }
 
-    private static MapEngine.Route calculate(BinaryMapIndexReader file, LatLon start, LatLon end) throws Exception {
+    /** At most this many routes are offered: the best and two alternatives. */
+    private static final int MAX_ROUTES = 3;
+
+    private static List<MapEngine.Route> calculate(BinaryMapIndexReader file, LatLon start, LatLon end, boolean avoidMotorways) throws Exception {
         synchronized (OsmAndOffline.class) {
             if (routingRules == null) {
                 routingRules = RoutingConfiguration.getDefault();
@@ -429,8 +513,12 @@ final class OsmAndOffline {
         // The region's file holds what the route needs; OsmAnd's world regions are not read for missing maps.
         RoutePlannerFrontEnd.CALCULATE_MISSING_MAPS = false;
         final long started = android.os.SystemClock.elapsedRealtime();
+        final Map<String, String> params = new LinkedHashMap<>();
+        if (avoidMotorways) {
+            params.put("avoid_motorway", "true");
+        }
         final RoutingConfiguration config = routingRules.build("car",
-                new RoutingConfiguration.RoutingMemoryLimits(ROUTING_MEMORY_MB, 0), new LinkedHashMap<>());
+                new RoutingConfiguration.RoutingMemoryLimits(ROUTING_MEMORY_MB, 0), params);
         final RoutePlannerFrontEnd planner = new RoutePlannerFrontEnd();
         // OsmAnd's highway hierarchy (its "HH" routing, run in Java): the map file carries a precomputed network of the
         // main roads, so a route across the country, such as Basra to Mosul, takes seconds instead of searching every
@@ -440,30 +528,135 @@ final class OsmAndOffline {
         final RoutingContext context = planner.buildRoutingContext(config, null, new BinaryMapIndexReader[] { file },
                 RoutePlannerFrontEnd.RouteCalculationMode.NORMAL);
         final RouteResultPreparation.RouteCalcResult result = planner.searchRoute(context, start, end, null);
+        final List<MapEngine.Route> routes = new ArrayList<>();
         if (result == null || !result.isCorrect() || result.getList() == null || result.getList().isEmpty()) {
             android.util.Log.d("PhogramRoute", "no route after " + (android.os.SystemClock.elapsedRealtime() - started)
                     + " ms: " + (result != null ? result.getError() : "no result"));
-            return null;
+            return routes;
         }
+        routes.add(toRoute(result.getList()));
+        final List<List<RouteSegmentResult>> alternatives = result.getAlternatives();
+        if (alternatives != null) {
+            for (List<RouteSegmentResult> alternative : alternatives) {
+                if (routes.size() >= MAX_ROUTES) break;
+                if (alternative != null && !alternative.isEmpty()) {
+                    routes.add(toRoute(alternative));
+                }
+            }
+        }
+        final MapEngine.Route best = routes.get(0);
+        // How long the routes took to find, for the emulator check and for reports from phones.
+        android.util.Log.d("PhogramRoute", String.format(java.util.Locale.US,
+                "found in %d ms: %.1f km, %d min, %d points, %d turns, %d alternatives, via %s",
+                android.os.SystemClock.elapsedRealtime() - started, best.meters / 1000f, Math.round(best.seconds / 60f),
+                best.points.size(), best.maneuvers.size(), routes.size() - 1, best.via));
+        return routes;
+    }
+
+    /** A route's points, turns and main road from OsmAnd's segments. */
+    private static MapEngine.Route toRoute(List<RouteSegmentResult> segments) {
+        final String language = language();
         final List<double[]> points = new ArrayList<>();
+        final List<Integer> segmentStarts = new ArrayList<>();
         float meters = 0;
         float seconds = 0;
-        for (RouteSegmentResult segment : result.getList()) {
+        final Map<String, Float> roadLengths = new HashMap<>();
+        for (RouteSegmentResult segment : segments) {
             meters += segment.getDistance();
             seconds += segment.getSegmentTime();
+            segmentStarts.add(Math.max(0, points.size() - 1));
             final int from = segment.getStartPointIndex();
             final int to = segment.getEndPointIndex();
             final int step = from <= to ? 1 : -1;
             for (int i = from; ; i += step) {
                 final LatLon point = segment.getPoint(i);
-                points.add(new double[] { point.getLatitude(), point.getLongitude() });
+                // Consecutive segments share their joining point; it is kept once.
+                if (i != from || points.isEmpty()) {
+                    points.add(new double[] { point.getLatitude(), point.getLongitude() });
+                }
                 if (i == to) break;
             }
+            final String road = roadName(segment, language);
+            if (!road.isEmpty()) {
+                final Float length = roadLengths.get(road);
+                roadLengths.put(road, (length == null ? 0f : length) + segment.getDistance());
+            }
         }
-        // How long the route took to find, for the emulator check and for reports from phones.
-        android.util.Log.d("PhogramRoute", String.format(java.util.Locale.US, "found in %d ms: %.1f km, %d min, %d points",
-                android.os.SystemClock.elapsedRealtime() - started, meters / 1000f, Math.round(seconds / 60f), points.size()));
-        return new MapEngine.Route(points, meters, seconds);
+        // Distances along the route, the same way the route computes them, so the turns line up with the driver.
+        final float[] along = new float[points.size()];
+        for (int i = 1; i < along.length; i++) {
+            along[i] = along[i - 1] + (float) MapEngine.distance(points.get(i - 1)[0], points.get(i - 1)[1], points.get(i)[0], points.get(i)[1]);
+        }
+        final List<MapEngine.Maneuver> maneuvers = new ArrayList<>();
+        for (int s = 1; s < segments.size(); s++) {
+            final RouteSegmentResult segment = segments.get(s);
+            final int type = turnOf(segments.get(s - 1), segment);
+            if (type < 0) continue;
+            final int at = Math.min(segmentStarts.get(s), points.size() - 1);
+            final TurnType turn = segment.getTurnType();
+            final int exit = turn != null && turn.isRoundAbout() ? turn.getExitOut() : 0;
+            maneuvers.add(new MapEngine.Maneuver(type, exit, roadName(segment, language), at, along[at]));
+        }
+        maneuvers.add(new MapEngine.Maneuver(MapEngine.Maneuver.ARRIVE, 0, "", points.size() - 1, along[points.size() - 1]));
+        String via = "";
+        float longest = 0;
+        for (Map.Entry<String, Float> road : roadLengths.entrySet()) {
+            if (road.getValue() > longest) {
+                longest = road.getValue();
+                via = road.getKey();
+            }
+        }
+        return new MapEngine.Route(points, meters, seconds, maneuvers, via);
+    }
+
+    /** The road's name in the app's language, or its number (such as "1"), or empty. */
+    private static String roadName(RouteSegmentResult segment, String language) {
+        try {
+            final RouteDataObject road = segment.getObject();
+            String name = road.getName(language, false);
+            if (TextUtils.isEmpty(name)) {
+                name = road.getRef(language, false, segment.isForwardDirection());
+            }
+            return name == null ? "" : name.trim();
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    /**
+     * The turn from one segment onto the next: OsmAnd's own turn where its route preparation set one, otherwise
+     * from the change of direction between them. -1 when the driver just goes on.
+     */
+    private static int turnOf(RouteSegmentResult previous, RouteSegmentResult segment) {
+        final TurnType turn = segment.getTurnType();
+        if (turn != null) {
+            switch (turn.getValue()) {
+                case TurnType.TL: return MapEngine.Maneuver.LEFT;
+                case TurnType.TSLL: return MapEngine.Maneuver.SLIGHT_LEFT;
+                case TurnType.TSHL: return MapEngine.Maneuver.SHARP_LEFT;
+                case TurnType.TR: return MapEngine.Maneuver.RIGHT;
+                case TurnType.TSLR: return MapEngine.Maneuver.SLIGHT_RIGHT;
+                case TurnType.TSHR: return MapEngine.Maneuver.SHARP_RIGHT;
+                case TurnType.KL: return MapEngine.Maneuver.KEEP_LEFT;
+                case TurnType.KR: return MapEngine.Maneuver.KEEP_RIGHT;
+                case TurnType.TU:
+                case TurnType.TRU: return MapEngine.Maneuver.U_TURN;
+                case TurnType.RNDB:
+                case TurnType.RNLB: return MapEngine.Maneuver.ROUNDABOUT;
+                default: return -1;
+            }
+        }
+        // Clockwise change of direction, from -180 to 180: positive turns right.
+        float angle = segment.getBearingBegin() - previous.getBearingEnd();
+        while (angle > 180) angle -= 360;
+        while (angle < -180) angle += 360;
+        final float size = Math.abs(angle);
+        if (size < 30) return -1;
+        final boolean right = angle > 0;
+        if (size < 60) return right ? MapEngine.Maneuver.SLIGHT_RIGHT : MapEngine.Maneuver.SLIGHT_LEFT;
+        if (size < 135) return right ? MapEngine.Maneuver.RIGHT : MapEngine.Maneuver.LEFT;
+        if (size < 165) return right ? MapEngine.Maneuver.SHARP_RIGHT : MapEngine.Maneuver.SHARP_LEFT;
+        return MapEngine.Maneuver.U_TURN;
     }
 
     void destroy() {

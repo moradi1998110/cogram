@@ -233,7 +233,7 @@ if tap_view 'content-desc="Where to?"' || adb shell input tap 160 532; then
   # Directions by car from Basra to Mosul, offline: how long the route takes is written to the log.
   adb logcat -c || true
   send_fix
-  tap_view 'text="Directions"' || adb shell input tap 88 523
+  tap_view 'text="Go"' || adb shell input tap 88 523
   for wait in $(seq 1 36); do
     sleep 5
     send_fix
@@ -243,6 +243,18 @@ if tap_view 'content-desc="Where to?"' || adb shell input tap 160 532; then
   adb exec-out screencap -p > "$OUT/7-maps-route.png" || true
   adb logcat -d -s PhogramRoute:D | tee -a "$OUT/steps.txt" > "$OUT/route.txt" || true
   adb logcat -d | grep -E "net.osmand|System.err" | tail -40 > "$OUT/route-errors.txt" || true
+  # The navigation: the green strip with the next turn, and the panel with the arrival and End.
+  tap_view 'text="Start"' || adb shell input tap 90 540
+  for wait in 1 2 3 4; do
+    sleep 2
+    send_fix
+  done
+  adb exec-out screencap -p > "$OUT/7-maps-navigation.png" || true
+  adb shell input keyevent 4
+  sleep 2
+  adb shell input keyevent 4
+  sleep 2
+  adb exec-out screencap -p > "$OUT/7-maps-after-navigation.png" || true
   # The place goes to the demo chat as a location, through Telegram's chat picker.
   if tap_view 'text="Send to chat"'; then
     sleep 3

@@ -380,7 +380,7 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         // Saving the place (Telegram's star), sharing it outside the app, then the close button.
         placeSave = new ImageView(context);
         placeSave.setScaleType(ImageView.ScaleType.CENTER);
-        placeSave.setOnClickListener(v -> toggleSavedPlace());
+        placeSave.setOnClickListener(v -> showPlaceOptions());
         placeHeader.addView(placeSave, LayoutHelper.createFrame(36, 36, Gravity.RIGHT | Gravity.CENTER_VERTICAL, 0, 0, 80, 0));
         // Sharing outside the app sits beside the close button; sending into a chat is the card's main button.
         placeShareOut = new ImageView(context);
@@ -409,7 +409,7 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         placeRoute.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 14);
         placeRoute.setTypeface(AndroidUtilities.bold());
         placeRoute.setGravity(Gravity.CENTER);
-        placeRoute.setText(getString(R.string.PhogramMapsRoute));
+        placeRoute.setText(getString(R.string.PhogramNavGo));
         ScaleStateListAnimator.apply(placeRoute, 0.02f, 1.2f);
         placeRoute.setOnClickListener(v -> showRouteToPlace());
         placeButtons.addView(placeRoute, LayoutHelper.createLinear(0, 44, 1f, 0, 0, 8, 0));
@@ -431,6 +431,43 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         });
 
         createSearch(context);
+        routeUi = new MapsRouteUi(context, contentView, new MapsRouteUi.Host() {
+            @Override
+            public MapEngine engine() {
+                return mapEngine;
+            }
+
+            @Override
+            public BaseFragment fragment() {
+                return MapsActivity.this;
+            }
+
+            @Override
+            public int[] padding() {
+                return getMapPadding();
+            }
+
+            @Override
+            public void onModeChanged() {
+                onRouteModeChanged();
+            }
+
+            @Override
+            public void sendToChat(MapEngine.Place place) {
+                sendPlaceToChat();
+            }
+
+            @Override
+            public void askLocation() {
+                onLocationButtonClick();
+            }
+
+            @Override
+            public boolean hasLocationPermission() {
+                final Activity activity = getParentActivity();
+                return activity != null && (Build.VERSION.SDK_INT < 23 || MapsActivity.hasLocationPermission(activity));
+            }
+        });
 
         final boolean engineAvailable = MapEngines.isAvailable();
         emptyView.setVisibility(engineAvailable ? View.GONE : View.VISIBLE);
@@ -539,7 +576,8 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         header.addView(searchProgress, LayoutHelper.createFrame(48, 48, Gravity.RIGHT | Gravity.CENTER_VERTICAL));
         searchSheet.addView(header, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 48));
 
-        // Places to look for with one tap, as the categories under Waze's search; each one searches its word.
+        // Places to look for with one tap: tiles with the kind's Telegram emoji on its colored circle, as on the
+        // search results; each one searches its word in OsmAnd's place types.
         final HorizontalScrollView chipsScroll = new HorizontalScrollView(context);
         chipsScroll.setHorizontalScrollBarEnabled(false);
         chipsScroll.setClipToPadding(false);
@@ -547,31 +585,38 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         chipsRow = new LinearLayout(context);
         chipsRow.setOrientation(LinearLayout.HORIZONTAL);
         final int[][] categories = {
-                { R.string.PhogramMapsRestaurants, R.string.PhogramMapsRestaurantsQuery },
-                { R.string.PhogramMapsFuel, R.string.PhogramMapsFuelQuery },
-                { R.string.PhogramMapsHospitals, R.string.PhogramMapsHospitalsQuery },
-                { R.string.PhogramMapsPharmacies, R.string.PhogramMapsPharmaciesQuery },
-                { R.string.PhogramMapsMosques, R.string.PhogramMapsMosquesQuery },
-                { R.string.PhogramMapsAtms, R.string.PhogramMapsAtmsQuery },
+                { R.string.PhogramMapsRestaurants, R.string.PhogramMapsRestaurantsQuery, MapEngine.KIND_FOOD },
+                { R.string.PhogramMapsFuel, R.string.PhogramMapsFuelQuery, MapEngine.KIND_FUEL },
+                { R.string.PhogramMapsHospitals, R.string.PhogramMapsHospitalsQuery, MapEngine.KIND_HEALTH },
+                { R.string.PhogramMapsPharmacies, R.string.PhogramMapsPharmaciesQuery, MapEngine.KIND_PHARMACY },
+                { R.string.PhogramMapsMosques, R.string.PhogramMapsMosquesQuery, MapEngine.KIND_WORSHIP },
+                { R.string.PhogramMapsAtms, R.string.PhogramMapsAtmsQuery, MapEngine.KIND_MONEY },
         };
         for (int[] category : categories) {
-            final TextView chip = new TextView(context);
-            chip.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 14);
-            chip.setGravity(Gravity.CENTER);
-            chip.setSingleLine(true);
-            chip.setPadding(dp(14), 0, dp(14), 0);
-            chip.setText(getString(category[0]));
+            final LinearLayout tile = new LinearLayout(context);
+            tile.setOrientation(LinearLayout.VERTICAL);
+            tile.setGravity(Gravity.CENTER_HORIZONTAL);
+            tile.setPadding(0, dp(8), 0, dp(6));
+            final MapKinds.IconView icon = new MapKinds.IconView(context);
+            icon.setKind(category[2]);
+            tile.addView(icon, LayoutHelper.createLinear(40, 40, Gravity.CENTER_HORIZONTAL));
+            final TextView label = new TextView(context);
+            label.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 12);
+            label.setGravity(Gravity.CENTER);
+            label.setSingleLine(true);
+            label.setText(getString(category[0]));
+            tile.addView(label, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 4, 4, 4, 0));
             final String query = getString(category[1]);
-            ScaleStateListAnimator.apply(chip, 0.04f, 1.2f);
-            chip.setOnClickListener(v -> {
+            ScaleStateListAnimator.apply(tile, 0.04f, 1.2f);
+            tile.setOnClickListener(v -> {
                 searchField.setText(query);
                 searchField.setSelection(searchField.length());
                 AndroidUtilities.hideKeyboard(searchField);
             });
-            chipsRow.addView(chip, LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, 32, 0f, Gravity.CENTER_VERTICAL, 3, 0, 3, 0));
+            chipsRow.addView(tile, LayoutHelper.createLinear(76, 80, 0f, Gravity.CENTER_VERTICAL, 3, 0, 3, 0));
         }
-        chipsScroll.addView(chipsRow, LayoutHelper.createScroll(LayoutHelper.WRAP_CONTENT, 44, Gravity.LEFT));
-        searchSheet.addView(chipsScroll, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 44, 0, 0, 0, 4));
+        chipsScroll.addView(chipsRow, LayoutHelper.createScroll(LayoutHelper.WRAP_CONTENT, 88, Gravity.LEFT));
+        searchSheet.addView(chipsScroll, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 88, 0, 0, 0, 4));
 
         listFrame = new FrameLayout(context);
         searchList = new RecyclerListView(context, getResourceProvider());
@@ -721,6 +766,30 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
     }
 
     /** Saves the shown place, or takes it off the saved places when it is there. */
+    /** Telegram's menu for the shown place: save it (or take it off), or make it home or work. */
+    private void showPlaceOptions() {
+        final MapEngine.Place place = shownPlace;
+        if (place == null || getParentActivity() == null) return;
+        final boolean saved = indexOfPlace(savedPlaces, place) >= 0;
+        final CharSequence[] items = {
+                getString(saved ? R.string.PhogramMapsUnsave : R.string.PhogramMapsSave),
+                getString(R.string.PhogramMapsSetHome),
+                getString(R.string.PhogramMapsSetWork),
+        };
+        final int[] icons = { saved ? R.drawable.msg_unfave : R.drawable.msg_fave, R.drawable.msg_home, R.drawable.msg_work };
+        final AlertDialog.Builder builder = new AlertDialog.Builder(getParentActivity());
+        builder.setTitle(place.name);
+        builder.setItems(items, icons, (dialog, which) -> {
+            if (shownPlace != place) return;
+            if (which == 0) {
+                toggleSavedPlace();
+            } else {
+                setMyPlace(which == 1 ? 0 : 1, place);
+            }
+        });
+        showDialog(builder.create());
+    }
+
     private void toggleSavedPlace() {
         final MapEngine.Place place = shownPlace;
         if (place == null) return;
@@ -762,47 +831,33 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         }
     }
 
-    // Directions: the offline route by car from the device's position to the shown place.
+    // Directions: the preview of the ways to the shown place, then the navigation (MapsRouteUi).
+
+    private MapsRouteUi routeUi;
 
     private void showRouteToPlace() {
         final MapEngine.Place place = shownPlace;
-        if (place == null || mapEngine == null) return;
-        final Activity activity = getParentActivity();
-        if (activity != null && Build.VERSION.SDK_INT >= 23 && !hasLocationPermission(activity)) {
-            // The route starts where the user is, so the position is asked for first, as the location button does.
-            onLocationButtonClick();
-            return;
-        }
-        routeInfo.setText(getString(R.string.PhogramMapsRouting));
-        routeInfo.setVisibility(View.VISIBLE);
-        mapEngine.showRoute(place, (route, error) -> {
-            if (shownPlace != place) return;
-            if (route != null) {
-                routeInfo.setText(LocaleController.formatString(R.string.PhogramMapsRouteInfo,
-                        formatDistance(route.meters), formatDuration(route.seconds)));
-            } else if (error == MapEngine.ROUTE_NO_DATA) {
-                routeInfo.setText(getString(R.string.PhogramMapsRouteNeedsData));
-            } else if (error == MapEngine.ROUTE_NO_LOCATION) {
-                routeInfo.setText(getString(R.string.PhogramMapsRouteNeedsLocation));
-            } else {
-                routeInfo.setText(getString(R.string.PhogramMapsNoRoute));
-            }
-        });
+        if (place == null || mapEngine == null || routeUi == null) return;
+        routeUi.preview(place);
     }
 
-    private static String formatDistance(float meters) {
-        if (meters < 1000) {
-            return LocaleController.formatString(R.string.PhogramMapsMeters, Math.round(meters / 10f) * 10);
-        }
-        return LocaleController.formatString(R.string.PhogramMapsKilometers, meters / 1000f);
+    private boolean isRouting() {
+        return routeUi != null && routeUi.getMode() != MapsRouteUi.MODE_NONE;
     }
 
-    private static String formatDuration(float seconds) {
-        final int minutes = Math.max(1, Math.round(seconds / 60f));
-        if (minutes < 60) {
-            return LocaleController.formatString(R.string.PhogramMapsMinutes, minutes);
+    /** The preview or the navigation opened or closed: the page's own cards and buttons make room for them. */
+    private void onRouteModeChanged() {
+        if (contentView == null) return;
+        final boolean routing = isRouting();
+        final boolean navigating = routeUi != null && routeUi.getMode() == MapsRouteUi.MODE_NAVIGATION;
+        placeCard.setVisibility(!routing && shownPlace != null ? View.VISIBLE : View.GONE);
+        if (mapView != null && mapContainer.getVisibility() == View.VISIBLE) {
+            locationButton.setVisibility(navigating ? View.GONE : View.VISIBLE);
         }
-        return LocaleController.formatString(R.string.PhogramMapsHoursMinutes, minutes / 60, minutes % 60);
+        topScrim.setVisibility(mapView != null && !routing ? View.VISIBLE : View.GONE);
+        updateSearchBar();
+        updateDownloadCard();
+        updateLayout();
     }
 
     /** The search sheet, dragged down by its top or by the list once it is scrolled to its start. */
@@ -926,12 +981,12 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         mapEngine.setMapTapListener(new MapEngine.MapTapListener() {
             @Override
             public void onPlaceTapped(MapEngine.Place place) {
-                if (!searchOpen) showPlace(place);
+                if (!searchOpen && !isRouting()) showPlace(place);
             }
 
             @Override
             public void onLongPressed(double latitude, double longitude) {
-                if (searchOpen) return;
+                if (searchOpen || isRouting()) return;
                 showPlace(new MapEngine.Place(getString(R.string.PhogramMapsDroppedPin),
                         String.format(java.util.Locale.US, "%.5f, %.5f", latitude, longitude), latitude, longitude));
             }
@@ -941,7 +996,7 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
     private void updateDownloadCard() {
         if (downloadCard == null) return;
         final MapEngine.Download offer = mapEngine != null && mapContainer.getVisibility() == View.VISIBLE ? mapEngine.getOfferedDownload() : null;
-        final boolean show = offer != null && (offer.downloading || !offer.name.equals(dismissedDownload));
+        final boolean show = offer != null && !isRouting() && (offer.downloading || !offer.name.equals(dismissedDownload));
         if (show) {
             // As the player's "performer - title": the name stands out, the state follows in the title color.
             final String state = offer.downloading
@@ -993,7 +1048,7 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
     /** The "Where to?" bar shows over the map, except while a place's card takes its spot. */
     private void updateSearchBar() {
         if (searchBar == null) return;
-        final boolean show = mapEngine != null && mapContainer.getVisibility() == View.VISIBLE && shownPlace == null;
+        final boolean show = mapEngine != null && mapContainer.getVisibility() == View.VISIBLE && shownPlace == null && !isRouting();
         if (show != (searchBar.getVisibility() == View.VISIBLE)) {
             searchBar.setVisibility(show ? View.VISIBLE : View.GONE);
             updateLayout();
@@ -1095,6 +1150,11 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
             if (invoked) closeSearch();
             return false;
         }
+        // Then the navigation (back to the preview), then the preview (back to the place's card).
+        if (isRouting()) {
+            if (invoked) routeUi.onBackPressed();
+            return false;
+        }
         // On the screen a chat's location opened, back leaves the screen as Telegram's location screen does.
         if (shownPlace != null && hasMainTabs) {
             if (invoked) hidePlace();
@@ -1113,10 +1173,11 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
 
         private static final int TYPE_PLACE = 0;
         private static final int TYPE_HEADER = 1;
+        private static final int TYPE_MY_PLACES = 2;
 
         /**
-         * Nothing typed: the saved places, then the recent ones, each under Telegram's gray header (the recent ones
-         * with its Clear button). The rows are the header of a section followed by its places.
+         * Nothing typed: home and work, then the saved places, then the recent ones, each under Telegram's gray header
+         * (the recent ones with its Clear button). Something typed: the places found.
          */
         private boolean showsRecent() {
             return searchQuery.isEmpty();
@@ -1132,7 +1193,9 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
 
         MapEngine.Place placeAt(int position) {
             if (showsRecent()) {
+                position -= 1;
                 final int saved = savedRows();
+                if (position < 0) return null;
                 if (position < saved) {
                     return position >= 1 ? savedPlaces.get(position - 1) : null;
                 }
@@ -1145,7 +1208,7 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         @Override
         public int getItemCount() {
             if (showsRecent()) {
-                return savedRows() + recentRows();
+                return 1 + savedRows() + recentRows();
             }
             return searchResults.size();
         }
@@ -1153,6 +1216,8 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         @Override
         public int getItemViewType(int position) {
             if (!showsRecent()) return TYPE_PLACE;
+            if (position == 0) return TYPE_MY_PLACES;
+            position -= 1;
             final int saved = savedRows();
             return position == 0 && saved > 0 || position == saved ? TYPE_HEADER : TYPE_PLACE;
         }
@@ -1165,18 +1230,27 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         @NonNull
         @Override
         public RecyclerView.ViewHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
-            final View view = viewType == TYPE_HEADER
-                    ? new GraySectionCell(context, getResourceProvider())
-                    : new LocationCell(context, false, getResourceProvider());
+            final View view;
+            if (viewType == TYPE_HEADER) {
+                view = new GraySectionCell(context, getResourceProvider());
+            } else if (viewType == TYPE_MY_PLACES) {
+                view = new MyPlacesRow(context);
+            } else {
+                view = new PlaceCell(context);
+            }
             view.setLayoutParams(new RecyclerView.LayoutParams(RecyclerView.LayoutParams.MATCH_PARENT, RecyclerView.LayoutParams.WRAP_CONTENT));
             return new RecyclerListView.Holder(view);
         }
 
         @Override
         public void onBindViewHolder(@NonNull RecyclerView.ViewHolder holder, int position) {
+            if (holder.getItemViewType() == TYPE_MY_PLACES) {
+                ((MyPlacesRow) holder.itemView).update();
+                return;
+            }
             if (holder.getItemViewType() == TYPE_HEADER) {
                 final GraySectionCell header = (GraySectionCell) holder.itemView;
-                if (position == 0 && savedRows() > 0) {
+                if (position == 1 && savedRows() > 0) {
                     header.setText(getString(R.string.PhogramMapsSaved));
                 } else {
                     header.setText(getString(R.string.Recent), getString(R.string.ClearButton), v -> clearRecentPlaces());
@@ -1185,12 +1259,105 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
             }
             final MapEngine.Place place = placeAt(position);
             if (place == null) return;
-            final TLRPC.TL_messageMediaVenue venue = new TLRPC.TL_messageMediaVenue();
-            venue.title = place.name;
-            venue.address = place.address;
-            venue.icon = "pin";
-            ((LocationCell) holder.itemView).setLocation(venue, null, position, position != getItemCount() - 1, false);
+            final double[] here = mapEngine != null ? mapEngine.getPosition() : null;
+            ((PlaceCell) holder.itemView).setPlace(place, searchQuery, here, position != getItemCount() - 1);
         }
+    }
+
+    /** Home and work, as two of Telegram's rounded cards with their icons; an empty one says how to set it. */
+    private class MyPlacesRow extends LinearLayout {
+
+        private final TextView[] titles = new TextView[2];
+        private final TextView[] subtitles = new TextView[2];
+        private final ImageView[] icons = new ImageView[2];
+        private final FrameLayout[] cards = new FrameLayout[2];
+
+        MyPlacesRow(Context context) {
+            super(context);
+            setOrientation(HORIZONTAL);
+            setPadding(dp(12), dp(4), dp(12), dp(10));
+            final boolean rtl = LocaleController.isRTL;
+            for (int i = 0; i < 2; i++) {
+                final FrameLayout card = new FrameLayout(context);
+                final ImageView icon = new ImageView(context);
+                icon.setScaleType(ImageView.ScaleType.CENTER);
+                icon.setImageResource(i == 0 ? R.drawable.msg_home : R.drawable.msg_work);
+                card.addView(icon, LayoutHelper.createFrame(36, 36, (rtl ? Gravity.RIGHT : Gravity.LEFT) | Gravity.CENTER_VERTICAL, rtl ? 0 : 10, 0, rtl ? 10 : 0, 0));
+                final TextView title = new TextView(context);
+                title.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 15);
+                title.setTypeface(AndroidUtilities.bold());
+                title.setSingleLine(true);
+                title.setGravity(rtl ? Gravity.RIGHT : Gravity.LEFT);
+                title.setText(getString(i == 0 ? R.string.PhogramMapsHome : R.string.PhogramMapsWork));
+                card.addView(title, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.TOP, rtl ? 8 : 54, 9, rtl ? 54 : 8, 0));
+                final TextView subtitle = new TextView(context);
+                subtitle.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 13);
+                subtitle.setSingleLine(true);
+                subtitle.setEllipsize(android.text.TextUtils.TruncateAt.END);
+                subtitle.setGravity(rtl ? Gravity.RIGHT : Gravity.LEFT);
+                card.addView(subtitle, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.TOP, rtl ? 8 : 54, 31, rtl ? 54 : 8, 9));
+                final int index = i;
+                card.setOnClickListener(v -> openMyPlace(index));
+                ScaleStateListAnimator.apply(card, 0.02f, 1.2f);
+                addView(card, LayoutHelper.createLinear(0, 58, 1f, 0, 0, i == 0 ? 8 : 0, 0));
+                titles[i] = title;
+                subtitles[i] = subtitle;
+                icons[i] = icon;
+                cards[i] = card;
+            }
+        }
+
+        void update() {
+            for (int i = 0; i < 2; i++) {
+                final MapEngine.Place place = myPlace(i);
+                subtitles[i].setText(place != null ? place.name : getString(i == 0 ? R.string.PhogramMapsAddHome : R.string.PhogramMapsAddWork));
+                titles[i].setTextColor(getThemedColor(Theme.key_windowBackgroundWhiteBlackText));
+                subtitles[i].setTextColor(getThemedColor(Theme.key_windowBackgroundWhiteGrayText));
+                final int color = getThemedColor(Theme.key_windowBackgroundWhiteGreenText);
+                icons[i].setColorFilter(new PorterDuffColorFilter(color, PorterDuff.Mode.SRC_IN));
+                final GradientDrawable circle = new GradientDrawable();
+                circle.setShape(GradientDrawable.OVAL);
+                circle.setColor((color & 0x00ffffff) | 0x26000000);
+                icons[i].setBackground(circle);
+                final GradientDrawable background = new GradientDrawable();
+                background.setCornerRadius(dp(14));
+                background.setColor(getThemedColor(Theme.key_windowBackgroundGray));
+                cards[i].setBackground(background);
+            }
+        }
+    }
+
+    // Home and work: one place each, kept on the phone with the saved ones.
+
+    private static final String HOME_KEY = "home";
+    private static final String WORK_KEY = "work";
+
+    private MapEngine.Place myPlace(int index) {
+        final ArrayList<MapEngine.Place> places = new ArrayList<>();
+        loadPlaces(index == 0 ? HOME_KEY : WORK_KEY, places, 1);
+        return places.isEmpty() ? null : places.get(0);
+    }
+
+    private void setMyPlace(int index, MapEngine.Place place) {
+        final ArrayList<MapEngine.Place> places = new ArrayList<>();
+        places.add(place);
+        savePlaces(index == 0 ? HOME_KEY : WORK_KEY, places);
+        searchAdapter.notifyDataSetChanged();
+        BulletinFactory.of(this).createSimpleBulletin(R.raw.contact_check,
+                getString(index == 0 ? R.string.PhogramMapsHomeSet : R.string.PhogramMapsWorkSet)).show();
+    }
+
+    /** Home or work: straight to the ways there; not set yet, a hint how to set it. */
+    private void openMyPlace(int index) {
+        final MapEngine.Place place = myPlace(index);
+        if (place == null) {
+            BulletinFactory.of(this).createSimpleBulletin(R.raw.chats_infotip,
+                    getString(index == 0 ? R.string.PhogramMapsHomeHint : R.string.PhogramMapsWorkHint)).show();
+            return;
+        }
+        closeSearch();
+        showPlace(place);
+        showRouteToPlace();
     }
 
     private void onDownloadAction() {
@@ -1346,7 +1513,9 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         ((FrameLayout.LayoutParams) searchBar.getLayoutParams()).bottomMargin = padding[3] + dp(12);
         ((FrameLayout.LayoutParams) placeCard.getLayoutParams()).bottomMargin = padding[3] + dp(8);
         int buttons = padding[3] + dp(12);
-        if (placeCard.getVisibility() == View.VISIBLE) {
+        if (isRouting()) {
+            buttons = routeUi.bottomHeight() + dp(12);
+        } else if (placeCard.getVisibility() == View.VISIBLE) {
             buttons = padding[3] + dp(8) + placeCard.getHeight() + dp(12);
         } else if (searchBar.getVisibility() == View.VISIBLE) {
             buttons += dp(SEARCH_BAR_HEIGHT) + dp(12);
@@ -1357,6 +1526,7 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         // The sheet rises to just under the status bar, and its list scrolls out from under the tab bar.
         ((FrameLayout.LayoutParams) searchSheet.getLayoutParams()).topMargin = padding[1] + dp(8);
         searchList.setPadding(0, 0, 0, padding[3] + dp(8));
+        if (routeUi != null) routeUi.layout();
         contentView.requestLayout();
         applyMapPadding();
     }
@@ -1398,9 +1568,9 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         searchField.setCursorColor(getThemedColor(Theme.key_windowBackgroundWhiteBlackText));
         searchField.setHintTextColor(getThemedColor(Theme.key_windowBackgroundWhiteHintText));
         for (int i = 0; i < chipsRow.getChildCount(); i++) {
-            final TextView chip = (TextView) chipsRow.getChildAt(i);
-            chip.setTextColor(getThemedColor(Theme.key_windowBackgroundWhiteBlackText));
-            chip.setBackground(Theme.createSimpleSelectorRoundRectDrawable(dp(16), getThemedColor(Theme.key_windowBackgroundGray), getThemedColor(Theme.key_listSelector)));
+            final LinearLayout tile = (LinearLayout) chipsRow.getChildAt(i);
+            ((TextView) tile.getChildAt(1)).setTextColor(getThemedColor(Theme.key_windowBackgroundWhiteBlackText));
+            tile.setBackground(Theme.createSimpleSelectorRoundRectDrawable(dp(16), getThemedColor(Theme.key_windowBackgroundGray), getThemedColor(Theme.key_listSelector)));
         }
         searchEmpty.setTextColor(getThemedColor(Theme.key_windowBackgroundWhiteGrayText));
 
@@ -1418,14 +1588,15 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         placeSave.setColorFilter(new PorterDuffColorFilter(getThemedColor(Theme.key_windowBackgroundWhiteGrayIcon), PorterDuff.Mode.MULTIPLY));
         placeSave.setBackground(Theme.createSelectorDrawable(getThemedColor(Theme.key_listSelector), 1, dp(14)));
         routeInfo.setTextColor(getThemedColor(Theme.key_windowBackgroundWhiteGrayText));
-        // Directions as Telegram's outlined secondary button, beside the filled send button.
-        final GradientDrawable routeBackground = new GradientDrawable();
-        routeBackground.setCornerRadius(dp(8));
-        routeBackground.setStroke(dp(1), getThemedColor(Theme.key_featuredStickers_addButton));
-        placeRoute.setBackground(routeBackground);
-        placeRoute.setTextColor(getThemedColor(Theme.key_featuredStickers_addButton));
-        placeShare.setTextColor(getThemedColor(Theme.key_featuredStickers_buttonText));
-        placeShare.setBackground(Theme.createSimpleSelectorRoundRectDrawable(dp(8), getThemedColor(Theme.key_featuredStickers_addButton), getThemedColor(Theme.key_featuredStickers_addButtonPressed)));
+        // Go is Telegram's filled main button; sending into a chat the outlined one beside it.
+        placeRoute.setTextColor(getThemedColor(Theme.key_featuredStickers_buttonText));
+        placeRoute.setBackground(Theme.createSimpleSelectorRoundRectDrawable(dp(8), getThemedColor(Theme.key_featuredStickers_addButton), getThemedColor(Theme.key_featuredStickers_addButtonPressed)));
+        final GradientDrawable shareBackground = new GradientDrawable();
+        shareBackground.setCornerRadius(dp(8));
+        shareBackground.setStroke(dp(1), getThemedColor(Theme.key_featuredStickers_addButton));
+        placeShare.setBackground(shareBackground);
+        placeShare.setTextColor(getThemedColor(Theme.key_featuredStickers_addButton));
+        if (routeUi != null) routeUi.updateColors();
         // The player strip's colors.
         final GradientDrawable cardBackground = new GradientDrawable();
         cardBackground.setCornerRadius(dp(12));

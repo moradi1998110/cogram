@@ -402,19 +402,77 @@ final class MapLibreMapEngine implements MapEngine {
             final Geometry geometry = feature.geometry();
             if (name == null || name.isEmpty() || !(geometry instanceof Point)) continue;
             final Point at = (Point) geometry;
+            final String kind = feature.hasProperty("kind") ? feature.getStringProperty("kind") : "";
             tapListener.onPlaceTapped(new Place(name,
-                    String.format(java.util.Locale.US, "%.5f, %.5f", at.latitude(), at.longitude()), at.latitude(), at.longitude()));
+                    String.format(java.util.Locale.US, "%.5f, %.5f", at.latitude(), at.longitude()), at.latitude(), at.longitude(),
+                    kindOfTile(kind), ""));
             return true;
         }
         return false;
     }
 
-    // Routes: OsmAnd's offline car router from the device's position, drawn as a line under the labels.
+    /** The kind of a place drawn on the map, from the tile's "kind" (OpenStreetMap's tag, as Protomaps keeps it). */
+    private static int kindOfTile(String kind) {
+        switch (kind) {
+            case "locality":
+            case "neighbourhood":
+            case "macrohood":
+            case "region":
+                return KIND_CITY;
+            case "restaurant":
+            case "fast_food":
+            case "cafe":
+            case "food_court":
+            case "bakery":
+                return KIND_FOOD;
+            case "fuel":
+            case "charging_station":
+                return KIND_FUEL;
+            case "hospital":
+            case "clinic":
+            case "doctors":
+            case "dentist":
+                return KIND_HEALTH;
+            case "pharmacy":
+                return KIND_PHARMACY;
+            case "place_of_worship":
+                return KIND_WORSHIP;
+            case "school":
+            case "university":
+            case "college":
+            case "kindergarten":
+                return KIND_EDUCATION;
+            case "bank":
+            case "atm":
+                return KIND_MONEY;
+            case "hotel":
+            case "motel":
+            case "hostel":
+                return KIND_LODGING;
+            case "parking":
+                return KIND_PARKING;
+            case "supermarket":
+            case "convenience":
+            case "marketplace":
+            case "mall":
+                return KIND_SHOP;
+            default:
+                return KIND_OTHER;
+        }
+    }
+
+    // Routes: OsmAnd's offline car router from the device's position. The chosen route is drawn in Telegram's blue over
+    // a white casing, the alternatives in grey under it, all below the labels so names stay readable.
 
     private static final String ROUTE_SOURCE = "phogram-route";
     private static final String ROUTE_CASING = "phogram-route-casing";
     private static final String ROUTE_LINE = "phogram-route-line";
-    private Route shownRoute;
+    private static final String ALTERNATIVE_SOURCE = "phogram-route-alternatives";
+    private static final String ALTERNATIVE_CASING = "phogram-route-alternatives-casing";
+    private static final String ALTERNATIVE_LINE = "phogram-route-alternatives-line";
+    private final List<Route> shownRoutes = new ArrayList<>();
+    private int chosenRoute;
+    private boolean avoidMotorways;
 
     @Override
     public boolean hasSearchData() {
@@ -422,43 +480,88 @@ final class MapLibreMapEngine implements MapEngine {
     }
 
     @Override
-    @SuppressWarnings("MissingPermission")
-    public void showRoute(Place destination, RouteCallback callback) {
+    public void showRoutes(Place destination, boolean avoidMotorways, RouteCallback callback) {
         if (OsmAndOffline.installedFile() == null) {
-            callback.onRoute(null, ROUTE_NO_DATA);
+            callback.onRoutes(new ArrayList<>(), ROUTE_NO_DATA);
             return;
         }
+        this.avoidMotorways = avoidMotorways;
+        locate(here -> {
+            if (destroyed) return;
+            if (here == null) {
+                callback.onRoutes(new ArrayList<>(), ROUTE_NO_LOCATION);
+            } else {
+                routeFrom(here.getLatitude(), here.getLongitude(), destination, callback);
+            }
+        });
+    }
+
+    /** The device's position: the map's, else the last one Android kept, else a new one from the GPS. */
+    @SuppressWarnings("MissingPermission")
+    private void locate(Utilities.Callback<Location> done) {
         Location here = null;
         if (map != null && map.getLocationComponent().isLocationComponentActivated()) {
             here = map.getLocationComponent().getLastKnownLocation();
         }
         if (here != null) {
-            routeFrom(here, destination, callback);
+            done.run(here);
             return;
         }
         if (!hasLocationPermission()) {
-            callback.onRoute(null, ROUTE_NO_LOCATION);
+            done.run(null);
             return;
         }
         org.telegram.messenger.ApplicationLoader.getLocationServiceProvider().getLastLocation(fix -> AndroidUtilities.runOnUIThread(() -> {
             if (destroyed) return;
             if (fix != null) {
-                routeFrom(fix, destination, callback);
-                return;
+                done.run(fix);
+            } else {
+                // No position kept yet (after a restart, or with the GPS just turned on): the GPS is asked for one.
+                currentLocation(done);
             }
-            // No position kept yet (after a restart, or with the GPS just turned on): the GPS is asked for a new one.
-            currentLocation(fresh -> {
-                if (destroyed) return;
-                if (fresh == null) {
-                    callback.onRoute(null, ROUTE_NO_LOCATION);
-                } else {
-                    routeFrom(fresh, destination, callback);
-                }
-            });
         }));
     }
 
+    @Override
+    @SuppressWarnings("MissingPermission")
+    public double[] getPosition() {
+        Location here = null;
+        if (map != null && map.getLocationComponent().isLocationComponentActivated()) {
+            here = map.getLocationComponent().getLastKnownLocation();
+        }
+        if (here == null && hasLocationPermission()) {
+            final android.location.LocationManager manager =
+                    (android.location.LocationManager) context.getSystemService(Context.LOCATION_SERVICE);
+            for (String provider : new String[] { android.location.LocationManager.GPS_PROVIDER, android.location.LocationManager.PASSIVE_PROVIDER }) {
+                try {
+                    final Location known = manager != null ? manager.getLastKnownLocation(provider) : null;
+                    if (known != null && (here == null || known.getTime() > here.getTime())) {
+                        here = known;
+                    }
+                } catch (Exception e) {
+                    FileLog.e(e);
+                }
+            }
+        }
+        return here == null ? null : new double[] { here.getLatitude(), here.getLongitude() };
+    }
+
     private static final long FRESH_LOCATION_TIMEOUT_MS = 20_000;
+
+    /** A full location listener: before Android 10 the system also calls the status methods, which have no default there. */
+    private abstract static class PositionListener implements android.location.LocationListener {
+        @Override
+        public void onStatusChanged(String provider, int status, android.os.Bundle extras) {
+        }
+
+        @Override
+        public void onProviderEnabled(String provider) {
+        }
+
+        @Override
+        public void onProviderDisabled(String provider) {
+        }
+    }
 
     /** One new position from the GPS (or the network, where the phone has it), or null after twenty seconds. */
     @SuppressWarnings("MissingPermission")
@@ -487,9 +590,7 @@ final class MapLibreMapEngine implements MapEngine {
             finish.run();
             done.run(null);
         };
-        // A full listener, not a lambda: before Android 10 the system also calls the status methods, which have no
-        // default bodies there.
-        listeners[0] = new android.location.LocationListener() {
+        listeners[0] = new PositionListener() {
             @Override
             public void onLocationChanged(Location location) {
                 AndroidUtilities.runOnUIThread(() -> {
@@ -498,18 +599,6 @@ final class MapLibreMapEngine implements MapEngine {
                     finish.run();
                     done.run(location);
                 });
-            }
-
-            @Override
-            public void onStatusChanged(String provider, int status, android.os.Bundle extras) {
-            }
-
-            @Override
-            public void onProviderEnabled(String provider) {
-            }
-
-            @Override
-            public void onProviderDisabled(String provider) {
             }
         };
         boolean asked = false;
@@ -531,51 +620,79 @@ final class MapLibreMapEngine implements MapEngine {
         AndroidUtilities.runOnUIThread(timeout, FRESH_LOCATION_TIMEOUT_MS);
     }
 
-    private void routeFrom(Location here, Place destination, RouteCallback callback) {
+    private void routeFrom(double latitude, double longitude, Place destination, RouteCallback callback) {
         final OsmAndOffline router = offline();
         if (router == null) {
-            callback.onRoute(null, ROUTE_NOT_FOUND);
+            callback.onRoutes(new ArrayList<>(), ROUTE_NOT_FOUND);
             return;
         }
-        router.route(here.getLatitude(), here.getLongitude(), destination.latitude, destination.longitude, route -> {
+        router.route(latitude, longitude, destination.latitude, destination.longitude, avoidMotorways, routes -> {
             if (destroyed) return;
-            if (route == null || route.points.size() < 2) {
-                callback.onRoute(null, ROUTE_NOT_FOUND);
+            if (routes.isEmpty() || routes.get(0).points.size() < 2) {
+                callback.onRoutes(new ArrayList<>(), ROUTE_NOT_FOUND);
                 return;
             }
-            shownRoute = route;
+            for (Route route : routes) {
+                route.destination = destination;
+            }
+            shownRoutes.clear();
+            shownRoutes.addAll(routes);
+            chosenRoute = 0;
             drawRoute();
-            fitRoute(route);
-            callback.onRoute(route, 0);
+            fitRoutes();
+            callback.onRoutes(routes, 0);
         });
     }
 
     @Override
-    public void clearRoute() {
-        shownRoute = null;
+    public void selectRoute(int index) {
+        if (index < 0 || index >= shownRoutes.size()) return;
+        chosenRoute = index;
         drawRoute();
     }
 
-    /** Puts the shown route on the style (again after a style change), or takes it off. */
-    private void drawRoute() {
-        if (style == null) return;
-        final Route route = shownRoute;
-        GeoJsonSource source = style.getSourceAs(ROUTE_SOURCE);
-        if (route == null) {
-            if (source != null) {
-                source.setGeoJson(FeatureCollection.fromFeatures(new Feature[0]));
-            }
-            return;
-        }
+    @Override
+    public void clearRoute() {
+        shownRoutes.clear();
+        chosenRoute = 0;
+        drawRoute();
+    }
+
+    private static Feature lineOf(Route route) {
         final List<Point> points = new ArrayList<>(route.points.size());
         for (double[] point : route.points) {
             points.add(Point.fromLngLat(point[1], point[0]));
         }
-        final Feature line = Feature.fromGeometry(LineString.fromLngLats(points));
-        if (source == null) {
-            source = new GeoJsonSource(ROUTE_SOURCE, line);
+        return Feature.fromGeometry(LineString.fromLngLats(points));
+    }
+
+    /** Puts the shown routes on the style (again after a style change), or takes them off. */
+    private void drawRoute() {
+        if (style == null) return;
+        final List<Feature> alternatives = new ArrayList<>();
+        Feature chosen = null;
+        for (int i = 0; i < shownRoutes.size(); i++) {
+            if (i == chosenRoute) {
+                chosen = lineOf(shownRoutes.get(i));
+            } else {
+                alternatives.add(lineOf(shownRoutes.get(i)));
+            }
+        }
+        final FeatureCollection chosenLines = FeatureCollection.fromFeatures(chosen == null ? new Feature[0] : new Feature[] { chosen });
+        final FeatureCollection alternativeLines = FeatureCollection.fromFeatures(alternatives);
+        GeoJsonSource source = style.getSourceAs(ROUTE_SOURCE);
+        GeoJsonSource alternativeSource = style.getSourceAs(ALTERNATIVE_SOURCE);
+        if (source == null || alternativeSource == null) {
+            alternativeSource = new GeoJsonSource(ALTERNATIVE_SOURCE, alternativeLines);
+            source = new GeoJsonSource(ROUTE_SOURCE, chosenLines);
+            style.addSource(alternativeSource);
             style.addSource(source);
-            // Telegram's blue over a white casing, drawn below the first label layer so names stay readable.
+            final LineLayer alternativeCasing = new LineLayer(ALTERNATIVE_CASING, ALTERNATIVE_SOURCE).withProperties(
+                    PropertyFactory.lineColor(0xFFFFFFFF), PropertyFactory.lineWidth(8f),
+                    PropertyFactory.lineCap(Property.LINE_CAP_ROUND), PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND));
+            final LineLayer alternativeLine = new LineLayer(ALTERNATIVE_LINE, ALTERNATIVE_SOURCE).withProperties(
+                    PropertyFactory.lineColor(0xFF9AA7B5), PropertyFactory.lineWidth(5f),
+                    PropertyFactory.lineCap(Property.LINE_CAP_ROUND), PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND));
             final LineLayer casing = new LineLayer(ROUTE_CASING, ROUTE_SOURCE).withProperties(
                     PropertyFactory.lineColor(0xFFFFFFFF), PropertyFactory.lineWidth(9f),
                     PropertyFactory.lineCap(Property.LINE_CAP_ROUND), PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND));
@@ -583,29 +700,145 @@ final class MapLibreMapEngine implements MapEngine {
                     PropertyFactory.lineColor(0xFF3A8EE6), PropertyFactory.lineWidth(5.5f),
                     PropertyFactory.lineCap(Property.LINE_CAP_ROUND), PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND));
             if (style.getLayer("address_label") != null) {
-                style.addLayerBelow(casing, "address_label");
+                style.addLayerBelow(alternativeCasing, "address_label");
             } else {
-                style.addLayer(casing);
+                style.addLayer(alternativeCasing);
             }
+            style.addLayerAbove(alternativeLine, ALTERNATIVE_CASING);
+            style.addLayerAbove(casing, ALTERNATIVE_LINE);
             style.addLayerAbove(blue, ROUTE_CASING);
         } else {
-            source.setGeoJson(line);
+            source.setGeoJson(chosenLines);
+            alternativeSource.setGeoJson(alternativeLines);
         }
     }
 
-    private void fitRoute(Route route) {
-        if (map == null || route.points.size() < 2) return;
+    /** Frames all the shown routes, with room for the page's cards above and below. */
+    private void fitRoutes() {
+        if (map == null || shownRoutes.isEmpty()) return;
         final LatLngBounds.Builder bounds = new LatLngBounds.Builder();
-        for (double[] point : route.points) {
-            bounds.include(new LatLng(point[0], point[1]));
+        int count = 0;
+        for (Route route : shownRoutes) {
+            for (double[] point : route.points) {
+                bounds.include(new LatLng(point[0], point[1]));
+                count++;
+            }
         }
+        if (count < 2) return;
         if (map.getLocationComponent().isLocationComponentActivated()) {
             map.getLocationComponent().setCameraMode(CameraMode.NONE);
         }
-        // Room for the page's floating buttons on the sides and the place's card at the bottom.
-        final int side = AndroidUtilities.dp(56);
-        map.animateCamera(CameraUpdateFactory.newLatLngBounds(bounds.build(), side, AndroidUtilities.dp(96), side,
-                attributionBottom + AndroidUtilities.dp(140)), CAMERA_MS);
+        final int side = AndroidUtilities.dp(40);
+        map.animateCamera(CameraUpdateFactory.newLatLngBounds(bounds.build(), side, AndroidUtilities.dp(150), side,
+                attributionBottom + AndroidUtilities.dp(250)), CAMERA_MS);
+    }
+
+    // Navigation: the camera follows the driver, tilted, turning with the road; each position is matched to the route,
+    // and a driver who leaves it gets a new route from where they are.
+
+    private static final double NAVIGATION_ZOOM = 16.5;
+    private static final double NAVIGATION_TILT = 50;
+    private RouteNavigator navigator;
+    private NavigationListener navigationListener;
+    private android.location.LocationListener navigationUpdates;
+    private boolean rerouting;
+
+    @Override
+    @SuppressWarnings("MissingPermission")
+    public void startNavigation(Route route, NavigationListener listener) {
+        stopNavigation();
+        navigator = new RouteNavigator(route);
+        navigationListener = listener;
+        shownRoutes.clear();
+        shownRoutes.add(route);
+        chosenRoute = 0;
+        drawRoute();
+        activateLocation();
+        if (map != null && map.getLocationComponent().isLocationComponentActivated()) {
+            final LocationComponent location = map.getLocationComponent();
+            location.setRenderMode(RenderMode.GPS);
+            location.setCameraMode(CameraMode.TRACKING_GPS);
+            location.zoomWhileTracking(NAVIGATION_ZOOM);
+            location.tiltWhileTracking(NAVIGATION_TILT);
+        }
+        final android.location.LocationManager manager =
+                (android.location.LocationManager) context.getSystemService(Context.LOCATION_SERVICE);
+        if (manager == null || !hasLocationPermission()) return;
+        navigationUpdates = new PositionListener() {
+            @Override
+            public void onLocationChanged(Location location) {
+                AndroidUtilities.runOnUIThread(() -> onNavigationPosition(location));
+            }
+        };
+        try {
+            manager.requestLocationUpdates(android.location.LocationManager.GPS_PROVIDER, 1000, 0, navigationUpdates, android.os.Looper.getMainLooper());
+        } catch (Exception e) {
+            FileLog.e(e);
+        }
+        final double[] here = getPosition();
+        if (here != null) {
+            final Location start = new Location("phogram");
+            start.setLatitude(here[0]);
+            start.setLongitude(here[1]);
+            onNavigationPosition(start);
+        }
+    }
+
+    private void onNavigationPosition(Location location) {
+        final RouteNavigator current = navigator;
+        if (current == null || destroyed || location == null) return;
+        final NavigationState state = current.update(location.getLatitude(), location.getLongitude());
+        if (current.isOffRoute() && !rerouting && current.route.destination != null) {
+            // The driver left the route: a new one from here, drawn as soon as it is found.
+            rerouting = true;
+            final Place destination = current.route.destination;
+            final OsmAndOffline router = offline();
+            if (router != null) {
+                router.route(location.getLatitude(), location.getLongitude(), destination.latitude, destination.longitude, avoidMotorways, routes -> {
+                    rerouting = false;
+                    if (navigator == null || destroyed || routes.isEmpty()) return;
+                    final Route route = routes.get(0);
+                    route.destination = destination;
+                    navigator = new RouteNavigator(route);
+                    shownRoutes.clear();
+                    shownRoutes.add(route);
+                    chosenRoute = 0;
+                    drawRoute();
+                });
+            } else {
+                rerouting = false;
+            }
+        }
+        state.rerouting = rerouting;
+        if (navigationListener != null) {
+            navigationListener.onNavigation(state);
+        }
+    }
+
+    @Override
+    @SuppressWarnings("MissingPermission")
+    public void stopNavigation() {
+        if (navigationUpdates != null) {
+            final android.location.LocationManager manager =
+                    (android.location.LocationManager) context.getSystemService(Context.LOCATION_SERVICE);
+            try {
+                if (manager != null) manager.removeUpdates(navigationUpdates);
+            } catch (Exception e) {
+                FileLog.e(e);
+            }
+            navigationUpdates = null;
+        }
+        if (navigator == null) return;
+        navigator = null;
+        navigationListener = null;
+        rerouting = false;
+        if (map != null && map.getLocationComponent().isLocationComponentActivated()) {
+            final LocationComponent location = map.getLocationComponent();
+            location.setCameraMode(CameraMode.NONE);
+            location.setRenderMode(RenderMode.NORMAL);
+            map.animateCamera(CameraUpdateFactory.newCameraPosition(new CameraPosition.Builder(map.getCameraPosition())
+                    .tilt(0).bearing(0).build()), CAMERA_MS);
+        }
     }
 
     @Override
@@ -691,6 +924,7 @@ final class MapLibreMapEngine implements MapEngine {
 
     @Override
     public void onDestroy() {
+        stopNavigation();
         destroyed = true;
         shownPlace = null;
         AndroidUtilities.cancelRunOnUIThread(startOffline);
