@@ -247,6 +247,7 @@ public class ApplicationLoader extends Conversations {
 
         SharedConfig.loadConfig();
         SharedPrefsHelper.init(applicationContext);
+        UserConfig.keepSingleAccount();
         for (int a = 0; a < UserConfig.MAX_ACCOUNT_COUNT; a++) { //TODO improve account
             UserConfig.getInstance(a).loadConfig();
             MessagesController.getInstance(a);

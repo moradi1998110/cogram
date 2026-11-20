@@ -122,7 +122,39 @@ public class UserConfig extends BaseController {
     }
 
     public static int getMaxAccountCount() {
+        if (org.telegram.cogram.CogramGateway.ENABLED) {
+            return 1;
+        }
         return hasPremiumOnAccounts() ? 5 : 3;
+    }
+
+    /** Phogram signs in to exactly one account; the engine behind it carries one. */
+    public static boolean canAddAccount() {
+        return !org.telegram.cogram.CogramGateway.ENABLED;
+    }
+
+    /**
+     * Phogram once let Telegram's "Add account" sign in to more accounts, though only the first one
+     * ever worked. Those extra accounts are signed out on this phone at start, and the first one is
+     * the one shown. Their chats stay in the engine, turned off, see XmppBackend.
+     */
+    public static void keepSingleAccount() {
+        if (!org.telegram.cogram.CogramGateway.ENABLED) {
+            return;
+        }
+        getInstance(0).loadConfig();
+        for (int a = 1; a < MAX_ACCOUNT_COUNT; a++) {
+            UserConfig config = getInstance(a);
+            config.loadConfig();
+            if (config.isClientActivated()) {
+                FileLog.d("cogram: signing out extra account " + a + " on this phone");
+                config.clearConfig();
+            }
+        }
+        if (selectedAccount != 0) {
+            selectedAccount = 0;
+            getInstance(0).saveConfig(false);
+        }
     }
 
     public int getNewMessageId() {

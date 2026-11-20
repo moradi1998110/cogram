@@ -272,6 +272,7 @@ final class XmppBackend implements GatewayBackend {
             account = account();
         }
         if (account != null) {
+            disableExtraAccounts(connected, account);
             calls = new XmppCalls(connected, account, selfId, callPeers);
         }
         if (BuildVars.LOGS_ENABLED) {
@@ -566,8 +567,8 @@ final class XmppBackend implements GatewayBackend {
         if (engine == null || jid == null) {
             return false;
         }
-        List<Account> accounts = engine.getAccounts();
-        Conversation room = accounts.isEmpty() ? null : engine.find(accounts.get(0), Jid.of(jid));
+        Account account = account();
+        Conversation room = account == null ? null : engine.find(account, Jid.of(jid));
         return room != null && isRoom(room) && !room.getMucOptions().isPrivateAndNonAnonymous();
     }
 
@@ -991,15 +992,43 @@ final class XmppBackend implements GatewayBackend {
         preferences.edit().putInt("pts", pts).apply();
     }
 
+    /** The one account Phogram carries: the first one that is turned on, see disableExtraAccounts. */
     private Account account() {
         List<Account> accounts = service.getAccounts();
+        for (Account account : accounts) {
+            if (account.isEnabled()) {
+                return account;
+            }
+        }
         return accounts.isEmpty() ? null : accounts.get(0);
+    }
+
+    /**
+     * Phogram carries one account. A phone that signed in to more through Telegram's old "Add account"
+     * keeps their chats in the engine, but the extra accounts no longer connect, ring or notify.
+     */
+    private static void disableExtraAccounts(XmppConnectionService engine, Account kept) {
+        for (Account other : new ArrayList<>(engine.getAccounts())) {
+            if (other != kept && other.isEnabled()) {
+                FileLog.d("cogram: turning off extra engine account " + other.getJid().asBareJid());
+                other.setOption(Account.OPTION_DISABLED, true);
+                engine.updateAccount(other);
+            }
+        }
     }
 
     private List<Conversation> chats() {
         ArrayList<Conversation> all = new ArrayList<>();
         service.populateWithOrderedConversations(all);
-        return all;
+        // Only the one account's chats; another account's would mix in as if they were its own.
+        Account account = account();
+        ArrayList<Conversation> own = new ArrayList<>(all.size());
+        for (Conversation conversation : all) {
+            if (conversation.getAccount() == account) {
+                own.add(conversation);
+            }
+        }
+        return own;
     }
 
     private static boolean isRoom(Conversation conversation) {
