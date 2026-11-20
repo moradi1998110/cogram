@@ -15,3 +15,8 @@
 
 # Readable stack traces from production crashes with the mapping file kept on GitHub.
 -keepattributes SourceFile,LineNumberTable
+
+# R8 8.13 stops with an internal error ("Instruction without object outValue cannot compute verification type") when
+# it optimizes this app, as it did for the debug build. Production builds are shrunk and their logging removed, but
+# not optimized, until a newer R8 handles it.
+-dontoptimize
