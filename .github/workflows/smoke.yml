@@ -6,6 +6,7 @@ on:
     tags:
       - 'v*'
       - 'smoke*'
+      - 'usmoke*'
 
 permissions:
   contents: read
@@ -76,12 +77,20 @@ jobs:
           key: ccache-x86_64-${{ env.NDK_VERSION }}-${{ github.run_id }}
           restore-keys: ccache-x86_64-${{ env.NDK_VERSION }}-
 
+      # usmoke* tags check the updater: the test build is given the real update address, and its version code is
+      # below the latest release's, so the update sheet must open when the app starts.
       - name: Build x86_64 debug APK
+        env:
+          GITLAB_API_URL: ${{ vars.GITLAB_API_URL || secrets.GITLAB_API_URL }}
+          GITLAB_RELEASES_PROJECT: ${{ vars.GITLAB_RELEASES_PROJECT || secrets.GITLAB_RELEASES_PROJECT }}
         run: |
           chmod +x gradlew
+          EXTRA=""
+          case "$GITHUB_REF" in refs/tags/usmoke*) EXTRA="-PPHOGRAM_UPDATE_URL=${GITLAB_API_URL%/}/projects/$GITLAB_RELEASES_PROJECT/packages/generic/phogram/latest/update.json";; esac
           ./gradlew --no-daemon --stacktrace \
             -Pandroid.injected.build.abi=x86_64 \
             -Pandroid.injected.testOnly=false \
+            $EXTRA \
             :TMessagesProj_App:assembleAfatDebug
 
       - name: Show cache statistics
