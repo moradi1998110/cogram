@@ -23,6 +23,8 @@ gradlePlugin {
 repositories {
     google()
     mavenCentral()
+    // The official mirror of Maven Central, for when Maven Central answers 404 to the runners (see settings.gradle.kts).
+    maven { url = uri("https://maven-central.storage-download.googleapis.com/maven2/") }
     gradlePluginPortal()
 }
 /*
