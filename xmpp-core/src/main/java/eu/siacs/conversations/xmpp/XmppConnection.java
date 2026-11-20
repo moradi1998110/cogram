@@ -2389,10 +2389,19 @@ public class XmppConnection implements Runnable {
             discoManager.fetchServerCommands();
         }
 
+        // The archive's stamps are on the server's clock, so it is read before catching up; whether
+        // the server answers or not, catching up follows (after at most the reading's timeout).
         final var messageArchiveManager = getManager(MessageArchiveManager.class);
-        if (messageArchiveManager.hasFeature()) {
-            messageArchiveManager.catchup();
-        }
+        final var clockReading =
+                getManager(eu.siacs.conversations.xmpp.manager.EntityTimeManager.class)
+                        .measureServerClock();
+        clockReading.addListener(
+                () -> {
+                    if (messageArchiveManager.hasFeature()) {
+                        messageArchiveManager.catchup();
+                    }
+                },
+                MoreExecutors.directExecutor());
     }
 
     private void processStreamError(final StreamError streamError) throws IOException {

@@ -28,6 +28,7 @@ import eu.siacs.conversations.services.ExternalCallUi;
 import eu.siacs.conversations.services.XmppConnectionService;
 import eu.siacs.conversations.utils.CryptoHelper;
 import eu.siacs.conversations.utils.NetworkManager;
+import eu.siacs.conversations.utils.ServerClock;
 import eu.siacs.conversations.xml.Namespace;
 import eu.siacs.conversations.xmpp.Jid;
 import eu.siacs.conversations.xmpp.XmppConnection;
@@ -130,7 +131,7 @@ public class JingleManager extends AbstractManager {
                     sendSessionTerminate(packet, id);
                     if (busy || stranger) {
                         writeLogMissedIncoming(
-                                id.with, id.sessionId, null, System.currentTimeMillis(), stranger);
+                                id.with, id.sessionId, null, ServerClock.now(), stranger);
                     }
                     return;
                 }
@@ -729,7 +730,7 @@ public class JingleManager extends AbstractManager {
                 rtpSessionProposal.with,
                 rtpSessionProposal.sessionId,
                 null,
-                System.currentTimeMillis());
+                ServerClock.now());
         getManager(JingleMessageManager.class)
                 .retract(rtpSessionProposal.with, rtpSessionProposal.sessionId);
     }
@@ -842,7 +843,7 @@ public class JingleManager extends AbstractManager {
         // and would be a similar UX to what happens when you call a user that doesn't exist
         // playing the busy tone might be more in line with what some telephony networks play
         proposal.callIntegration.error();
-        writeLogMissedOutgoing(proposal.with, proposal.sessionId, null, System.currentTimeMillis());
+        writeLogMissedOutgoing(proposal.with, proposal.sessionId, null, ServerClock.now());
         this.service.notifyJingleRtpConnectionUpdate(
                 account, proposal.with, proposal.sessionId, endUserState);
         getManager(JingleMessageManager.class).retract(proposal.with, proposal.sessionId);

@@ -1439,7 +1439,8 @@ final class XmppBackend implements GatewayBackend {
         if (endedCalls.contains(session)) {
             return false;
         }
-        long left = message.getTimeSent() + CALL_SETTLE_MS - System.currentTimeMillis();
+        // Entries are stamped on the server's clock.
+        long left = message.getTimeSent() + CALL_SETTLE_MS - eu.siacs.conversations.utils.ServerClock.now();
         if (left > 0) {
             settleLater(left + 500);
             return true;
@@ -2660,6 +2661,10 @@ final class XmppBackend implements GatewayBackend {
                     converted.add(toTl(message, userId));
                 }
             }
+            // Telegram pages through a history by id. The engine reads it by time, and an id taken
+            // when a message was first seen can disagree with a time corrected later; ordering by id
+            // keeps the pages free of gaps and repeats.
+            Collections.sort(converted, (a, b) -> Integer.compare(b.id, a.id));
             return converted;
         });
         if (newestFirst.isEmpty() && isRoom(conversation)) {
