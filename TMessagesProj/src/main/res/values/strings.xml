@@ -11779,6 +11779,10 @@
     <string name="PhogramNavWarnStop">Stop sign</string>
     <string name="PhogramNavWarnPedestrians">Pedestrian crossing</string>
     <string name="PhogramNavWarnBump">Speed bump</string>
+    <string name="PhogramNavVoice">Voice guidance on</string>
+    <string name="PhogramNavVoiceOff">Voice guidance off</string>
+    <string name="PhogramNavVoiceLanguage">🔊  Voice guidance: %1$s</string>
+    <string name="PhogramNavVoiceTitle">Voice guidance language</string>
     <string name="PhogramAssistantTab">Assistant</string>
     <string name="PhogramAssistantGreeting">How can I help you?</string>
     <string name="PhogramAssistantIntro">Ask a question, write or summarize a text, translate, or describe a photo.</string>

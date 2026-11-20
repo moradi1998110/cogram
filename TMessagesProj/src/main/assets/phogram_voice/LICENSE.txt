@@ -1,0 +1,6 @@
+Navigation voice phrases, generated with Piper (https://github.com/OHF-Voice/piper1-gpl) from the phrases in
+.github/voice/phrases.json:
+- ar: Piper voice ar_JO-kareem-medium (dataset: https://github.com/AliMokhammad/arabicttstrain/, licence not stated
+  by its author; chosen by the project owner on 2026-11-20).
+- fa: Piper voice fa_IR-amir-medium (dataset licence: CC0).
+- en: Piper voice en_US-joe-medium (dataset licence: CC0).

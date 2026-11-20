@@ -1392,6 +1392,10 @@
     <string name="PhogramNavWarnStop">علامة قف</string>
     <string name="PhogramNavWarnPedestrians">ممر مشاة</string>
     <string name="PhogramNavWarnBump">مطب</string>
+    <string name="PhogramNavVoice">التوجيه الصوتي يعمل</string>
+    <string name="PhogramNavVoiceOff">التوجيه الصوتي مكتوم</string>
+    <string name="PhogramNavVoiceLanguage">🔊  صوت التوجيه: %1$s</string>
+    <string name="PhogramNavVoiceTitle">لغة التوجيه الصوتي</string>
     <string name="PhogramAssistantTab">المساعد</string>
     <string name="PhogramAssistantGreeting">كيف أستطيع مساعدتك؟</string>
     <string name="PhogramAssistantIntro">اسأل سؤالاً، أو اكتب نصاً أو لخّصه، أو ترجم، أو صف صورة.</string>

@@ -315,6 +315,19 @@ final class MapsRouteUi {
             recenterButton.setVisibility(View.VISIBLE);
         });
         parent.addView(overviewButton, LayoutHelper.createFrame(44, 44, (rtl ? Gravity.LEFT : Gravity.RIGHT) | Gravity.BOTTOM, 12, 0, 12, 0));
+        // The voice: on or off with one tap, as Telegram's mute button; its language in the trip panel.
+        muteButton = roundButton(context, R.drawable.msg_unmute, getString(R.string.PhogramNavVoice));
+        muteButton.setOnClickListener(v -> {
+            final boolean muted = !VoiceGuide.isMuted();
+            if (voice != null) {
+                voice.setMuted(muted);
+            } else {
+                new VoiceGuide(v.getContext()).setMuted(muted);
+            }
+            updateMuteButton();
+        });
+        parent.addView(muteButton, LayoutHelper.createFrame(44, 44, (rtl ? Gravity.LEFT : Gravity.RIGHT) | Gravity.BOTTOM, 12, 0, 12, 0));
+        muteButton.setVisibility(View.GONE);
         recenterButton = roundButton(context, R.drawable.msg_current_location, getString(R.string.PhogramNavRecenter));
         recenterButton.setOnClickListener(v -> {
             final MapEngine engine = host.engine();
@@ -390,11 +403,54 @@ final class MapsRouteUi {
         shareRow.setOnClickListener(v -> shareTrip());
         ScaleStateListAnimator.apply(shareRow, 0.02f, 1.2f);
         expanded.addView(shareRow, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0, 14, 0, 0));
+        voiceRow = text(context, 15, rtl);
+        voiceRow.setPadding(dp(14), dp(12), dp(14), dp(12));
+        voiceRow.setOnClickListener(v -> chooseVoice());
+        ScaleStateListAnimator.apply(voiceRow, 0.02f, 1.2f);
+        expanded.addView(voiceRow, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0, 10, 0, 0));
         continueButton = button(context, getString(R.string.PhogramNavContinue));
         continueButton.setOnClickListener(v -> setExpanded(false));
         expanded.addView(continueButton, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 46, 0, 14, 0, 4));
         panel.addView(expanded, 1, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT));
         panel.setOnClickListener(v -> setExpanded(expanded.getVisibility() != View.VISIBLE));
+    }
+
+    private VoiceGuide voice;
+    private ImageView muteButton;
+    private TextView voiceRow;
+
+    private static String voiceName(String language) {
+        switch (language) {
+            case "en": return "English";
+            case "fa": return "فارسی";
+            default: return "العربية";
+        }
+    }
+
+    /** The mute button shows the voice's state with Telegram's speaker icons; the panel's row its language. */
+    private void updateMuteButton() {
+        final boolean muted = VoiceGuide.isMuted();
+        muteButton.setImageResource(muted ? R.drawable.msg_mute : R.drawable.msg_unmute);
+        muteButton.setContentDescription(getString(muted ? R.string.PhogramNavVoiceOff : R.string.PhogramNavVoice));
+        voiceRow.setText(LocaleController.formatString(R.string.PhogramNavVoiceLanguage, voiceName(VoiceGuide.language())));
+    }
+
+    /** Telegram's list of the guidance languages; the chosen one speaks at once so the driver hears it. */
+    private void chooseVoice() {
+        final Activity activity = host.fragment().getParentActivity();
+        if (activity == null) return;
+        final CharSequence[] names = new CharSequence[VoiceGuide.LANGUAGES.length];
+        for (int i = 0; i < names.length; i++) {
+            names[i] = voiceName(VoiceGuide.LANGUAGES[i]);
+        }
+        final AlertDialog.Builder builder = new AlertDialog.Builder(activity);
+        builder.setTitle(getString(R.string.PhogramNavVoiceTitle));
+        builder.setItems(names, (dialog, which) -> {
+            VoiceGuide.setLanguage(VoiceGuide.LANGUAGES[which]);
+            updateMuteButton();
+            if (voice != null) voice.say("continue");
+        });
+        host.fragment().showDialog(builder.create());
     }
 
     private static ImageView roundButton(Context context, int icon, String description) {
@@ -529,7 +585,7 @@ final class MapsRouteUi {
         chip.setStroke(dp(1.5f), 0xFFE53935);
         warningChip.setBackground(chip);
         warningChip.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText));
-        for (ImageView button : new ImageView[] { overviewButton, recenterButton }) {
+        for (ImageView button : new ImageView[] { overviewButton, recenterButton, muteButton }) {
             button.setBackground(Theme.createSimpleSelectorCircleDrawable(dp(44), Theme.getColor(Theme.key_location_actionBackground), Theme.getColor(Theme.key_location_actionPressedBackground)));
             button.setColorFilter(new PorterDuffColorFilter(Theme.getColor(Theme.key_location_actionActiveIcon), PorterDuff.Mode.MULTIPLY));
         }
@@ -538,6 +594,12 @@ final class MapsRouteUi {
         handle.setColor(Theme.getColor(Theme.key_sheet_scrollUp));
         panelHandle.setBackground(handle);
         destinationText.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText));
+        final GradientDrawable voiceBackground = new GradientDrawable();
+        voiceBackground.setCornerRadius(dp(14));
+        voiceBackground.setColor(Theme.getColor(Theme.key_windowBackgroundGray));
+        voiceRow.setBackground(voiceBackground);
+        voiceRow.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText));
+        updateMuteButton();
         for (int i = 0; i < expanded.getChildCount(); i++) {
             final View child = expanded.getChildAt(i);
             if ("gray".equals(child.getTag())) ((TextView) child).setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText));
@@ -823,13 +885,20 @@ final class MapsRouteUi {
             if (mode == MODE_NAVIGATION) recenterButton.setVisibility(View.VISIBLE);
         });
         engine.startNavigation(routes.get(chosen), this::onNavigation);
+        if (voice == null) voice = new VoiceGuide(host.fragment().getParentActivity() != null ? host.fragment().getParentActivity() : org.telegram.messenger.ApplicationLoader.applicationContext);
+        voice.onStart();
+        updateMuteButton();
     }
 
     private void onNavigation(MapEngine.NavigationState state) {
         if (mode != MODE_NAVIGATION) return;
         if (state.arrived) {
             final String name = destination != null ? destination.name : "";
+            // "You have arrived" is said to the end, so the voice is not stopped with the trip.
+            if (voice != null) voice.onArrived();
+            arriving = true;
             endTrip();
+            arriving = false;
             BulletinFactory.of(host.fragment()).createSimpleBulletin(R.raw.contact_check, LocaleController.formatString(R.string.PhogramNavArrived, name)).show();
             return;
         }
@@ -855,6 +924,7 @@ final class MapsRouteUi {
         panelDistance.setText(MapsFormat.distance(state.remainingMeters));
         panelProgress.setProgress(state.progress, true);
         updateDriving(state);
+        if (voice != null) voice.onNavigation(state);
     }
 
     /**
@@ -880,8 +950,12 @@ final class MapsRouteUi {
     }
 
     /** Leaves the preview or the navigation and takes the routes off the map. */
+    /** Set while the trip ends on arrival, so the arrival phrase is not cut off. */
+    private boolean arriving;
+
     void close() {
         final MapEngine engine = host.engine();
+        if (voice != null && !arriving) voice.release();
         if (engine != null) {
             engine.stopNavigation();
             engine.clearRoute();
@@ -929,6 +1003,7 @@ final class MapsRouteUi {
         final boolean driving = mode == MODE_NAVIGATION;
         speedGroup.setVisibility(driving ? View.VISIBLE : View.GONE);
         overviewButton.setVisibility(driving ? View.VISIBLE : View.GONE);
+        muteButton.setVisibility(driving ? View.VISIBLE : View.GONE);
         if (!driving) {
             recenterButton.setVisibility(View.GONE);
             warningChip.setVisibility(View.GONE);
@@ -951,7 +1026,8 @@ final class MapsRouteUi {
         final int above = (panel.getHeight() > 0 ? panel.getHeight() : dp(110)) + dp(12);
         ((FrameLayout.LayoutParams) speedGroup.getLayoutParams()).bottomMargin = above;
         ((FrameLayout.LayoutParams) overviewButton.getLayoutParams()).bottomMargin = above;
-        ((FrameLayout.LayoutParams) recenterButton.getLayoutParams()).bottomMargin = above + dp(56);
+        ((FrameLayout.LayoutParams) muteButton.getLayoutParams()).bottomMargin = above + dp(56);
+        ((FrameLayout.LayoutParams) recenterButton.getLayoutParams()).bottomMargin = above + dp(112);
         ((FrameLayout.LayoutParams) warningChip.getLayoutParams()).topMargin = padding[1] + dp(8) + Math.max(banner.getHeight(), dp(100)) + dp(8);
         speedGroup.requestLayout();
         topCard.requestLayout();
