@@ -511,7 +511,12 @@ final class MapsRouteUi {
     private void bindAlong(java.util.List<MapEngine.AlongPlace> places, boolean finished) {
         if (alongList == null) return;
         alongList.removeAllViews();
-        if (alongKind == MapEngine.KIND_OTHER) {
+        // While a kind is chosen its list takes the place of the sharing and voice rows, so the panel stays as tall as
+        // before and its End stays on the screen; choosing the kind again brings them back.
+        final boolean listing = alongKind != MapEngine.KIND_OTHER;
+        if (shareRow != null) shareRow.setVisibility(listing ? View.GONE : View.VISIBLE);
+        if (voiceRow != null) voiceRow.setVisibility(listing ? View.GONE : View.VISIBLE);
+        if (!listing) {
             alongStatus.setVisibility(View.GONE);
             alongScroll.setVisibility(View.GONE);
             return;
@@ -557,9 +562,9 @@ final class MapsRouteUi {
             alongList.addView(row, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT));
         }
         alongScroll.setVisibility(rows > 0 ? View.VISIBLE : View.GONE);
-        // At most about four rows high; the rest scroll.
+        // Two rows and half of the third, which shows there is more to scroll, so the panel keeps its End in view.
         final android.view.ViewGroup.LayoutParams params = alongScroll.getLayoutParams();
-        params.height = rows == 0 ? 0 : Math.min(rows, 4) * dp(54);
+        params.height = rows == 0 ? 0 : rows <= 2 ? rows * dp(54) : dp(54 * 2 + 27);
         alongScroll.setLayoutParams(params);
     }
 
