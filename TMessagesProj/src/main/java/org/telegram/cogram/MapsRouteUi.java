@@ -227,13 +227,13 @@ final class MapsRouteUi {
         final LinearLayout figures = new LinearLayout(context);
         figures.setOrientation(LinearLayout.HORIZONTAL);
         figures.setGravity(Gravity.CENTER_VERTICAL);
-        panelArrival = number(context, 18);
+        panelArrival = number(context, 16);
         panelArrivalLabel = text(context, 13, rtl);
         figures.addView(figure(context, panelArrival, panelArrivalLabel, getString(R.string.PhogramNavArrival)), LayoutHelper.createLinear(0, LayoutHelper.WRAP_CONTENT, 1f));
-        panelTime = number(context, 18);
+        panelTime = number(context, 16);
         panelTimeLabel = text(context, 13, rtl);
         figures.addView(figure(context, panelTime, panelTimeLabel, getString(R.string.PhogramNavTimeLeft)), LayoutHelper.createLinear(0, LayoutHelper.WRAP_CONTENT, 1f));
-        panelDistance = number(context, 18);
+        panelDistance = number(context, 16);
         panelDistanceLabel = text(context, 13, rtl);
         figures.addView(figure(context, panelDistance, panelDistanceLabel, getString(R.string.PhogramNavDistanceLeft)), LayoutHelper.createLinear(0, LayoutHelper.WRAP_CONTENT, 1f));
         endButton = button(context, getString(R.string.PhogramNavEnd));
