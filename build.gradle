@@ -2,6 +2,8 @@
 buildscript {
     repositories {
         mavenCentral()
+        // The official mirror of Maven Central, for when Maven Central answers 404 to GitHub's runners.
+        maven { url 'https://maven-central.storage-download.googleapis.com/maven2/' }
         google()
         maven { url 'https://developer.huawei.com/repo/' }
         // The scan plugins below are published on the Gradle Plugin Portal only.
@@ -45,6 +47,7 @@ if (gradle.ext.has('osmand')) {
         repositories {
             google()
             mavenCentral()
+            maven { url 'https://maven-central.storage-download.googleapis.com/maven2/' }
         }
     }
 
