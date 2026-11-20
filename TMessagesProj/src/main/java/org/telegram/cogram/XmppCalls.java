@@ -192,7 +192,8 @@ final class XmppCalls implements XmppConnectionService.OnJingleRtpConnectionUpda
             return null;
         }
         call.instance = new XmppCallInstance(connection, remoteSink);
-        if (connection.getEndUserState() == RtpEndUserState.CONNECTED) {
+        RtpEndUserState state = connection.getEndUserState();
+        if (state == RtpEndUserState.CONNECTED || state == RtpEndUserState.INCOMING_CONTENT_ADD) {
             call.instance.onConnected();
         }
         return call.instance;
@@ -268,6 +269,13 @@ final class XmppCalls implements XmppConnectionService.OnJingleRtpConnectionUpda
                     call.instance.onConnected();
                 }
                 return started;
+            case INCOMING_CONTENT_ADD:
+                // The other side turned its camera on in a voice call. Until the request is answered no
+                // video flows either way, and Telegram shows the other side's video without asking.
+                if (call.instance != null) {
+                    call.instance.onConnected();
+                }
+                return null;
             case RECONNECTING:
                 if (call.instance != null) {
                     call.instance.onReconnecting();
