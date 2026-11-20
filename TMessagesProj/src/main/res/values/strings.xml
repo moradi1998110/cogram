@@ -11666,6 +11666,15 @@
     <string name="PhogramMapsDownload">Download</string>
     <string name="PhogramMapsSharePlace">Share location</string>
     <string name="PhogramMapsSendToChat">Send to chat</string>
+    <string name="PhogramUpdateBar">Update Phogram</string>
+    <string name="PhogramUpdateTitle">A new version of Phogram</string>
+    <string name="PhogramUpdateVersion">Version %1$s</string>
+    <string name="PhogramUpdateLater">Remind me later</string>
+    <string name="PhogramUpdateDownload">Download the update</string>
+    <string name="PhogramUpdateInstall">Install now</string>
+    <string name="PhogramUpdateDownloading">Downloading %1$d%%…</string>
+    <string name="PhogramUpdateRequired">This update is required to keep using Phogram.</string>
+    <string name="PhogramUpdateBadFile">The downloaded update is damaged and was removed. Try again.</string>
     <string name="PhogramMapsSent">Location sent.</string>
     <string name="PhogramMapsSentTo">Location sent to **%1$s**.</string>
     <string name="PhogramMapsSentToMany">Location sent to **%1$d chats**.</string>

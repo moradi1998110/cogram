@@ -1279,6 +1279,15 @@
     <string name="PhogramMapsDownload">تنزيل</string>
     <string name="PhogramMapsSharePlace">مشاركة الموقع</string>
     <string name="PhogramMapsSendToChat">إرسال إلى محادثة</string>
+    <string name="PhogramUpdateBar">تحديث Phogram</string>
+    <string name="PhogramUpdateTitle">نسخة جديدة من Phogram</string>
+    <string name="PhogramUpdateVersion">الإصدار %1$s</string>
+    <string name="PhogramUpdateLater">ذكّرني لاحقاً</string>
+    <string name="PhogramUpdateDownload">تنزيل التحديث</string>
+    <string name="PhogramUpdateInstall">ثبّت الآن</string>
+    <string name="PhogramUpdateDownloading">جارٍ التنزيل %1$d%%…</string>
+    <string name="PhogramUpdateRequired">هذا التحديث مطلوب لمواصلة استخدام Phogram.</string>
+    <string name="PhogramUpdateBadFile">ملف التحديث الذي نُزّل تالف وقد حُذف. حاول مرة أخرى.</string>
     <string name="PhogramMapsSent">أُرسل الموقع.</string>
     <string name="PhogramMapsSentTo">أُرسل الموقع إلى **%1$s**.</string>
     <string name="PhogramMapsSentToMany">أُرسل الموقع إلى **%1$d من المحادثات**.</string>

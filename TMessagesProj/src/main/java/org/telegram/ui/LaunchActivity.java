@@ -6052,7 +6052,8 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
 
     private boolean firstAppUpdateCheck = true;
     public void checkAppUpdate(boolean force, Browser.Progress progress) {
-        if (!ApplicationLoader.isStandaloneBuild() && !ApplicationLoader.isBetaBuild()) {
+        // Phogram's builds look for updates on the organization's GitLab (a custom update), outside any store.
+        if (!ApplicationLoader.isStandaloneBuild() && !ApplicationLoader.isBetaBuild() && !ApplicationLoader.applicationLoaderInstance.isCustomUpdate()) {
             return;
         }
         if (!force && !BuildVars.CHECK_UPDATES) {

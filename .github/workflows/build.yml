@@ -114,12 +114,29 @@ jobs:
             echo "PHOGRAM_KEY_ALIAS=$ALIAS"
           } >> "$GITHUB_ENV"
 
+      # A release (tag v*) gets a version code above every earlier one, as Android installs only higher codes over
+      # an installed app, and the address of update.json on the organization's GitLab, where it looks for updates.
+      # Other builds keep the default code and have no update address, so they never look.
       - name: Build arm64 debug APK
+        env:
+          GITLAB_API_URL: ${{ vars.GITLAB_API_URL }}
+          GITLAB_RELEASES_PROJECT: ${{ vars.GITLAB_RELEASES_PROJECT }}
         run: |
           chmod +x gradlew
+          EXTRA=""
+          case "$GITHUB_REF" in
+            refs/tags/v*)
+              EXTRA="-PAPP_VERSION_CODE=$((8000 + GITHUB_RUN_NUMBER))"
+              if [ -n "$GITLAB_API_URL" ] && [ -n "$GITLAB_RELEASES_PROJECT" ]; then
+                EXTRA="$EXTRA -PPHOGRAM_UPDATE_URL=${GITLAB_API_URL%/}/projects/$GITLAB_RELEASES_PROJECT/packages/generic/phogram/latest/update.json"
+              fi
+              ;;
+          esac
+          echo "Release options: $EXTRA"
           ./gradlew --no-daemon --stacktrace \
             -Pandroid.injected.build.abi=arm64-v8a \
             -Pandroid.injected.testOnly=false \
+            $EXTRA \
             :TMessagesProj_App:assembleAfatDebug
 
       - name: Show cache statistics
@@ -161,3 +178,36 @@ jobs:
           cp dist/cogram-arm64-debug.apk "phogram-${GITHUB_REF_NAME}-arm64-debug.apk"
           gh release create "$GITHUB_REF_NAME" "phogram-${GITHUB_REF_NAME}-arm64-debug.apk" \
             --draft --prerelease --title "$GITHUB_REF_NAME" --notes "Automated build of $GITHUB_SHA"
+
+      # The release goes to the releases project on the organization's GitLab, where the app finds it: the APK as a
+      # generic package of its version, then update.json (version, code, SHA-256, what is new) as the "latest" one.
+      # What is new is the tag's message; a line "[required]" in it makes every older version update before going on.
+      - name: Publish the release to GitLab
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GITLAB_API_URL: ${{ vars.GITLAB_API_URL }}
+          GITLAB_RELEASES_PROJECT: ${{ vars.GITLAB_RELEASES_PROJECT }}
+          GITLAB_RELEASES_TOKEN: ${{ secrets.GITLAB_RELEASES_TOKEN }}
+        run: |
+          if [ -z "$GITLAB_API_URL" ] || [ -z "$GITLAB_RELEASES_PROJECT" ] || [ -z "$GITLAB_RELEASES_TOKEN" ]; then
+            echo "The GitLab releases project is not set up; the release stays on GitHub only."
+            exit 0
+          fi
+          API="${GITLAB_API_URL%/}/projects/$GITLAB_RELEASES_PROJECT/packages/generic/phogram"
+          VERSION="${GITHUB_REF_NAME#v}"
+          APK="phogram-$VERSION.apk"
+          cp dist/cogram-arm64-debug.apk "$APK"
+          CODE=$("$ANDROID_HOME/build-tools/36.0.0/aapt2" dump badging "$APK" | sed -n "s/.*versionCode='\([0-9]*\)'.*/\1/p" | head -1)
+          SHA=$(sha256sum "$APK" | cut -d' ' -f1)
+          git fetch -q --depth=1 origin "+refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME" || true
+          NOTES=$(git tag -l --format='%(contents)' "$GITHUB_REF_NAME" | sed '/^-----BEGIN PGP/,$d')
+          MIN=0
+          if printf '%s' "$NOTES" | grep -q '^\[required\]'; then MIN=$CODE; fi
+          NOTES=$(printf '%s\n' "$NOTES" | grep -v '^\[required\]')
+          echo "Version $VERSION, code $CODE, SHA-256 $SHA, minimum $MIN"
+          curl --fail-with-body -sS -H "PRIVATE-TOKEN: $GITLAB_RELEASES_TOKEN" --upload-file "$APK" "$API/$VERSION/$APK"
+          jq -n --arg version "$VERSION" --argjson code "$CODE" --arg file "$API/$VERSION/$APK" --arg sha "$SHA" \
+            --argjson min "$MIN" --arg notes "$NOTES" \
+            '{version: $version, version_code: $code, file_url: $file, sha256: $sha, min_version_code: $min, changelog: $notes}' > update.json
+          cat update.json
+          curl --fail-with-body -sS -H "PRIVATE-TOKEN: $GITLAB_RELEASES_TOKEN" --upload-file update.json "$API/latest/update.json"
