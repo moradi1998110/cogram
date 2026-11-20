@@ -16,6 +16,13 @@ final class RouteNavigator {
     /** How far back and ahead of the last match the route is searched, in points. */
     private static final int SEARCH_BACK = 5;
     private static final int SEARCH_AHEAD = 400;
+    /** How far ahead a warning is told of. */
+    private static final float WARNING_AHEAD_METERS = 400;
+
+    /** The index of the route's point the driver was last matched to. */
+    int pointIndex() {
+        return index;
+    }
 
     final MapEngine.Route route;
     private int index;
@@ -72,6 +79,30 @@ final class RouteNavigator {
         final double[] end = points.get(points.size() - 1);
         state.arrived = MapEngine.distance(latitude, longitude, end[0], end[1]) < ARRIVED_METERS
                 || state.remainingMeters < ARRIVED_METERS;
+        // The road the driver is on: the last road starting at or before the matched point, its name and limit.
+        for (int r = route.roadStarts.length - 1; r >= 0; r--) {
+            if (route.roadStarts[r] <= bestSegment) {
+                state.street = route.roadNames[r] == null ? "" : route.roadNames[r];
+                state.speedLimit = route.speedLimits[r];
+                break;
+            }
+        }
+        // The nearest warning ahead within WARNING_AHEAD_METERS, to tell the driver in time.
+        for (MapEngine.Warning warning : route.warnings) {
+            final float ahead = warning.distance - travelled;
+            if (ahead > -5 && ahead < WARNING_AHEAD_METERS) {
+                state.warning = warning;
+                state.toWarning = Math.max(0, ahead);
+                break;
+            }
+        }
+        // A stop reached: the page says so, and the map takes it off the route.
+        for (MapEngine.Place stop : route.stops) {
+            if (MapEngine.distance(latitude, longitude, stop.latitude, stop.longitude) < ARRIVED_METERS * 2) {
+                state.passedStop = stop;
+                break;
+            }
+        }
         // The next turn is the first one ahead of the driver.
         for (int i = 0; i < route.maneuvers.size(); i++) {
             final MapEngine.Maneuver maneuver = route.maneuvers.get(i);

@@ -250,6 +250,17 @@ if tap_view 'content-desc="Where to?"' || adb shell input tap 160 532; then
     send_fix
   done
   adb exec-out screencap -p > "$OUT/7-maps-navigation.png" || true
+  # The trip panel opened by a tap, then the fuel stations on the road ahead as pins.
+  tap_view 'text="Time left"' || adb shell input tap 160 520
+  sleep 2
+  adb exec-out screencap -p > "$OUT/7-maps-trip.png" || true
+  if tap_view 'text="Fuel"'; then
+    for wait in 1 2 3 4 5 6; do
+      sleep 3
+      send_fix
+    done
+    adb exec-out screencap -p > "$OUT/7-maps-along.png" || true
+  fi
   # End finishes the trip: no route, no card, the map as before; Back would ask first.
   tap_view 'text="End"' || adb shell input tap 280 505
   sleep 3

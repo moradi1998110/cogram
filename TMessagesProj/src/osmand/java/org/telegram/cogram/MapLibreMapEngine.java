@@ -173,8 +173,10 @@ final class MapLibreMapEngine implements MapEngine {
         map.setStyle(new Style.Builder().fromJson(styleJson(tiles)), loaded -> {
             if (destroyed) return;
             style = loaded;
+            addRoadImages(loaded);
             activateLocation();
             drawRoute();
+            drawRoadMarks();
             ready = true;
             if (readyListener != null) {
                 readyListener.run();
@@ -369,8 +371,10 @@ final class MapLibreMapEngine implements MapEngine {
             map.setStyle(new Style.Builder().fromJson(styleJson(installed)), loaded -> {
                 if (destroyed) return;
                 style = loaded;
+                addRoadImages(loaded);
                 activateLocation();
                 drawRoute();
+                drawRoadMarks();
             });
         }
         if (downloadListener != null) {
@@ -392,6 +396,7 @@ final class MapLibreMapEngine implements MapEngine {
     private boolean onMapClick(LatLng point) {
         if (tapListener == null || map == null || style == null) return false;
         final PointF screen = map.getProjection().toScreenLocation(point);
+        if (onAlongClick(screen)) return true;
         if (onRouteClick(screen)) return true;
         final float slop = AndroidUtilities.dp(12);
         final List<Feature> features = map.queryRenderedFeatures(
@@ -813,6 +818,319 @@ final class MapLibreMapEngine implements MapEngine {
                 attributionBottom + AndroidUtilities.dp(250)), CAMERA_MS);
     }
 
+    // On the road while navigating: the next turn drawn as a white arrow on the route, the names of the coming roads
+    // in Telegram-blue plates on the line, the warnings as road signs, and places of a chosen kind as pins.
+
+    private static final String MANEUVER_SOURCE = "phogram-maneuver";
+    private static final String MANEUVER_LINE = "phogram-maneuver-line";
+    private static final String MANEUVER_CASING = "phogram-maneuver-casing";
+    private static final String MANEUVER_HEAD_SOURCE = "phogram-maneuver-head";
+    private static final String MANEUVER_HEAD = "phogram-maneuver-head-layer";
+    private static final String NAMES_SOURCE = "phogram-names";
+    private static final String NAMES_LAYER = "phogram-names-layer";
+    private static final String WARNINGS_SOURCE = "phogram-warnings";
+    private static final String WARNINGS_LAYER = "phogram-warnings-layer";
+    private static final String ALONG_SOURCE = "phogram-along";
+    private static final String ALONG_LAYER = "phogram-along-layer";
+    private int shownManeuver = -2;
+    private final List<AlongPlace> alongPlaces = new ArrayList<>();
+    private Runnable trackingListener;
+    private boolean trackingListenerAdded;
+
+    /** The road images, made once per style. */
+    private void addRoadImages(Style target) {
+        final int plate = MapKinds.dp(28);
+        final int corner = MapKinds.dp(9);
+        final List<org.maplibre.android.maps.ImageStretches> stretch = new ArrayList<>();
+        stretch.add(new org.maplibre.android.maps.ImageStretches(corner, plate - corner));
+        target.addImage("phogram-plate", MapKinds.namePlate(), stretch, stretch,
+                new org.maplibre.android.maps.ImageContent(corner, MapKinds.dp(5), plate - corner, plate - MapKinds.dp(5)));
+        target.addImage("phogram-arrow-head", MapKinds.arrowHead());
+        for (int type = Warning.TRAFFIC_LIGHTS; type <= Warning.PEDESTRIANS; type++) {
+            target.addImage("phogram-warning-" + type, MapKinds.warningImage(type));
+        }
+        for (int kind = KIND_OTHER; kind <= KIND_PIN; kind++) {
+            target.addImage("phogram-pin-" + kind, MapKinds.pinImage(kind));
+        }
+    }
+
+    /** The road layers on top of the routes, made once per style. */
+    private void ensureRoadLayers() {
+        if (style == null || style.getSource(MANEUVER_SOURCE) != null || style.getLayer(ROUTE_LINE) == null) return;
+        final FeatureCollection empty = FeatureCollection.fromFeatures(new Feature[0]);
+        style.addSource(new GeoJsonSource(MANEUVER_SOURCE, empty));
+        style.addSource(new GeoJsonSource(MANEUVER_HEAD_SOURCE, empty));
+        style.addSource(new GeoJsonSource(NAMES_SOURCE, empty));
+        style.addSource(new GeoJsonSource(WARNINGS_SOURCE, empty));
+        style.addSource(new GeoJsonSource(ALONG_SOURCE, empty));
+        final LineLayer casing = new LineLayer(MANEUVER_CASING, MANEUVER_SOURCE).withProperties(
+                PropertyFactory.lineColor(0xFF1F4E8C), PropertyFactory.lineWidth(10f),
+                PropertyFactory.lineCap(Property.LINE_CAP_BUTT), PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND));
+        final LineLayer line = new LineLayer(MANEUVER_LINE, MANEUVER_SOURCE).withProperties(
+                PropertyFactory.lineColor(0xFFFFFFFF), PropertyFactory.lineWidth(6f),
+                PropertyFactory.lineCap(Property.LINE_CAP_BUTT), PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND));
+        final SymbolLayer head = new SymbolLayer(MANEUVER_HEAD, MANEUVER_HEAD_SOURCE).withProperties(
+                PropertyFactory.iconImage("phogram-arrow-head"),
+                PropertyFactory.iconRotate(Expression.get("bearing")),
+                PropertyFactory.iconRotationAlignment(Property.ICON_ROTATION_ALIGNMENT_MAP),
+                PropertyFactory.iconAllowOverlap(true),
+                PropertyFactory.iconIgnorePlacement(true));
+        final SymbolLayer names = new SymbolLayer(NAMES_LAYER, NAMES_SOURCE).withProperties(
+                PropertyFactory.textField(Expression.get("name")),
+                PropertyFactory.textFont(new String[] { "Noto Sans Medium" }),
+                PropertyFactory.textSize(14f),
+                PropertyFactory.textColor(0xFFFFFFFF),
+                PropertyFactory.iconImage("phogram-plate"),
+                PropertyFactory.iconTextFit(Property.ICON_TEXT_FIT_BOTH),
+                PropertyFactory.iconTextFitPadding(new Float[] { 4f, 9f, 4f, 9f }),
+                PropertyFactory.textAnchor(Property.TEXT_ANCHOR_BOTTOM),
+                PropertyFactory.iconAnchor(Property.ICON_ANCHOR_BOTTOM),
+                PropertyFactory.textOffset(new Float[] { 0f, -0.8f }),
+                PropertyFactory.symbolSortKey(Expression.get("order")));
+        final SymbolLayer warnings = new SymbolLayer(WARNINGS_LAYER, WARNINGS_SOURCE).withProperties(
+                PropertyFactory.iconImage(Expression.get("icon")),
+                PropertyFactory.iconAllowOverlap(false),
+                // Far out only the important signs fit; close in, all of them.
+                PropertyFactory.iconSize(Expression.interpolate(Expression.linear(), Expression.zoom(),
+                        Expression.stop(10, 0.6f), Expression.stop(16, 1f))));
+        final SymbolLayer along = new SymbolLayer(ALONG_LAYER, ALONG_SOURCE).withProperties(
+                PropertyFactory.iconImage(Expression.get("icon")),
+                PropertyFactory.iconAnchor(Property.ICON_ANCHOR_BOTTOM),
+                PropertyFactory.iconAllowOverlap(false),
+                PropertyFactory.textField(Expression.get("label")),
+                PropertyFactory.textFont(new String[] { "Noto Sans Medium" }),
+                PropertyFactory.textSize(12f),
+                PropertyFactory.textColor(0xFF1A1A1A),
+                PropertyFactory.textHaloColor(0xFFFFFFFF),
+                PropertyFactory.textHaloWidth(2f),
+                PropertyFactory.textAnchor(Property.TEXT_ANCHOR_TOP),
+                PropertyFactory.textOptional(true),
+                PropertyFactory.symbolSortKey(Expression.get("order")));
+        style.addLayerAbove(casing, ROUTE_LINE);
+        style.addLayerAbove(line, MANEUVER_CASING);
+        style.addLayer(warnings);
+        style.addLayer(along);
+        style.addLayer(names);
+        style.addLayer(head);
+    }
+
+    /** Puts the navigation's road marks on the style again after a style change, or clears them without navigation. */
+    private void drawRoadMarks() {
+        ensureRoadLayers();
+        if (style == null || style.getSource(MANEUVER_SOURCE) == null) return;
+        shownManeuver = -2;
+        final RouteNavigator current = navigator;
+        final List<Feature> warnings = new ArrayList<>();
+        if (current != null) {
+            for (Warning warning : current.route.warnings) {
+                final Feature feature = Feature.fromGeometry(Point.fromLngLat(warning.longitude, warning.latitude));
+                feature.addStringProperty("icon", "phogram-warning-" + warning.type);
+                warnings.add(feature);
+            }
+        } else {
+            setSource(MANEUVER_SOURCE, FeatureCollection.fromFeatures(new Feature[0]));
+            setSource(MANEUVER_HEAD_SOURCE, FeatureCollection.fromFeatures(new Feature[0]));
+            setSource(NAMES_SOURCE, FeatureCollection.fromFeatures(new Feature[0]));
+            alongPlaces.clear();
+        }
+        setSource(WARNINGS_SOURCE, FeatureCollection.fromFeatures(warnings));
+        drawAlong();
+    }
+
+    private void setSource(String id, FeatureCollection features) {
+        if (style == null) return;
+        final GeoJsonSource source = style.getSourceAs(id);
+        if (source != null) source.setGeoJson(features);
+    }
+
+    /**
+     * The next turn as an arrow on the road (the last 35 m before it and the first 25 m after it, with a head), and the
+     * names of the next two roads with a name, at the turns onto them. Redrawn only when the next turn changes.
+     */
+    private void drawManeuver(NavigationState state) {
+        if (style == null || style.getSource(MANEUVER_SOURCE) == null) return;
+        final Maneuver next = state.next;
+        final int key = next == null ? -1 : next.pointIndex;
+        if (key == shownManeuver) return;
+        shownManeuver = key;
+        final Route route = state.route;
+        if (next == null || next.type == Maneuver.ARRIVE || route == null) {
+            setSource(MANEUVER_SOURCE, FeatureCollection.fromFeatures(new Feature[0]));
+            setSource(MANEUVER_HEAD_SOURCE, FeatureCollection.fromFeatures(new Feature[0]));
+        } else {
+            final float from = next.distance - 35;
+            final float to = next.distance + 25;
+            final List<Point> points = new ArrayList<>();
+            for (int i = 0; i < route.points.size(); i++) {
+                if (route.along[i] >= from && route.along[i] <= to) {
+                    points.add(Point.fromLngLat(route.points.get(i)[1], route.points.get(i)[0]));
+                }
+            }
+            if (points.size() >= 2) {
+                setSource(MANEUVER_SOURCE, FeatureCollection.fromFeature(Feature.fromGeometry(LineString.fromLngLats(points))));
+                final Point end = points.get(points.size() - 1);
+                final Point before = points.get(points.size() - 2);
+                final Feature head = Feature.fromGeometry(end);
+                head.addNumberProperty("bearing", bearing(before, end));
+                setSource(MANEUVER_HEAD_SOURCE, FeatureCollection.fromFeature(head));
+            }
+        }
+        final List<Feature> names = new ArrayList<>();
+        if (route != null && next != null) {
+            int order = 0;
+            for (Maneuver maneuver : route.maneuvers) {
+                if (maneuver.distance < next.distance || maneuver.street.isEmpty()) continue;
+                final double[] at = route.points.get(Math.min(maneuver.pointIndex + 1, route.points.size() - 1));
+                final Feature name = Feature.fromGeometry(Point.fromLngLat(at[1], at[0]));
+                name.addStringProperty("name", maneuver.street);
+                name.addNumberProperty("order", order);
+                names.add(name);
+                if (++order >= 2) break;
+            }
+        }
+        setSource(NAMES_SOURCE, FeatureCollection.fromFeatures(names));
+    }
+
+    private static double bearing(Point from, Point to) {
+        final double lat1 = Math.toRadians(from.latitude());
+        final double lat2 = Math.toRadians(to.latitude());
+        final double dLon = Math.toRadians(to.longitude() - from.longitude());
+        final double y = Math.sin(dLon) * Math.cos(lat2);
+        final double x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLon);
+        return (Math.toDegrees(Math.atan2(y, x)) + 360) % 360;
+    }
+
+    private void drawAlong() {
+        final List<Feature> features = new ArrayList<>();
+        int order = 0;
+        for (AlongPlace along : alongPlaces) {
+            final Feature feature = Feature.fromGeometry(Point.fromLngLat(along.place.longitude, along.place.latitude));
+            feature.addStringProperty("icon", "phogram-pin-" + along.place.kind);
+            feature.addStringProperty("label", MapsFormat.distance(along.ahead));
+            feature.addStringProperty("name", along.place.name);
+            feature.addStringProperty("type", along.place.type);
+            feature.addNumberProperty("kind", along.place.kind);
+            feature.addNumberProperty("order", order++);
+            features.add(feature);
+        }
+        setSource(ALONG_SOURCE, FeatureCollection.fromFeatures(features));
+    }
+
+    @Override
+    public void showAlongRoute(int kind, AlongCallback callback) {
+        final RouteNavigator current = navigator;
+        final OsmAndOffline router = offline();
+        if (kind == KIND_OTHER || current == null || router == null) {
+            alongPlaces.clear();
+            drawAlong();
+            callback.onPlaces(new ArrayList<>());
+            return;
+        }
+        router.alongRoute(current.route, current.pointIndex(), kind, places -> {
+            if (destroyed || navigator == null) return;
+            alongPlaces.clear();
+            alongPlaces.addAll(places);
+            drawAlong();
+            callback.onPlaces(places);
+        });
+    }
+
+    /** A tap on a place pin along the route offers it as a stop. */
+    private boolean onAlongClick(PointF screen) {
+        if (tapListener == null || map == null || style == null || alongPlaces.isEmpty()) return false;
+        final float slop = AndroidUtilities.dp(16);
+        final List<Feature> features = map.queryRenderedFeatures(
+                new android.graphics.RectF(screen.x - slop, screen.y - slop * 2, screen.x + slop, screen.y + slop), ALONG_LAYER);
+        for (Feature feature : features) {
+            if (!(feature.geometry() instanceof Point)) continue;
+            final Point at = (Point) feature.geometry();
+            final String name = feature.hasProperty("name") ? feature.getStringProperty("name") : "";
+            final String type = feature.hasProperty("type") ? feature.getStringProperty("type") : "";
+            final int kind = feature.hasProperty("kind") ? feature.getNumberProperty("kind").intValue() : KIND_OTHER;
+            tapListener.onAlongTapped(new Place(name, "", at.latitude(), at.longitude(), kind, type));
+            return true;
+        }
+        return false;
+    }
+
+    @Override
+    public void addStop(Place stop) {
+        final RouteNavigator current = navigator;
+        final double[] here = getPosition();
+        final OsmAndOffline router = offline();
+        if (current == null || here == null || router == null || current.route.destination == null) return;
+        final List<Place> stops = new ArrayList<>(current.route.stops);
+        stops.add(stop);
+        final Place destination = current.route.destination;
+        final int index = current.route.index;
+        rerouting = true;
+        router.route(here[0], here[1], destination.latitude, destination.longitude, false, stops, routes -> {
+            rerouting = false;
+            if (navigator == null || destroyed || routes.isEmpty()) return;
+            final Route route = routes.get(0);
+            route.destination = destination;
+            route.index = index;
+            route.stops = stops;
+            navigator = new RouteNavigator(route);
+            shownRoutes.clear();
+            shownRoutes.add(route);
+            chosenRoute = 0;
+            alongPlaces.clear();
+            drawRoute();
+            drawRoadMarks();
+        });
+    }
+
+    @Override
+    public void showOverview() {
+        final RouteNavigator current = navigator;
+        if (map == null || current == null) return;
+        if (map.getLocationComponent().isLocationComponentActivated()) {
+            map.getLocationComponent().setCameraMode(CameraMode.NONE);
+        }
+        final LatLngBounds.Builder bounds = new LatLngBounds.Builder();
+        final int from = current.pointIndex();
+        for (int i = from; i < current.route.points.size(); i++) {
+            bounds.include(new LatLng(current.route.points.get(i)[0], current.route.points.get(i)[1]));
+        }
+        bounds.include(new LatLng(current.route.points.get(current.route.points.size() - 1)[0], current.route.points.get(current.route.points.size() - 1)[1]));
+        if (from >= current.route.points.size() - 1) return;
+        final int side = AndroidUtilities.dp(48);
+        map.animateCamera(CameraUpdateFactory.newCameraPosition(new CameraPosition.Builder(map.getCameraPosition()).tilt(0).bearing(0).build()), 1);
+        map.animateCamera(CameraUpdateFactory.newLatLngBounds(bounds.build(), side, AndroidUtilities.dp(170), side,
+                attributionBottom + AndroidUtilities.dp(120)), CAMERA_MS);
+    }
+
+    @Override
+    @SuppressWarnings("MissingPermission")
+    public void recenter() {
+        if (map == null || navigator == null || !map.getLocationComponent().isLocationComponentActivated()) return;
+        map.getLocationComponent().setCameraMode(CameraMode.TRACKING_GPS, CAMERA_MS, NAVIGATION_ZOOM, null, NAVIGATION_TILT, null);
+    }
+
+    @Override
+    public void setTrackingListener(Runnable onDismissed) {
+        trackingListener = onDismissed;
+    }
+
+    /** Tells the page when the user moves the map away from the driver, so it offers to re-center. */
+    private void listenToTracking() {
+        if (trackingListenerAdded || map == null || !map.getLocationComponent().isLocationComponentActivated()) return;
+        trackingListenerAdded = true;
+        map.getLocationComponent().addOnCameraTrackingChangedListener(new org.maplibre.android.location.OnCameraTrackingChangedListener() {
+            @Override
+            public void onCameraTrackingDismissed() {
+                if (navigator != null && trackingListener != null) {
+                    trackingListener.run();
+                }
+            }
+
+            @Override
+            public void onCameraTrackingChanged(int currentMode) {
+            }
+        });
+    }
+
     // Navigation: the camera follows the driver, tilted, turning with the road; each position is matched to the route,
     // and a driver who leaves it gets a new route from where they are.
 
@@ -833,7 +1151,9 @@ final class MapLibreMapEngine implements MapEngine {
         shownRoutes.add(route);
         chosenRoute = 0;
         drawRoute();
+        drawRoadMarks();
         activateLocation();
+        listenToTracking();
         if (map != null && map.getLocationComponent().isLocationComponentActivated()) {
             final LocationComponent location = map.getLocationComponent();
             location.setRenderMode(RenderMode.GPS);
@@ -872,23 +1192,33 @@ final class MapLibreMapEngine implements MapEngine {
             map.getLocationComponent().forceLocationUpdate(location);
         }
         final NavigationState state = current.update(location.getLatitude(), location.getLongitude());
+        state.speed = location.hasSpeed() ? location.getSpeed() * 3.6f : 0;
+        // A stop reached leaves the route's stops, so a new route after a wrong turn does not go back to it.
+        if (state.passedStop != null) {
+            current.route.stops.remove(state.passedStop);
+        }
+        drawManeuver(state);
         if (current.isOffRoute() && !rerouting && current.route.destination != null) {
-            // The driver left the route: a new one from here, drawn as soon as it is found.
+            // The driver left the route: a new one from here, through the stops still ahead, drawn once found.
             rerouting = true;
             final Place destination = current.route.destination;
+            final List<Place> stops = new ArrayList<>(current.route.stops);
             final OsmAndOffline router = offline();
             if (router != null) {
-                router.route(location.getLatitude(), location.getLongitude(), destination.latitude, destination.longitude, false, routes -> {
+                router.route(location.getLatitude(), location.getLongitude(), destination.latitude, destination.longitude, false, stops, routes -> {
                     rerouting = false;
                     if (navigator == null || destroyed || routes.isEmpty()) return;
                     final Route route = routes.get(0);
                     route.destination = destination;
                     route.index = current.route.index;
+                    route.stops = stops;
                     navigator = new RouteNavigator(route);
                     shownRoutes.clear();
                     shownRoutes.add(route);
                     chosenRoute = 0;
+                    alongPlaces.clear();
                     drawRoute();
+                    drawRoadMarks();
                 });
             } else {
                 rerouting = false;
@@ -917,6 +1247,7 @@ final class MapLibreMapEngine implements MapEngine {
         navigator = null;
         navigationListener = null;
         rerouting = false;
+        drawRoadMarks();
         if (map != null && map.getLocationComponent().isLocationComponentActivated()) {
             final LocationComponent location = map.getLocationComponent();
             location.setCameraMode(CameraMode.NONE);

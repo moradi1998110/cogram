@@ -66,6 +66,9 @@ final class MapsRouteUi {
 
         /** The trip ended (End, or arrived): the page closes the place's card too. */
         void onTripEnded();
+
+        /** Sends the trip's message (where to, the arrival) into chats the user picks. */
+        void shareTrip(String text);
     }
 
     static final int MODE_NONE = 0;
@@ -234,6 +237,7 @@ final class MapsRouteUi {
         panelProgress = new LineProgressView(context);
         panel.addView(panelProgress, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 3, 16, 0, 16, 12));
         parent.addView(panel, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.BOTTOM));
+        createNavigationExtras(context, parent);
 
         // The page's round buttons stay above whichever panel is shown.
         final View.OnLayoutChangeListener resized = (v, l, t, r, b, ol, ot, or, ob) -> {
@@ -242,6 +246,309 @@ final class MapsRouteUi {
         sheet.addOnLayoutChangeListener(resized);
         panel.addOnLayoutChangeListener(resized);
         updateColors();
+    }
+
+    // While driving: the speed in Telegram's round ring with the limit sign, the road's name under it, the warning
+    // ahead under the strip, the overview and re-center buttons, and the panel that opens for stops and sharing.
+
+    private MapKinds.SpeedView speedView;
+    private MapKinds.LimitView limitView;
+    private TextView streetPill;
+    private LinearLayout speedGroup;
+    private TextView warningChip;
+    private ImageView overviewButton;
+    private ImageView recenterButton;
+    private LinearLayout expanded;
+    private View panelHandle;
+    private TextView destinationText;
+    private LinearLayout stopTiles;
+    private LinearLayout shareRow;
+    private TextView shareTitle;
+    private TextView shareText;
+    private ImageView shareIcon;
+    private TextView continueButton;
+    private int alongKind = MapEngine.KIND_OTHER;
+    private static final int[] STOP_KINDS = { MapEngine.KIND_FUEL, MapEngine.KIND_FOOD, MapEngine.KIND_PHARMACY, MapEngine.KIND_MONEY };
+    private static final int[] STOP_NAMES = { R.string.PhogramMapsFuel, R.string.PhogramMapsRestaurants, R.string.PhogramMapsPharmacies, R.string.PhogramMapsAtms };
+
+    private void createNavigationExtras(Context context, FrameLayout parent) {
+        final boolean rtl = LocaleController.isRTL;
+        speedGroup = new LinearLayout(context);
+        speedGroup.setOrientation(LinearLayout.VERTICAL);
+        speedGroup.setGravity(Gravity.CENTER_HORIZONTAL);
+        speedGroup.setVisibility(View.GONE);
+        final FrameLayout gauges = new FrameLayout(context);
+        speedView = new MapKinds.SpeedView(context);
+        speedView.setTranslationZ(dp(3));
+        gauges.addView(speedView, LayoutHelper.createFrame(68, 68, Gravity.LEFT | Gravity.BOTTOM, 0, 0, 0, 0));
+        limitView = new MapKinds.LimitView(context);
+        limitView.setTranslationZ(dp(4));
+        limitView.setVisibility(View.GONE);
+        gauges.addView(limitView, LayoutHelper.createFrame(34, 34, Gravity.LEFT | Gravity.TOP, 50, 0, 0, 0));
+        speedGroup.addView(gauges, LayoutHelper.createLinear(88, 80));
+        streetPill = new TextView(context);
+        streetPill.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 13);
+        streetPill.setTypeface(AndroidUtilities.bold());
+        streetPill.setSingleLine(true);
+        streetPill.setEllipsize(TextUtils.TruncateAt.END);
+        streetPill.setMaxWidth(dp(200));
+        streetPill.setPadding(dp(10), dp(4), dp(10), dp(5));
+        streetPill.setTranslationZ(dp(3));
+        speedGroup.addView(streetPill, LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, 0, 4, 0, 0));
+        parent.addView(speedGroup, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, (rtl ? Gravity.RIGHT : Gravity.LEFT) | Gravity.BOTTOM, 12, 0, 12, 0));
+
+        warningChip = new TextView(context);
+        warningChip.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 14);
+        warningChip.setTypeface(AndroidUtilities.bold());
+        warningChip.setSingleLine(true);
+        warningChip.setPadding(dp(12), dp(6), dp(12), dp(7));
+        warningChip.setTranslationZ(dp(3));
+        warningChip.setVisibility(View.GONE);
+        parent.addView(warningChip, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, (rtl ? Gravity.LEFT : Gravity.RIGHT) | Gravity.TOP, 12, 0, 12, 0));
+
+        overviewButton = roundButton(context, R.drawable.msg_map, getString(R.string.PhogramNavOverview));
+        overviewButton.setOnClickListener(v -> {
+            final MapEngine engine = host.engine();
+            if (engine != null) engine.showOverview();
+            recenterButton.setVisibility(View.VISIBLE);
+        });
+        parent.addView(overviewButton, LayoutHelper.createFrame(44, 44, (rtl ? Gravity.LEFT : Gravity.RIGHT) | Gravity.BOTTOM, 12, 0, 12, 0));
+        recenterButton = roundButton(context, R.drawable.msg_current_location, getString(R.string.PhogramNavRecenter));
+        recenterButton.setOnClickListener(v -> {
+            final MapEngine engine = host.engine();
+            if (engine != null) engine.recenter();
+            recenterButton.setVisibility(View.GONE);
+        });
+        parent.addView(recenterButton, LayoutHelper.createFrame(44, 44, (rtl ? Gravity.LEFT : Gravity.RIGHT) | Gravity.BOTTOM, 12, 0, 12, 0));
+        overviewButton.setVisibility(View.GONE);
+        recenterButton.setVisibility(View.GONE);
+
+        // The panel opens, by its handle or a tap, onto the trip: where to, stops on the way, sharing, continue.
+        panelHandle = new View(context);
+        panel.addView(panelHandle, 0, LayoutHelper.createLinear(36, 4, Gravity.CENTER_HORIZONTAL, 0, 8, 0, 0));
+        expanded = new LinearLayout(context);
+        expanded.setOrientation(LinearLayout.VERTICAL);
+        expanded.setVisibility(View.GONE);
+        expanded.setPadding(dp(16), dp(10), dp(16), 0);
+        destinationText = text(context, 16, rtl);
+        destinationText.setTypeface(AndroidUtilities.bold());
+        destinationText.setSingleLine(true);
+        destinationText.setEllipsize(TextUtils.TruncateAt.END);
+        expanded.addView(destinationText, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT));
+        final TextView stopsTitle = text(context, 14, rtl);
+        stopsTitle.setText(getString(R.string.PhogramNavAddStop));
+        stopsTitle.setTag("gray");
+        expanded.addView(stopsTitle, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0, 12, 0, 6));
+        stopTiles = new LinearLayout(context);
+        stopTiles.setOrientation(LinearLayout.HORIZONTAL);
+        for (int i = 0; i < STOP_KINDS.length; i++) {
+            final int kind = STOP_KINDS[i];
+            final LinearLayout tile = new LinearLayout(context);
+            tile.setOrientation(LinearLayout.VERTICAL);
+            tile.setGravity(Gravity.CENTER_HORIZONTAL);
+            tile.setPadding(0, dp(8), 0, dp(6));
+            final MapKinds.IconView icon = new MapKinds.IconView(context);
+            icon.setKind(kind);
+            tile.addView(icon, LayoutHelper.createLinear(38, 38, Gravity.CENTER_HORIZONTAL));
+            final TextView label = text(context, 12, false);
+            label.setGravity(Gravity.CENTER);
+            label.setSingleLine(true);
+            label.setText(getString(STOP_NAMES[i]));
+            tile.addView(label, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 2, 4, 2, 0));
+            tile.setOnClickListener(v -> showAlong(alongKind == kind ? MapEngine.KIND_OTHER : kind));
+            ScaleStateListAnimator.apply(tile, 0.04f, 1.2f);
+            stopTiles.addView(tile, LayoutHelper.createLinear(0, LayoutHelper.WRAP_CONTENT, 1f, 0, 0, i < STOP_KINDS.length - 1 ? 8 : 0, 0));
+        }
+        expanded.addView(stopTiles, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT));
+        // Share the trip: Telegram's send arrow, and a message with the arrival into a chat.
+        shareRow = new LinearLayout(context);
+        shareRow.setOrientation(LinearLayout.HORIZONTAL);
+        shareRow.setGravity(Gravity.CENTER_VERTICAL);
+        shareRow.setPadding(dp(14), dp(10), dp(14), dp(10));
+        shareIcon = new ImageView(context);
+        shareIcon.setImageResource(R.drawable.msg_send);
+        shareIcon.setScaleType(ImageView.ScaleType.CENTER);
+        final LinearLayout shareTexts = new LinearLayout(context);
+        shareTexts.setOrientation(LinearLayout.VERTICAL);
+        shareTitle = text(context, 16, rtl);
+        shareTitle.setTypeface(AndroidUtilities.bold());
+        shareTitle.setText(getString(R.string.PhogramNavShareTrip));
+        shareText = text(context, 13, rtl);
+        shareText.setText(getString(R.string.PhogramNavShareTripText));
+        shareTexts.addView(shareTitle);
+        shareTexts.addView(shareText);
+        if (rtl) {
+            shareRow.addView(shareTexts, LayoutHelper.createLinear(0, LayoutHelper.WRAP_CONTENT, 1f));
+            shareRow.addView(shareIcon, LayoutHelper.createLinear(40, 40, 12, 0, 0, 0));
+        } else {
+            shareRow.addView(shareIcon, LayoutHelper.createLinear(40, 40, 0, 0, 12, 0));
+            shareRow.addView(shareTexts, LayoutHelper.createLinear(0, LayoutHelper.WRAP_CONTENT, 1f));
+        }
+        shareRow.setOnClickListener(v -> shareTrip());
+        ScaleStateListAnimator.apply(shareRow, 0.02f, 1.2f);
+        expanded.addView(shareRow, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0, 14, 0, 0));
+        continueButton = button(context, getString(R.string.PhogramNavContinue));
+        continueButton.setOnClickListener(v -> setExpanded(false));
+        expanded.addView(continueButton, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 46, 0, 14, 0, 4));
+        panel.addView(expanded, 1, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT));
+        panel.setOnClickListener(v -> setExpanded(expanded.getVisibility() != View.VISIBLE));
+    }
+
+    private static ImageView roundButton(Context context, int icon, String description) {
+        final ImageView button = new ImageView(context);
+        button.setImageResource(icon);
+        button.setScaleType(ImageView.ScaleType.CENTER);
+        button.setContentDescription(description);
+        button.setTranslationZ(dp(3));
+        button.setOutlineProvider(org.telegram.messenger.utils.ViewOutlineProviderImpl.BOUNDS_OVAL);
+        ScaleStateListAnimator.apply(button);
+        return button;
+    }
+
+    private void setExpanded(boolean open) {
+        expanded.setVisibility(open && mode == MODE_NAVIGATION ? View.VISIBLE : View.GONE);
+        if (destination != null) {
+            destinationText.setText(LocaleController.formatString(R.string.PhogramNavTo, destination.name));
+        }
+        styleStopTiles();
+    }
+
+    /** Places of the kind along the route ahead as pins on the road; the same tile again takes them off. */
+    private void showAlong(int kind) {
+        final MapEngine engine = host.engine();
+        if (engine == null) return;
+        alongKind = kind;
+        styleStopTiles();
+        engine.showAlongRoute(kind, places -> {
+            if (alongKind != kind || kind == MapEngine.KIND_OTHER) return;
+            setExpanded(false);
+            if (places.isEmpty()) {
+                BulletinFactory.of(host.fragment()).createSimpleBulletin(R.raw.chats_infotip, getString(R.string.PhogramNavNoneAlong)).show();
+            } else {
+                BulletinFactory.of(host.fragment()).createSimpleBulletin(R.raw.contact_check,
+                        LocaleController.formatString(R.string.PhogramNavFoundAlong, places.size())).show();
+            }
+        });
+    }
+
+    /** A pin tapped on the road: Telegram's dialog offers it as a stop on the way. */
+    void offerStop(MapEngine.Place place) {
+        if (mode != MODE_NAVIGATION) return;
+        final Activity activity = host.fragment().getParentActivity();
+        if (activity == null) return;
+        final AlertDialog.Builder builder = new AlertDialog.Builder(activity);
+        builder.setTitle(place.name);
+        builder.setMessage(getString(R.string.PhogramNavAddStopText));
+        builder.setPositiveButton(getString(R.string.PhogramNavAddStopButton), (dialog, which) -> {
+            final MapEngine engine = host.engine();
+            if (engine == null) return;
+            engine.addStop(place);
+            alongKind = MapEngine.KIND_OTHER;
+            styleStopTiles();
+            BulletinFactory.of(host.fragment()).createSimpleBulletin(R.raw.contact_check,
+                    LocaleController.formatString(R.string.PhogramNavStopAdded, place.name)).show();
+        });
+        builder.setNegativeButton(getString(R.string.Cancel), null);
+        host.fragment().showDialog(builder.create());
+    }
+
+    private void shareTrip() {
+        if (destination == null) return;
+        final String text = LocaleController.formatString(R.string.PhogramNavShareMessage, destination.name, lastArrival);
+        host.shareTrip(text);
+    }
+
+    private String lastArrival = "";
+    private boolean tellingWarning;
+
+    private static String warningName(int type) {
+        switch (type) {
+            case MapEngine.Warning.TRAFFIC_LIGHTS: return getString(R.string.PhogramNavWarnLights);
+            case MapEngine.Warning.LEVEL_CROSSING: return getString(R.string.PhogramNavWarnRailway);
+            case MapEngine.Warning.SPEED_CAMERA: return getString(R.string.PhogramNavWarnCamera);
+            case MapEngine.Warning.STOP: return getString(R.string.PhogramNavWarnStop);
+            case MapEngine.Warning.PEDESTRIANS: return getString(R.string.PhogramNavWarnPedestrians);
+            default: return getString(R.string.PhogramNavWarnBump);
+        }
+    }
+
+    /** The driving extras on each new position: speed and limit, road, warning ahead, and a stop reached. */
+    private void updateDriving(MapEngine.NavigationState state) {
+        speedView.set(state.speed, state.speedLimit);
+        limitView.setLimit(Math.round(state.speedLimit));
+        if (state.street.isEmpty()) {
+            streetPill.setVisibility(View.GONE);
+        } else {
+            streetPill.setText(state.street);
+            streetPill.setVisibility(View.VISIBLE);
+        }
+        if (state.warning != null) {
+            warningChip.setText(MapKinds.warningEmoji(state.warning.type) + "  " + warningName(state.warning.type)
+                    + " · " + MapsFormat.distance(state.toWarning));
+            warningChip.setVisibility(View.VISIBLE);
+        } else {
+            warningChip.setVisibility(View.GONE);
+        }
+        if (state.passedStop != null) {
+            BulletinFactory.of(host.fragment()).createSimpleBulletin(R.raw.contact_check,
+                    LocaleController.formatString(R.string.PhogramNavStopReached, state.passedStop.name)).show();
+        }
+        lastArrival = MapsFormat.arrival(state.remainingSeconds);
+    }
+
+    private void styleStopTiles() {
+        if (stopTiles == null) return;
+        for (int i = 0; i < stopTiles.getChildCount(); i++) {
+            final LinearLayout tile = (LinearLayout) stopTiles.getChildAt(i);
+            final boolean on = STOP_KINDS[i] == alongKind;
+            final int accent = Theme.getColor(Theme.key_featuredStickers_addButton);
+            final GradientDrawable background = new GradientDrawable();
+            background.setCornerRadius(dp(14));
+            background.setColor(on ? (accent & 0x00ffffff) | 0x26000000 : Theme.getColor(Theme.key_windowBackgroundGray));
+            if (on) background.setStroke(dp(1.5f), accent);
+            tile.setBackground(background);
+            ((TextView) tile.getChildAt(1)).setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText));
+        }
+    }
+
+    private void styleNavigationExtras() {
+        final int white = Theme.getColor(Theme.key_windowBackgroundWhite);
+        final int accent = Theme.getColor(Theme.key_featuredStickers_addButton);
+        speedView.invalidate();
+        final GradientDrawable pill = new GradientDrawable();
+        pill.setCornerRadius(dp(12));
+        pill.setColor(0xFF2B6CB8);
+        streetPill.setBackground(pill);
+        streetPill.setTextColor(0xFFFFFFFF);
+        final GradientDrawable chip = new GradientDrawable();
+        chip.setCornerRadius(dp(16));
+        chip.setColor(white);
+        chip.setStroke(dp(1.5f), 0xFFE53935);
+        warningChip.setBackground(chip);
+        warningChip.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText));
+        for (ImageView button : new ImageView[] { overviewButton, recenterButton }) {
+            button.setBackground(Theme.createSimpleSelectorCircleDrawable(dp(44), Theme.getColor(Theme.key_location_actionBackground), Theme.getColor(Theme.key_location_actionPressedBackground)));
+            button.setColorFilter(new PorterDuffColorFilter(Theme.getColor(Theme.key_location_actionActiveIcon), PorterDuff.Mode.MULTIPLY));
+        }
+        final GradientDrawable handle = new GradientDrawable();
+        handle.setCornerRadius(dp(2));
+        handle.setColor(Theme.getColor(Theme.key_sheet_scrollUp));
+        panelHandle.setBackground(handle);
+        destinationText.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText));
+        for (int i = 0; i < expanded.getChildCount(); i++) {
+            final View child = expanded.getChildAt(i);
+            if ("gray".equals(child.getTag())) ((TextView) child).setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText));
+        }
+        final GradientDrawable share = new GradientDrawable();
+        share.setCornerRadius(dp(14));
+        share.setColor(Theme.getColor(Theme.key_windowBackgroundGray));
+        shareRow.setBackground(share);
+        shareIcon.setColorFilter(new PorterDuffColorFilter(accent, PorterDuff.Mode.SRC_IN));
+        shareTitle.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText));
+        shareText.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText));
+        continueButton.setTextColor(Theme.getColor(Theme.key_featuredStickers_buttonText));
+        continueButton.setBackground(Theme.createSimpleSelectorRoundRectDrawable(dp(10), accent, Theme.getColor(Theme.key_featuredStickers_addButtonPressed)));
+        styleStopTiles();
     }
 
     private static LinearLayout endRow(Context context, View dot, TextView text) {
@@ -509,6 +816,9 @@ final class MapsRouteUi {
         bannerDistance.setText("");
         bannerStreet.setText(getString(R.string.PhogramNavStarting));
         setKeepScreenOn(true);
+        engine.setTrackingListener(() -> {
+            if (mode == MODE_NAVIGATION) recenterButton.setVisibility(View.VISIBLE);
+        });
         engine.startNavigation(routes.get(chosen), this::onNavigation);
     }
 
@@ -541,6 +851,7 @@ final class MapsRouteUi {
         panelTime.setText(MapsFormat.duration(state.remainingSeconds));
         panelDistance.setText(MapsFormat.distance(state.remainingMeters));
         panelProgress.setProgress(state.progress, true);
+        updateDriving(state);
     }
 
     /**
@@ -612,6 +923,15 @@ final class MapsRouteUi {
         banner.setVisibility(mode == MODE_NAVIGATION ? View.VISIBLE : View.GONE);
         panel.setVisibility(mode == MODE_NAVIGATION ? View.VISIBLE : View.GONE);
         if (mode != MODE_NAVIGATION) bannerThen.setVisibility(View.GONE);
+        final boolean driving = mode == MODE_NAVIGATION;
+        speedGroup.setVisibility(driving ? View.VISIBLE : View.GONE);
+        overviewButton.setVisibility(driving ? View.VISIBLE : View.GONE);
+        if (!driving) {
+            recenterButton.setVisibility(View.GONE);
+            warningChip.setVisibility(View.GONE);
+            alongKind = MapEngine.KIND_OTHER;
+            setExpanded(false);
+        }
         layout();
         host.onModeChanged();
     }
@@ -624,6 +944,13 @@ final class MapsRouteUi {
         ((FrameLayout.LayoutParams) bannerThen.getLayoutParams()).topMargin = padding[1] + dp(8) + Math.max(banner.getHeight(), dp(100)) - dp(4);
         sheet.setPadding(dp(16), dp(14), dp(16), dp(12) + padding[3]);
         panel.setPadding(0, 0, 0, padding[3]);
+        // The driving extras sit above the panel, and the warning under the strip.
+        final int above = (panel.getHeight() > 0 ? panel.getHeight() : dp(110)) + dp(12);
+        ((FrameLayout.LayoutParams) speedGroup.getLayoutParams()).bottomMargin = above;
+        ((FrameLayout.LayoutParams) overviewButton.getLayoutParams()).bottomMargin = above;
+        ((FrameLayout.LayoutParams) recenterButton.getLayoutParams()).bottomMargin = above + dp(56);
+        ((FrameLayout.LayoutParams) warningChip.getLayoutParams()).topMargin = padding[1] + dp(8) + Math.max(banner.getHeight(), dp(100)) + dp(8);
+        speedGroup.requestLayout();
         topCard.requestLayout();
         banner.requestLayout();
     }
@@ -686,6 +1013,7 @@ final class MapsRouteUi {
         endButton.setBackground(Theme.createSimpleSelectorRoundRectDrawable(dp(10), (red & 0x00ffffff) | 0x1F000000, (red & 0x00ffffff) | 0x33000000));
         panelProgress.setProgressColor(accent);
         panelProgress.setBackColor(Theme.getColor(Theme.key_divider));
+        if (speedView != null) styleNavigationExtras();
         styleAlternatives();
     }
 

@@ -76,6 +76,198 @@ final class MapKinds {
         }
     }
 
+    // Images the map draws on the road, made once per style from Telegram's emoji and colors.
+
+    static String warningEmoji(int type) {
+        switch (type) {
+            case MapEngine.Warning.TRAFFIC_LIGHTS: return "🚦";
+            case MapEngine.Warning.LEVEL_CROSSING: return "🚆";
+            case MapEngine.Warning.SPEED_CAMERA: return "📷";
+            case MapEngine.Warning.STOP: return "🛑";
+            case MapEngine.Warning.PEDESTRIANS: return "🚸";
+            default: return "⚠️";
+        }
+    }
+
+    /** Telegram's emoji when its picture is loaded, else the system's, centered in the box. */
+    private static void drawEmoji(android.graphics.Canvas canvas, String code, float cx, float cy, float size) {
+        final Drawable drawable = Emoji.getEmojiDrawable(code);
+        if (drawable instanceof Emoji.EmojiDrawable && ((Emoji.EmojiDrawable) drawable).isLoaded()) {
+            final int half = (int) (size / 2);
+            drawable.setBounds((int) cx - half, (int) cy - half, (int) cx + half, (int) cy + half);
+            drawable.draw(canvas);
+            return;
+        }
+        final Paint text = new Paint(Paint.ANTI_ALIAS_FLAG);
+        text.setTextSize(size * 0.85f);
+        text.setTextAlign(Paint.Align.CENTER);
+        final Paint.FontMetrics metrics = text.getFontMetrics();
+        canvas.drawText(code, cx, cy - (metrics.ascent + metrics.descent) / 2, text);
+    }
+
+    /** A place on the way: its emoji on a circle in its kind's color with a white ring and a point down, as a pin. */
+    static android.graphics.Bitmap pinImage(int kind) {
+        final int size = dp(40);
+        final int height = size + dp(8);
+        final android.graphics.Bitmap bitmap = android.graphics.Bitmap.createBitmap(size, height, android.graphics.Bitmap.Config.ARGB_8888);
+        final android.graphics.Canvas canvas = new android.graphics.Canvas(bitmap);
+        final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        final float r = size / 2f;
+        paint.setColor(0x33000000);
+        canvas.drawCircle(r, r + dp(1), r - dp(1), paint);
+        final android.graphics.Path point = new android.graphics.Path();
+        point.moveTo(r - dp(7), size - dp(6));
+        point.lineTo(r, height);
+        point.lineTo(r + dp(7), size - dp(6));
+        point.close();
+        paint.setColor(0xFFFFFFFF);
+        canvas.drawPath(point, paint);
+        canvas.drawCircle(r, r, r - dp(2), paint);
+        paint.setColor(color(kind));
+        canvas.drawCircle(r, r, r - dp(4.5f), paint);
+        drawEmoji(canvas, emoji(kind), r, r, dp(20));
+        return bitmap;
+    }
+
+    /** A warning on the road: its emoji on a white circle with a red ring, as a road sign. */
+    static android.graphics.Bitmap warningImage(int type) {
+        final int size = dp(30);
+        final android.graphics.Bitmap bitmap = android.graphics.Bitmap.createBitmap(size, size, android.graphics.Bitmap.Config.ARGB_8888);
+        final android.graphics.Canvas canvas = new android.graphics.Canvas(bitmap);
+        final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        final float r = size / 2f;
+        paint.setColor(0xFFE53935);
+        canvas.drawCircle(r, r, r - dp(1), paint);
+        paint.setColor(0xFFFFFFFF);
+        canvas.drawCircle(r, r, r - dp(3.5f), paint);
+        drawEmoji(canvas, warningEmoji(type), r, r, dp(16));
+        return bitmap;
+    }
+
+    /**
+     * The plate behind road names on the route: a rounded rectangle in Telegram's blue, stretched around the name by
+     * the map (its middle stretches, its corners keep their shape).
+     */
+    static android.graphics.Bitmap namePlate() {
+        final int size = dp(28);
+        final android.graphics.Bitmap bitmap = android.graphics.Bitmap.createBitmap(size, size, android.graphics.Bitmap.Config.ARGB_8888);
+        final android.graphics.Canvas canvas = new android.graphics.Canvas(bitmap);
+        final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        paint.setColor(0xFF2B6CB8);
+        canvas.drawRoundRect(new android.graphics.RectF(0, 0, size, size), dp(9), dp(9), paint);
+        return bitmap;
+    }
+
+    /** The head of the turn arrow drawn on the road, pointing up before the map turns it. */
+    static android.graphics.Bitmap arrowHead() {
+        final int size = dp(24);
+        final android.graphics.Bitmap bitmap = android.graphics.Bitmap.createBitmap(size, size, android.graphics.Bitmap.Config.ARGB_8888);
+        final android.graphics.Canvas canvas = new android.graphics.Canvas(bitmap);
+        final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        final android.graphics.Path head = new android.graphics.Path();
+        head.moveTo(size / 2f, dp(1));
+        head.lineTo(size - dp(2), size - dp(3));
+        head.lineTo(dp(2), size - dp(3));
+        head.close();
+        paint.setColor(0xFF1F4E8C);
+        paint.setStyle(Paint.Style.STROKE);
+        paint.setStrokeWidth(dp(2));
+        paint.setStrokeJoin(Paint.Join.ROUND);
+        canvas.drawPath(head, paint);
+        paint.setStyle(Paint.Style.FILL);
+        paint.setColor(0xFFFFFFFF);
+        canvas.drawPath(head, paint);
+        return bitmap;
+    }
+
+    /**
+     * The driver's speed in a ring like Telegram's round progress: the ring fills toward the limit (or 120 km/h), and
+     * turns red over the limit; the limit, when the map knows it, sits beside it as a red-ringed sign.
+     */
+    static final class SpeedView extends View {
+
+        private final Paint ring = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint text = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint unit = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final android.graphics.RectF arc = new android.graphics.RectF();
+        private float speed;
+        private float limit;
+
+        SpeedView(Context context) {
+            super(context);
+            ring.setStyle(Paint.Style.STROKE);
+            ring.setStrokeCap(Paint.Cap.ROUND);
+            text.setTextAlign(Paint.Align.CENTER);
+            text.setTypeface(AndroidUtilities.bold());
+            unit.setTextAlign(Paint.Align.CENTER);
+        }
+
+        void set(float speed, float limit) {
+            this.speed = Math.max(0, speed);
+            this.limit = limit;
+            invalidate();
+        }
+
+        @Override
+        protected void onDraw(android.graphics.Canvas canvas) {
+            final float size = Math.min(getWidth(), getHeight());
+            final float r = size / 2f;
+            final boolean over = limit > 0 && speed > limit + 2;
+            fill.setColor(Theme.getColor(Theme.key_windowBackgroundWhite));
+            canvas.drawCircle(r, r, r - dp(1), fill);
+            final float stroke = dp(4);
+            ring.setStrokeWidth(stroke);
+            arc.set(stroke, stroke, size - stroke, size - stroke);
+            ring.setColor(Theme.getColor(Theme.key_divider));
+            canvas.drawArc(arc, 135, 270, false, ring);
+            final float top = limit > 0 ? limit : 120;
+            ring.setColor(over ? 0xFFE53935 : Theme.getColor(Theme.key_featuredStickers_addButton));
+            canvas.drawArc(arc, 135, 270 * Math.min(1, speed / top), false, ring);
+            text.setTextSize(size * 0.34f);
+            text.setColor(over ? 0xFFE53935 : Theme.getColor(Theme.key_windowBackgroundWhiteBlackText));
+            canvas.drawText(String.valueOf(Math.round(speed)), r, r + size * 0.1f, text);
+            unit.setTextSize(size * 0.15f);
+            unit.setColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText));
+            canvas.drawText(org.telegram.messenger.LocaleController.getString(org.telegram.messenger.R.string.PhogramNavKmh), r, r + size * 0.3f, unit);
+        }
+    }
+
+    /** A speed limit sign: the number on white in a red ring. */
+    static final class LimitView extends View {
+
+        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private int limit;
+
+        LimitView(Context context) {
+            super(context);
+            paint.setTextAlign(Paint.Align.CENTER);
+            paint.setTypeface(AndroidUtilities.bold());
+        }
+
+        void setLimit(int limit) {
+            if (this.limit == limit) return;
+            this.limit = limit;
+            setVisibility(limit > 0 ? VISIBLE : GONE);
+            invalidate();
+        }
+
+        @Override
+        protected void onDraw(android.graphics.Canvas canvas) {
+            final float size = Math.min(getWidth(), getHeight());
+            final float r = size / 2f;
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(0xFFE53935);
+            canvas.drawCircle(r, r, r, paint);
+            paint.setColor(0xFFFFFFFF);
+            canvas.drawCircle(r, r, r * 0.78f, paint);
+            paint.setColor(0xFF1A1A1A);
+            paint.setTextSize(size * (limit >= 100 ? 0.32f : 0.4f));
+            final Paint.FontMetrics metrics = paint.getFontMetrics();
+            canvas.drawText(String.valueOf(limit), r, r - (metrics.ascent + metrics.descent) / 2, paint);
+        }
+    }
+
     /** A kind's emoji on its soft colored circle; it redraws itself once Telegram's emoji are loaded. */
     static final class IconView extends View {
 

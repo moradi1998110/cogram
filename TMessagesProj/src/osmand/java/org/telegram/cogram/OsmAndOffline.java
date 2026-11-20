@@ -441,6 +441,13 @@ final class OsmAndOffline {
         final net.osmand.data.Amenity amenity = (net.osmand.data.Amenity) result.object;
         final String subtype = amenity.getSubType() == null ? "" : amenity.getSubType();
         final String category = amenity.getType() == null ? "" : amenity.getType().getKeyName();
+        return kindOfType(subtype, category);
+    }
+
+    /** The kind of a place from OsmAnd's type (its subtype, possibly several joined by ";") and category. */
+    static int kindOfType(String subtype, String category) {
+        if (subtype == null) subtype = "";
+        if (category == null) category = "";
         // Towns come as places too, with types such as "city;residential;wiki_place".
         for (String part : subtype.split(";")) {
             switch (part) {
@@ -533,6 +540,18 @@ final class OsmAndOffline {
      */
     void route(double fromLatitude, double fromLongitude, double toLatitude, double toLongitude, boolean withAlternatives,
                Utilities.Callback<List<MapEngine.Route>> callback) {
+        route(fromLatitude, fromLongitude, toLatitude, toLongitude, withAlternatives, null, callback);
+    }
+
+    /** The same, through the given stops in order; with stops there are no alternatives. */
+    void route(double fromLatitude, double fromLongitude, double toLatitude, double toLongitude, boolean withAlternatives,
+               List<MapEngine.Place> stops, Utilities.Callback<List<MapEngine.Route>> callback) {
+        final List<LatLon> via = new ArrayList<>();
+        if (stops != null) {
+            for (MapEngine.Place stop : stops) {
+                via.add(new LatLon(stop.latitude, stop.longitude));
+            }
+        }
         final int request = ++routeRequest;
         routeExecutor.execute(() -> {
             if (request != routeRequest) return;
@@ -540,7 +559,7 @@ final class OsmAndOffline {
             try {
                 final BinaryMapIndexReader file = reader();
                 if (file != null) {
-                    routes = calculate(file, new LatLon(fromLatitude, fromLongitude), new LatLon(toLatitude, toLongitude), withAlternatives);
+                    routes = calculate(file, new LatLon(fromLatitude, fromLongitude), new LatLon(toLatitude, toLongitude), withAlternatives && via.isEmpty(), via);
                 }
             } catch (Throwable e) {
                 FileLog.e(e);
@@ -557,10 +576,11 @@ final class OsmAndOffline {
     /** At most this many routes are offered: the best and two others. */
     private static final int MAX_ROUTES = 3;
 
-    private static List<MapEngine.Route> calculate(BinaryMapIndexReader file, LatLon start, LatLon end, boolean withAlternatives) throws Exception {
+    private static List<MapEngine.Route> calculate(BinaryMapIndexReader file, LatLon start, LatLon end, boolean withAlternatives,
+                                                  List<LatLon> via) throws Exception {
         final long started = android.os.SystemClock.elapsedRealtime();
         final List<MapEngine.Route> routes = new ArrayList<>();
-        final RouteResultPreparation.RouteCalcResult result = search(file, start, end, false, withAlternatives);
+        final RouteResultPreparation.RouteCalcResult result = search(file, start, end, false, withAlternatives, via);
         if (result == null || !result.isCorrect() || result.getList() == null || result.getList().isEmpty()) {
             android.util.Log.d("PhogramRoute", "no route after " + (android.os.SystemClock.elapsedRealtime() - started)
                     + " ms: " + (result != null ? result.getError() : "no result"));
@@ -584,7 +604,7 @@ final class OsmAndOffline {
             // then gives the driver a real choice, as the fastest and the shortest in common map apps.
             if (routes.size() < MAX_ROUTES) {
                 try {
-                    final RouteResultPreparation.RouteCalcResult shortest = search(file, start, end, true, false);
+                    final RouteResultPreparation.RouteCalcResult shortest = search(file, start, end, true, false, null);
                     if (shortest != null && shortest.isCorrect() && shortest.getList() != null && !shortest.getList().isEmpty()) {
                         final MapEngine.Route route = toRoute(shortest.getList());
                         route.label = MapEngine.Route.LABEL_SHORTEST;
@@ -605,7 +625,7 @@ final class OsmAndOffline {
 
     /** One run of OsmAnd's car router, over its highway hierarchy; the shortest way by distance on request. */
     private static RouteResultPreparation.RouteCalcResult search(BinaryMapIndexReader file, LatLon start, LatLon end,
-                                                                 boolean shortest, boolean alternatives) throws Exception {
+                                                                 boolean shortest, boolean alternatives, List<LatLon> via) throws Exception {
         synchronized (OsmAndOffline.class) {
             if (routingRules == null) {
                 routingRules = RoutingConfiguration.getDefault();
@@ -631,7 +651,7 @@ final class OsmAndOffline {
         planner.setHHRoutingConfig(hh);
         final RoutingContext context = planner.buildRoutingContext(config, null, new BinaryMapIndexReader[] { file },
                 RoutePlannerFrontEnd.RouteCalculationMode.NORMAL);
-        return planner.searchRoute(context, start, end, null);
+        return planner.searchRoute(context, start, end, via == null || via.isEmpty() ? null : via);
     }
 
     /** Adds the route unless it is the same way as one already there: about as long, and through the same middle. */
@@ -664,6 +684,10 @@ final class OsmAndOffline {
         final List<Integer> segmentStarts = new ArrayList<>();
         float meters = 0;
         float seconds = 0;
+        final List<String> names = new ArrayList<>();
+        final List<Float> limits = new ArrayList<>();
+        // Warnings found on the points: their kind and their index in the route's points.
+        final List<int[]> found = new ArrayList<>();
         final Map<String, Float> roadLengths = new HashMap<>();
         for (RouteSegmentResult segment : segments) {
             meters += segment.getDistance();
@@ -678,9 +702,15 @@ final class OsmAndOffline {
                 if (i != from || points.isEmpty()) {
                     points.add(new double[] { point.getLatitude(), point.getLongitude() });
                 }
+                final int warning = warningAt(segment.getObject(), i);
+                if (warning >= 0) {
+                    found.add(new int[] { warning, points.size() - 1 });
+                }
                 if (i == to) break;
             }
             final String road = roadName(segment, language);
+            names.add(road);
+            limits.add(speedLimit(segment));
             if (!road.isEmpty()) {
                 final Float length = roadLengths.get(road);
                 roadLengths.put(road, (length == null ? 0f : length) + segment.getDistance());
@@ -710,7 +740,161 @@ final class OsmAndOffline {
                 via = road.getKey();
             }
         }
-        return new MapEngine.Route(points, meters, seconds, maneuvers, via);
+        final MapEngine.Route route = new MapEngine.Route(points, meters, seconds, maneuvers, via);
+        route.roadStarts = new int[segmentStarts.size()];
+        route.roadNames = new String[segmentStarts.size()];
+        route.speedLimits = new float[segmentStarts.size()];
+        for (int s = 0; s < segmentStarts.size(); s++) {
+            route.roadStarts[s] = segmentStarts.get(s);
+            route.roadNames[s] = names.get(s);
+            route.speedLimits[s] = limits.get(s);
+        }
+        // One warning of a kind per 40 m: a junction often has its lights on several points.
+        for (int[] warning : found) {
+            final int at = Math.min(warning[1], points.size() - 1);
+            boolean near = false;
+            for (MapEngine.Warning other : route.warnings) {
+                if (other.type == warning[0] && Math.abs(other.distance - along[at]) < 40) {
+                    near = true;
+                    break;
+                }
+            }
+            if (!near) {
+                route.warnings.add(new MapEngine.Warning(warning[0], at, along[at], points.get(at)[0], points.get(at)[1]));
+            }
+        }
+        return route;
+    }
+
+    /** The road's speed limit in km/h from its maxspeed tag in the driving direction; 0 when the map does not say. */
+    private static float speedLimit(RouteSegmentResult segment) {
+        try {
+            final float metersPerSecond = segment.getObject().getMaximumSpeed(segment.isForwardDirection());
+            // OsmAnd's "none" (no limit) and the absence of a limit both mean no sign.
+            if (metersPerSecond <= 0 || metersPerSecond >= RouteDataObject.NONE_MAX_SPEED) return 0;
+            return Math.round(metersPerSecond * 3.6f);
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
+    /** A warning on the road's point, from OpenStreetMap's tags there; -1 when there is none to tell of. */
+    private static int warningAt(RouteDataObject road, int point) {
+        try {
+            final int[] types = road.getPointTypes(point);
+            if (types == null) return -1;
+            for (int type : types) {
+                final net.osmand.binary.BinaryMapRouteReaderAdapter.RouteTypeRule rule = road.region.quickGetEncodingRule(type);
+                if (rule == null) continue;
+                final String tag = rule.getTag();
+                final String value = rule.getValue();
+                if ("highway".equals(tag)) {
+                    if ("traffic_signals".equals(value)) return MapEngine.Warning.TRAFFIC_LIGHTS;
+                    if ("speed_camera".equals(value)) return MapEngine.Warning.SPEED_CAMERA;
+                    if ("stop".equals(value)) return MapEngine.Warning.STOP;
+                } else if ("railway".equals(tag) && ("level_crossing".equals(value) || "crossing".equals(value))) {
+                    return MapEngine.Warning.LEVEL_CROSSING;
+                } else if ("traffic_calming".equals(tag)) {
+                    return MapEngine.Warning.BUMP;
+                }
+            }
+        } catch (Exception e) {
+            // A point with rules this reader does not know is left without a warning.
+        }
+        return -1;
+    }
+
+    // Places along the route: OsmAnd's search of its place index around the route's line, for one kind of place.
+
+    /** How far from the road a place may be to count as on the way, in meters. */
+    private static final double ALONG_RADIUS = 400;
+    private static final int MAX_ALONG = 40;
+    private final ExecutorService alongExecutor = Executors.newSingleThreadExecutor();
+    private volatile int alongRequest;
+
+    /** The places of this kind near the route ahead of the given point index, nearest along the route first. */
+    void alongRoute(MapEngine.Route route, int fromIndex, int kind, Utilities.Callback<List<MapEngine.AlongPlace>> callback) {
+        final int request = ++alongRequest;
+        alongExecutor.execute(() -> {
+            final List<MapEngine.AlongPlace> places = new ArrayList<>();
+            try {
+                final BinaryMapIndexReader file = reader();
+                if (file != null && request == alongRequest) {
+                    // The route ahead, a point every 200 m or so, which is what OsmAnd's search around a line needs.
+                    final List<net.osmand.Location> line = new ArrayList<>();
+                    final List<Integer> lineIndex = new ArrayList<>();
+                    float last = -1;
+                    for (int i = Math.max(0, fromIndex); i < route.points.size(); i++) {
+                        if (last >= 0 && route.along[i] - last < 200 && i != route.points.size() - 1) continue;
+                        last = route.along[i];
+                        line.add(new net.osmand.Location("route", route.points.get(i)[0], route.points.get(i)[1]));
+                        lineIndex.add(i);
+                    }
+                    if (line.size() >= 2) {
+                        final BinaryMapIndexReader.SearchPoiTypeFilter filter = new BinaryMapIndexReader.SearchPoiTypeFilter() {
+                            @Override
+                            public boolean accept(net.osmand.osm.PoiCategory type, String subcategory) {
+                                return kindOfType(subcategory, type == null ? "" : type.getKeyName()) == kind;
+                            }
+
+                            @Override
+                            public boolean isEmpty() {
+                                return false;
+                            }
+                        };
+                        final List<net.osmand.data.Amenity> found = new ArrayList<>();
+                        final net.osmand.ResultMatcher<net.osmand.data.Amenity> matcher = new net.osmand.ResultMatcher<net.osmand.data.Amenity>() {
+                            @Override
+                            public boolean publish(net.osmand.data.Amenity amenity) {
+                                found.add(amenity);
+                                return true;
+                            }
+
+                            @Override
+                            public boolean isCancelled() {
+                                return request != alongRequest || found.size() > 600;
+                            }
+                        };
+                        file.searchPoi(BinaryMapIndexReader.buildSearchPoiRequest(line, ALONG_RADIUS, filter, matcher));
+                        final String language = language();
+                        final float start = route.along[Math.max(0, Math.min(fromIndex, route.along.length - 1))];
+                        for (net.osmand.data.Amenity amenity : found) {
+                            final LatLon at = amenity.getLocation();
+                            if (at == null) continue;
+                            // The nearest point of the line gives how far along the route the place is.
+                            double best = Double.MAX_VALUE;
+                            int bestIndex = -1;
+                            for (int i = 0; i < line.size(); i++) {
+                                final double d = MapEngine.distance(at.getLatitude(), at.getLongitude(), line.get(i).getLatitude(), line.get(i).getLongitude());
+                                if (d < best) {
+                                    best = d;
+                                    bestIndex = lineIndex.get(i);
+                                }
+                            }
+                            if (bestIndex < 0 || best > ALONG_RADIUS + 200) continue;
+                            String name = amenity.getName(language);
+                            if (TextUtils.isEmpty(name)) name = amenity.getName();
+                            final String type = amenity.getSubType() != null
+                                    ? MapPoiTypes.getDefault().getPoiTranslation(amenity.getSubType().split(";")[0]) : "";
+                            if (TextUtils.isEmpty(name)) name = type;
+                            places.add(new MapEngine.AlongPlace(new MapEngine.Place(name, "", at.getLatitude(), at.getLongitude(), kind, type),
+                                    Math.max(0, route.along[bestIndex] - start)));
+                        }
+                        java.util.Collections.sort(places, (a, b) -> Float.compare(a.ahead, b.ahead));
+                        while (places.size() > MAX_ALONG) {
+                            places.remove(places.size() - 1);
+                        }
+                    }
+                }
+            } catch (Throwable e) {
+                FileLog.e(e);
+            }
+            AndroidUtilities.runOnUIThread(() -> {
+                if (!destroyed && request == alongRequest) {
+                    callback.run(places);
+                }
+            });
+        });
     }
 
     /** The road's name in the app's language, or its number (such as "1"), or empty. */

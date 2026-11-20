@@ -512,6 +512,11 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
             public void onTripEnded() {
                 hidePlace();
             }
+
+            @Override
+            public void shareTrip(String text) {
+                shareTripText(text);
+            }
         });
 
         final boolean engineAvailable = MapEngines.isAvailable();
@@ -1056,6 +1061,11 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
             public void onRouteTapped(int index) {
                 if (routeUi != null) routeUi.selectRoute(index);
             }
+
+            @Override
+            public void onAlongTapped(MapEngine.Place place) {
+                if (routeUi != null) routeUi.offerStop(place);
+            }
         });
     }
 
@@ -1200,6 +1210,24 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         } catch (Exception e) {
             FileLog.e(e);
         }
+    }
+
+    /** Telegram's chat picker, then the trip's message (where to, the arrival) goes to each picked chat. */
+    private void shareTripText(String text) {
+        final Bundle args = new Bundle();
+        args.putBoolean("onlySelect", true);
+        args.putInt("dialogsType", DialogsActivity.DIALOGS_TYPE_FORWARD);
+        final DialogsActivity picker = new DialogsActivity(args);
+        picker.setDelegate((fragment, dids, message, param, notify, scheduleDate, scheduleRepeatPeriod, topicsFragment) -> {
+            for (MessagesStorage.TopicKey key : dids) {
+                SendMessagesHelper.getInstance(currentAccount).sendMessage(SendMessagesHelper.SendMessageParams.of(text, key.dialogId,
+                        null, null, null, false, null, null, null, notify, scheduleDate, 0, null, false));
+            }
+            fragment.finishFragment();
+            BulletinFactory.of(this).createSimpleBulletin(R.raw.forward, getString(R.string.PhogramNavTripShared)).show();
+            return true;
+        });
+        presentFragment(picker);
     }
 
     /** Telegram's chat picker, then the place goes to each picked chat as a venue, as Telegram sends one. */

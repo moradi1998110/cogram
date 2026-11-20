@@ -180,6 +180,15 @@ public interface MapEngine {
         public static final int LABEL_ALTERNATIVE = 1;
         public static final int LABEL_SHORTEST = 2;
 
+        /** Where each of the route's roads starts (an index in the points), its name and its speed limit in km/h (0 unknown). */
+        public int[] roadStarts = new int[0];
+        public String[] roadNames = new String[0];
+        public float[] speedLimits = new float[0];
+        /** The warnings on the way: traffic lights, level crossings, speed cameras, bumps, stops. */
+        public java.util.List<Warning> warnings = new java.util.ArrayList<>();
+        /** Places to stop at on the way, in order; the route passes them before the destination. */
+        public java.util.List<Place> stops = new java.util.ArrayList<>();
+
         public Route(java.util.List<double[]> points, float meters, float seconds, java.util.List<Maneuver> maneuvers, String via) {
             this.points = points;
             this.meters = meters;
@@ -248,6 +257,15 @@ public interface MapEngine {
         /** A new route is being found after the driver left this one. */
         public boolean rerouting;
         public Route route;
+        /** The road the driver is on, its speed limit in km/h (0 unknown), and the driver's speed. */
+        public String street = "";
+        public float speedLimit;
+        public float speed;
+        /** The next warning ahead within a short distance, and how far it is. */
+        public Warning warning;
+        public float toWarning;
+        /** The stop just passed, if any, so the page can say so. */
+        public Place passedStop;
     }
 
     interface NavigationListener {
@@ -260,6 +278,67 @@ public interface MapEngine {
     }
 
     default void stopNavigation() {
+    }
+
+    /** Something on the road the driver is warned of, from OpenStreetMap's tags on the route's points. */
+    final class Warning {
+        public static final int TRAFFIC_LIGHTS = 0;
+        public static final int LEVEL_CROSSING = 1;
+        public static final int SPEED_CAMERA = 2;
+        public static final int BUMP = 3;
+        public static final int STOP = 4;
+        public static final int PEDESTRIANS = 5;
+
+        public final int type;
+        public final int pointIndex;
+        public final float distance;
+        public final double latitude;
+        public final double longitude;
+
+        public Warning(int type, int pointIndex, float distance, double latitude, double longitude) {
+            this.type = type;
+            this.pointIndex = pointIndex;
+            this.distance = distance;
+            this.latitude = latitude;
+            this.longitude = longitude;
+        }
+    }
+
+    /** A place near the route: how far ahead along the route it is, in meters. */
+    final class AlongPlace {
+        public final Place place;
+        public final float ahead;
+
+        public AlongPlace(Place place, float ahead) {
+            this.place = place;
+            this.ahead = ahead;
+        }
+    }
+
+    interface AlongCallback {
+        /** On the main thread: the places near the route ahead of the driver, nearest first. */
+        void onPlaces(java.util.List<AlongPlace> places);
+    }
+
+    /** Shows places of this kind near the route ahead on the map, as bubbles on the road; KIND_OTHER clears them. */
+    default void showAlongRoute(int kind, AlongCallback callback) {
+        callback.onPlaces(java.util.Collections.emptyList());
+    }
+
+    /** Adds a stop on the way, finding the route again through it. */
+    default void addStop(Place stop) {
+    }
+
+    /** The whole route in view, the camera no longer following the driver. */
+    default void showOverview() {
+    }
+
+    /** Back to following the driver, zoomed in and tilted. */
+    default void recenter() {
+    }
+
+    /** Called when the camera stops following the driver (the user moved the map), so the page offers to re-center. */
+    default void setTrackingListener(Runnable onDismissed) {
     }
 
     /** The device's last known position (latitude, longitude), or null. */
@@ -276,6 +355,10 @@ public interface MapEngine {
 
         /** One of the drawn routes was tapped: its place among the routes shown. */
         default void onRouteTapped(int index) {
+        }
+
+        /** A place pin along the route was tapped, while navigating. */
+        default void onAlongTapped(Place place) {
         }
     }
 
