@@ -328,13 +328,19 @@ public interface MapEngine {
     }
 
     interface AlongCallback {
-        /** On the main thread: the places near the route ahead of the driver, nearest first. */
-        void onPlaces(java.util.List<AlongPlace> places);
+        /**
+         * On the main thread: the places near the route ahead of the driver found so far, nearest first. Called as the
+         * search goes along the route, the nearest first; finished on the last call.
+         */
+        void onPlaces(java.util.List<AlongPlace> places, boolean finished);
     }
 
-    /** Shows places of this kind near the route ahead on the map, as bubbles on the road; KIND_OTHER clears them. */
+    /**
+     * Shows places of this kind near the route ahead, to the destination, on the map as pins on the road (as many as
+     * fit at the map's zoom, the nearest first); KIND_OTHER clears them.
+     */
     default void showAlongRoute(int kind, AlongCallback callback) {
-        callback.onPlaces(java.util.Collections.emptyList());
+        callback.onPlaces(java.util.Collections.emptyList(), true);
     }
 
     /** Adds a stop on the way, finding the route again through it. */

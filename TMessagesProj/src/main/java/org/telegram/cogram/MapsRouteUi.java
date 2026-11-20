@@ -265,6 +265,11 @@ final class MapsRouteUi {
     private View panelHandle;
     private TextView destinationText;
     private LinearLayout stopTiles;
+    private TextView alongStatus;
+    private android.widget.ScrollView alongScroll;
+    private LinearLayout alongList;
+    /** The rows the list shows at most; the map shows all the places that fit. */
+    private static final int ALONG_ROWS = 50;
     private LinearLayout shareRow;
     private TextView shareTitle;
     private TextView shareText;
@@ -377,6 +382,19 @@ final class MapsRouteUi {
             stopTiles.addView(tile, LayoutHelper.createLinear(0, LayoutHelper.WRAP_CONTENT, 1f, i > 0 ? 4 : 0, 0, i < STOP_KINDS.length - 1 ? 4 : 0, 0));
         }
         expanded.addView(stopTiles, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT));
+        // The places of the chosen kind on the way to the destination, nearest first, filled in as the search goes
+        // along the route; a tap offers one as a stop.
+        alongStatus = text(context, 13, rtl);
+        alongStatus.setTag("gray");
+        alongStatus.setVisibility(View.GONE);
+        expanded.addView(alongStatus, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 2, 10, 2, 2));
+        alongScroll = new android.widget.ScrollView(context);
+        alongScroll.setVerticalScrollBarEnabled(false);
+        alongList = new LinearLayout(context);
+        alongList.setOrientation(LinearLayout.VERTICAL);
+        alongScroll.addView(alongList);
+        alongScroll.setVisibility(View.GONE);
+        expanded.addView(alongScroll, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 0));
         // Share the trip: Telegram's send arrow, and a message with the arrival into a chat.
         shareRow = new LinearLayout(context);
         shareRow.setOrientation(LinearLayout.HORIZONTAL);
@@ -479,16 +497,70 @@ final class MapsRouteUi {
         if (engine == null) return;
         alongKind = kind;
         styleStopTiles();
-        engine.showAlongRoute(kind, places -> {
+        bindAlong(new java.util.ArrayList<>(), kind == MapEngine.KIND_OTHER);
+        engine.showAlongRoute(kind, (places, finished) -> {
             if (alongKind != kind || kind == MapEngine.KIND_OTHER) return;
-            setExpanded(false);
-            if (places.isEmpty()) {
+            bindAlong(places, finished);
+            if (finished && places.isEmpty()) {
                 BulletinFactory.of(host.fragment()).createSimpleBulletin(R.raw.chats_infotip, getString(R.string.PhogramNavNoneAlong)).show();
-            } else {
-                BulletinFactory.of(host.fragment()).createSimpleBulletin(R.raw.contact_check,
-                        LocaleController.formatString(R.string.PhogramNavFoundAlong, places.size())).show();
             }
         });
+    }
+
+    /** The list of the places on the way: how many so far (or that the search still goes on), then the nearest. */
+    private void bindAlong(java.util.List<MapEngine.AlongPlace> places, boolean finished) {
+        if (alongList == null) return;
+        alongList.removeAllViews();
+        if (alongKind == MapEngine.KIND_OTHER) {
+            alongStatus.setVisibility(View.GONE);
+            alongScroll.setVisibility(View.GONE);
+            return;
+        }
+        alongStatus.setVisibility(View.VISIBLE);
+        alongStatus.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText));
+        final String count = places.isEmpty() ? "" : LocaleController.formatString(R.string.PhogramNavFoundAlong, places.size());
+        alongStatus.setText(finished ? (places.isEmpty() ? getString(R.string.PhogramNavNoneAlong) : count)
+                : places.isEmpty() ? getString(R.string.PhogramNavAlongSearching)
+                : LocaleController.formatString(R.string.PhogramNavAlongCount, places.size()) + " · " + getString(R.string.PhogramNavAlongSearching));
+        final Context context = alongList.getContext();
+        final boolean rtl = LocaleController.isRTL;
+        final int rows = Math.min(places.size(), ALONG_ROWS);
+        for (int i = 0; i < rows; i++) {
+            final MapEngine.AlongPlace along = places.get(i);
+            final LinearLayout row = new LinearLayout(context);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            row.setGravity(Gravity.CENTER_VERTICAL);
+            row.setPadding(dp(4), dp(7), dp(4), dp(7));
+            if (rtl) row.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+            final MapKinds.IconView icon = new MapKinds.IconView(context);
+            icon.setKind(along.place.kind);
+            final LinearLayout texts = new LinearLayout(context);
+            texts.setOrientation(LinearLayout.VERTICAL);
+            final TextView name = text(context, 15, rtl);
+            name.setSingleLine(true);
+            name.setEllipsize(TextUtils.TruncateAt.END);
+            name.setText(along.place.name);
+            name.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText));
+            final TextView details = text(context, 13, rtl);
+            details.setSingleLine(true);
+            details.setEllipsize(TextUtils.TruncateAt.END);
+            details.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText));
+            final String ahead = LocaleController.formatString(R.string.PhogramNavAhead, MapsFormat.distance(along.ahead));
+            details.setText(TextUtils.isEmpty(along.place.type) || along.place.type.equals(along.place.name)
+                    ? ahead : along.place.type + " · " + ahead);
+            texts.addView(name);
+            texts.addView(details);
+            row.addView(icon, LayoutHelper.createLinear(36, 36, 0, 0, 12, 0));
+            row.addView(texts, LayoutHelper.createLinear(0, LayoutHelper.WRAP_CONTENT, 1f));
+            row.setBackground(Theme.getSelectorDrawable(false));
+            row.setOnClickListener(v -> offerStop(along.place));
+            alongList.addView(row, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT));
+        }
+        alongScroll.setVisibility(rows > 0 ? View.VISIBLE : View.GONE);
+        // At most about four rows high; the rest scroll.
+        final android.view.ViewGroup.LayoutParams params = alongScroll.getLayoutParams();
+        params.height = rows == 0 ? 0 : Math.min(rows, 4) * dp(54);
+        alongScroll.setLayoutParams(params);
     }
 
     /** A pin tapped on the road: Telegram's dialog offers it as a stop on the way. */
@@ -504,6 +576,7 @@ final class MapsRouteUi {
             if (engine == null) return;
             engine.addStop(place);
             alongKind = MapEngine.KIND_OTHER;
+            bindAlong(new java.util.ArrayList<>(), true);
             styleStopTiles();
             BulletinFactory.of(host.fragment()).createSimpleBulletin(R.raw.contact_check,
                     LocaleController.formatString(R.string.PhogramNavStopAdded, place.name)).show();
@@ -1018,6 +1091,7 @@ final class MapsRouteUi {
             recenterButton.setVisibility(View.GONE);
             warningChip.setVisibility(View.GONE);
             alongKind = MapEngine.KIND_OTHER;
+            bindAlong(new java.util.ArrayList<>(), true);
             setExpanded(false);
         }
         layout();

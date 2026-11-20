@@ -906,103 +906,135 @@ final class OsmAndOffline {
 
     /** How far from the road a place may be to count as on the way, in meters. */
     private static final double ALONG_RADIUS = 400;
-    private static final int MAX_ALONG = 40;
-    /** How far ahead on the route the places are looked for, in meters. */
-    private static final float ALONG_AHEAD = 60_000;
+    /** The route is searched in stages of this length, nearest first, so the near places come at once. */
+    private static final float ALONG_STAGE = 30_000;
+    /** At most this many places over the whole route; the map shows as many as fit at its zoom. */
+    private static final int MAX_ALONG = 400;
     private final ExecutorService alongExecutor = Executors.newSingleThreadExecutor();
     private volatile int alongRequest;
 
-    /** The places of this kind near the route ahead of the given point index, nearest along the route first. */
-    void alongRoute(MapEngine.Route route, int fromIndex, int kind, Utilities.Callback<List<MapEngine.AlongPlace>> callback) {
+    /** What the places on the way report: all found so far, and whether the search is over. */
+    interface AlongProgress {
+        void onPlaces(List<MapEngine.AlongPlace> places, boolean finished);
+    }
+
+    /**
+     * The places of this kind near the route ahead of the given point index, over the whole route to the destination,
+     * nearest along the route first. The route is searched stage by stage from the driver on; after each stage the
+     * callback gets all the places found so far, and the last call says the search is over.
+     */
+    void alongRoute(MapEngine.Route route, int fromIndex, int kind, AlongProgress callback) {
         final int request = ++alongRequest;
         alongExecutor.execute(() -> {
             final long started = android.os.SystemClock.elapsedRealtime();
             final List<MapEngine.AlongPlace> places = new ArrayList<>();
+            final java.util.Set<String> seen = new java.util.HashSet<>();
+            final int first = Math.max(0, Math.min(fromIndex, route.points.size() - 1));
+            final float start = route.along[first];
+            int index = first;
             try {
                 final BinaryMapIndexReader file = reader(READ_ALONG);
-                if (file != null && request == alongRequest) {
-                    // The route ahead, a point every 200 m or so, which is what OsmAnd's search around a line needs.
+                while (file != null && request == alongRequest && index < route.points.size() - 1 && places.size() < MAX_ALONG) {
+                    // One stage of the road, a point every 200 m or so, which is what OsmAnd's search around a line needs.
+                    final float stageEnd = route.along[index] + ALONG_STAGE;
                     final List<net.osmand.Location> line = new ArrayList<>();
                     final List<Integer> lineIndex = new ArrayList<>();
-                    // Only the road ahead within ALONG_AHEAD: across the country the search of the whole route read the
-                    // places of every town on it and stopped at its limit before reaching the near ones.
                     float last = -1;
-                    final float from = route.along[Math.max(0, Math.min(fromIndex, route.along.length - 1))];
-                    for (int i = Math.max(0, fromIndex); i < route.points.size(); i++) {
-                        if (route.along[i] - from > ALONG_AHEAD) break;
-                        if (last >= 0 && route.along[i] - last < 200 && i != route.points.size() - 1) continue;
+                    int i = index;
+                    for (; i < route.points.size(); i++) {
+                        final boolean end = i == route.points.size() - 1 || route.along[i] >= stageEnd;
+                        if (!end && last >= 0 && route.along[i] - last < 200) continue;
                         last = route.along[i];
                         line.add(new net.osmand.Location("route", route.points.get(i)[0], route.points.get(i)[1]));
                         lineIndex.add(i);
+                        if (end) break;
                     }
+                    index = Math.min(i, route.points.size() - 1);
                     if (line.size() >= 2) {
-                        final BinaryMapIndexReader.SearchPoiTypeFilter filter = new BinaryMapIndexReader.SearchPoiTypeFilter() {
-                            @Override
-                            public boolean accept(net.osmand.osm.PoiCategory type, String subcategory) {
-                                return kindOfType(subcategory, type == null ? "" : type.getKeyName()) == kind;
-                            }
-
-                            @Override
-                            public boolean isEmpty() {
-                                return false;
-                            }
-                        };
-                        final List<net.osmand.data.Amenity> found = new ArrayList<>();
-                        final net.osmand.ResultMatcher<net.osmand.data.Amenity> matcher = new net.osmand.ResultMatcher<net.osmand.data.Amenity>() {
-                            @Override
-                            public boolean publish(net.osmand.data.Amenity amenity) {
-                                found.add(amenity);
-                                return true;
-                            }
-
-                            @Override
-                            public boolean isCancelled() {
-                                return request != alongRequest || found.size() > 600;
-                            }
-                        };
-                        file.searchPoi(BinaryMapIndexReader.buildSearchPoiRequest(line, ALONG_RADIUS, filter, matcher));
-                        final String language = language();
-                        final float start = route.along[Math.max(0, Math.min(fromIndex, route.along.length - 1))];
-                        for (net.osmand.data.Amenity amenity : found) {
-                            final LatLon at = amenity.getLocation();
-                            if (at == null) continue;
-                            // The nearest point of the line gives how far along the route the place is.
-                            double best = Double.MAX_VALUE;
-                            int bestIndex = -1;
-                            for (int i = 0; i < line.size(); i++) {
-                                final double d = MapEngine.distance(at.getLatitude(), at.getLongitude(), line.get(i).getLatitude(), line.get(i).getLongitude());
-                                if (d < best) {
-                                    best = d;
-                                    bestIndex = lineIndex.get(i);
-                                }
-                            }
-                            if (bestIndex < 0 || best > ALONG_RADIUS + 200) continue;
-                            String name = amenity.getName(language);
-                            if (TextUtils.isEmpty(name)) name = amenity.getName();
-                            final String type = amenity.getSubType() != null
-                                    ? MapPoiTypes.getDefault().getPoiTranslation(amenity.getSubType().split(";")[0]) : "";
-                            if (TextUtils.isEmpty(name)) name = type;
-                            places.add(new MapEngine.AlongPlace(new MapEngine.Place(name, "", at.getLatitude(), at.getLongitude(), kind, type),
-                                    Math.max(0, route.along[bestIndex] - start)));
-                        }
-                        java.util.Collections.sort(places, (a, b) -> Float.compare(a.ahead, b.ahead));
-                        while (places.size() > MAX_ALONG) {
-                            places.remove(places.size() - 1);
-                        }
+                        searchAlong(file, route, line, lineIndex, kind, start, request, seen, places);
                     }
+                    java.util.Collections.sort(places, (a, b) -> Float.compare(a.ahead, b.ahead));
+                    if (index >= route.points.size() - 1 || places.size() >= MAX_ALONG) break;
+                    publishAlong(request, places, false, callback);
                 }
             } catch (Throwable e) {
                 FileLog.e(e);
                 android.util.Log.d("PhogramAlong", "failed: " + e);
             }
+            while (places.size() > MAX_ALONG) {
+                places.remove(places.size() - 1);
+            }
             android.util.Log.d("PhogramAlong", "kind " + kind + ": " + places.size() + " places in "
-                    + (android.os.SystemClock.elapsedRealtime() - started) + " ms");
-            AndroidUtilities.runOnUIThread(() -> {
-                if (!destroyed && request == alongRequest) {
-                    callback.run(places);
-                }
-            });
+                    + (android.os.SystemClock.elapsedRealtime() - started) + " ms, over "
+                    + Math.round((route.along[index] - start) / 1000) + " km");
+            publishAlong(request, places, true, callback);
         });
+    }
+
+    private void publishAlong(int request, List<MapEngine.AlongPlace> places, boolean finished, AlongProgress callback) {
+        final List<MapEngine.AlongPlace> copy = new ArrayList<>(places);
+        AndroidUtilities.runOnUIThread(() -> {
+            if (!destroyed && request == alongRequest) {
+                callback.onPlaces(copy, finished);
+            }
+        });
+    }
+
+    /** The places of the kind around one stage of the road, added to the list once each. */
+    private void searchAlong(BinaryMapIndexReader file, MapEngine.Route route, List<net.osmand.Location> line,
+                             List<Integer> lineIndex, int kind, float start, int request, java.util.Set<String> seen,
+                             List<MapEngine.AlongPlace> places) throws java.io.IOException {
+        final BinaryMapIndexReader.SearchPoiTypeFilter filter = new BinaryMapIndexReader.SearchPoiTypeFilter() {
+            @Override
+            public boolean accept(net.osmand.osm.PoiCategory type, String subcategory) {
+                return kindOfType(subcategory, type == null ? "" : type.getKeyName()) == kind;
+            }
+
+            @Override
+            public boolean isEmpty() {
+                return false;
+            }
+        };
+        final List<net.osmand.data.Amenity> found = new ArrayList<>();
+        final net.osmand.ResultMatcher<net.osmand.data.Amenity> matcher = new net.osmand.ResultMatcher<net.osmand.data.Amenity>() {
+            @Override
+            public boolean publish(net.osmand.data.Amenity amenity) {
+                found.add(amenity);
+                return true;
+            }
+
+            @Override
+            public boolean isCancelled() {
+                return request != alongRequest || found.size() > 600;
+            }
+        };
+        file.searchPoi(BinaryMapIndexReader.buildSearchPoiRequest(line, ALONG_RADIUS, filter, matcher));
+        final String language = language();
+        for (net.osmand.data.Amenity amenity : found) {
+            final LatLon at = amenity.getLocation();
+            if (at == null) continue;
+            // A place near the end of one stage is found again by the next one.
+            final String key = Math.round(at.getLatitude() * 1e5) + "," + Math.round(at.getLongitude() * 1e5);
+            if (!seen.add(key)) continue;
+            // The nearest point of the line gives how far along the route the place is.
+            double best = Double.MAX_VALUE;
+            int bestIndex = -1;
+            for (int i = 0; i < line.size(); i++) {
+                final double d = MapEngine.distance(at.getLatitude(), at.getLongitude(), line.get(i).getLatitude(), line.get(i).getLongitude());
+                if (d < best) {
+                    best = d;
+                    bestIndex = lineIndex.get(i);
+                }
+            }
+            if (bestIndex < 0 || best > ALONG_RADIUS + 200) continue;
+            String name = amenity.getName(language);
+            if (TextUtils.isEmpty(name)) name = amenity.getName();
+            final String type = amenity.getSubType() != null
+                    ? MapPoiTypes.getDefault().getPoiTranslation(amenity.getSubType().split(";")[0]) : "";
+            if (TextUtils.isEmpty(name)) name = type;
+            places.add(new MapEngine.AlongPlace(new MapEngine.Place(name, "", at.getLatitude(), at.getLongitude(), kind, type),
+                    Math.max(0, route.along[bestIndex] - start)));
+        }
     }
 
     /** The road's name in the app's language, or its number (such as "1"), or empty. */

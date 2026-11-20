@@ -989,7 +989,11 @@ final class MapLibreMapEngine implements MapEngine {
         final SymbolLayer along = new SymbolLayer(ALONG_LAYER, ALONG_SOURCE).withProperties(
                 PropertyFactory.iconImage(Expression.get("icon")),
                 PropertyFactory.iconAnchor(Property.ICON_ANCHOR_BOTTOM),
+                // Pins never cover each other: zoomed out over the whole route, the nearest ones that fit stay, spread
+                // along the road, smaller; zooming in shows the others.
                 PropertyFactory.iconAllowOverlap(false),
+                PropertyFactory.iconSize(Expression.interpolate(Expression.linear(), Expression.zoom(),
+                        Expression.stop(8, 0.6f), Expression.stop(14, 1f))),
                 PropertyFactory.textField(Expression.get("label")),
                 PropertyFactory.textFont(new String[] { "Noto Sans Medium" }),
                 PropertyFactory.textSize(12f),
@@ -1170,18 +1174,19 @@ final class MapLibreMapEngine implements MapEngine {
         if (kind == KIND_OTHER || current == null || router == null) {
             alongPlaces.clear();
             drawAlong();
-            callback.onPlaces(new ArrayList<>());
+            callback.onPlaces(new ArrayList<>(), true);
             return;
         }
         final float base = current.route.along[Math.min(current.pointIndex(), current.route.along.length - 1)];
-        router.alongRoute(current.route, current.pointIndex(), kind, places -> {
+        // The pins come in as the search goes along the route, the nearest first; the map shows as many as fit.
+        router.alongRoute(current.route, current.pointIndex(), kind, (places, finished) -> {
             if (destroyed || navigator == null) return;
             alongBase = base;
             nearKey = "";
             alongPlaces.clear();
             alongPlaces.addAll(places);
             drawAlong();
-            callback.onPlaces(places);
+            callback.onPlaces(places, finished);
         });
     }
 

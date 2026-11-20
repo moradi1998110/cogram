@@ -1382,6 +1382,9 @@
     <string name="PhogramNavTo">إلى %1$s</string>
     <string name="PhogramNavNoneAlong">لا يوجد شيء من هذا النوع قرب الطريق أمامك.</string>
     <string name="PhogramNavFoundAlong">%1$d أماكن على الطريق. اضغط على أحدها للتوقف عنده.</string>
+    <string name="PhogramNavAlongSearching">جارٍ البحث على طول الطريق…</string>
+    <string name="PhogramNavAlongCount">%1$d حتى الآن</string>
+    <string name="PhogramNavAhead">بعد %1$s</string>
     <string name="PhogramNavAddStopText">إضافته كمحطة وقوف على الطريق؟ سيمرّ المسار به.</string>
     <string name="PhogramNavAddStopButton">إضافة محطة</string>
     <string name="PhogramNavStopAdded">أُضيف %1$s كمحطة وقوف.</string>

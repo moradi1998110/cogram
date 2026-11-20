@@ -11769,6 +11769,9 @@
     <string name="PhogramNavTo">To %1$s</string>
     <string name="PhogramNavNoneAlong">Nothing of this kind near the road ahead.</string>
     <string name="PhogramNavFoundAlong">%1$d places on the way. Tap one to stop there.</string>
+    <string name="PhogramNavAlongSearching">Looking along the route…</string>
+    <string name="PhogramNavAlongCount">%1$d so far</string>
+    <string name="PhogramNavAhead">in %1$s</string>
     <string name="PhogramNavAddStopText">Add it as a stop on the way? The route will pass by it.</string>
     <string name="PhogramNavAddStopButton">Add stop</string>
     <string name="PhogramNavStopAdded">%1$s was added as a stop.</string>
