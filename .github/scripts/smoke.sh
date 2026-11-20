@@ -345,6 +345,20 @@ dump_screen 8-chats-menu
 tap_view 'text="Settings"' || true
 sleep 3
 dump_screen 9-settings
+adb shell input swipe 160 520 160 120 400 || true
+sleep 2
+dump_screen 9-settings-lower
+adb shell input swipe 160 520 160 120 400 || true
+sleep 2
+dump_screen 9-settings-end
+# Phogram has no Premium, Stars, Gram wallet or gifts: none of them may be offered in the menu or settings.
+paid=$(cat "$OUT"/8-chats-menu.xml "$OUT"/9-settings*.xml 2>/dev/null \
+  | grep -oiE 'text="[^"]*(Premium|Stars|Gram|TON|Wallet|Gift|Business)[^"]*"' | sort -u)
+if [ -n "$paid" ]; then
+  echo "PAID SURFACES SHOWN: $paid" | tee -a "$OUT/steps.txt"
+else
+  echo "Paid surfaces: none in the menu and settings" | tee -a "$OUT/steps.txt"
+fi
 # Phogram's assistant tab, where Telegram has the Profile tab.
 adb shell input keyevent 4
 sleep 2

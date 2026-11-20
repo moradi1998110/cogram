@@ -63,6 +63,52 @@ public final class CogramGateway {
         return preferences().getBoolean(KEY_DEMO, false);
     }
 
+    /** Packages whose pages and sheets are about Premium, Stars, Gram (TON), gifts, boosts or Business. */
+    private static final String[] PAID_PACKAGES = {
+            "org.telegram.ui.Stars.",
+            "org.telegram.ui.TON.",
+            "org.telegram.ui.Gifts.",
+            "org.telegram.ui.Wallet.",
+            "org.telegram.ui.Business.",
+            "org.telegram.ui.Components.Premium.",
+    };
+    private static final String[] PAID_CLASSES = {
+            "org.telegram.ui.PremiumPreviewFragment",
+            "org.telegram.ui.BoostsActivity",
+            "org.telegram.ui.RevenueSharingAdsInfoBottomSheet",
+    };
+    /** Kept: it also tells about limits that have nothing to do with Premium, such as too many channels. */
+    private static final String LIMIT_SHEET = "org.telegram.ui.Components.Premium.LimitReachedBottomSheet";
+
+    /**
+     * Whether a page or sheet about Premium, Stars, Gram (TON), gifts, boosts or Business is about to
+     * open. Phogram has no Telegram servers to pay or be paid through, so none of them opens, from
+     * whichever button or link asked; its own class and the classes it extends are checked, as callers
+     * often open such a sheet as an anonymous subclass.
+     */
+    public static boolean isPaidSurface(Object surface) {
+        if (!ENABLED || surface == null) {
+            return false;
+        }
+        for (Class<?> type = surface.getClass(); type != null && type != Object.class; type = type.getSuperclass()) {
+            String name = type.getName();
+            if (name.startsWith(LIMIT_SHEET)) {
+                return false;
+            }
+            for (String paid : PAID_CLASSES) {
+                if (name.equals(paid) || name.startsWith(paid + "$")) {
+                    return true;
+                }
+            }
+            for (String paid : PAID_PACKAGES) {
+                if (name.startsWith(paid)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     public static boolean needsLogin() {
         return ENABLED && !isDemoSelected() && !XmppBackend.hasAccount(ApplicationLoader.applicationContext);
     }

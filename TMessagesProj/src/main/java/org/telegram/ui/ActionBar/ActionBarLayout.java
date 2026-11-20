@@ -1961,6 +1961,9 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
         boolean preview = params.preview;
         ActionBarPopupWindow.ActionBarPopupWindowLayout menu = params.menuView;
 
+        if (org.telegram.cogram.CogramGateway.isPaidSurface(fragment)) {
+            return false;
+        }
         if (fragment == null || checkTransitionAnimation() || delegate != null && check && !delegate.needPresentFragment(this, params) || !fragment.onFragmentCreate()) {
             return false;
         }

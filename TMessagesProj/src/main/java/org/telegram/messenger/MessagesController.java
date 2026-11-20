@@ -739,13 +739,56 @@ public class MessagesController extends BaseController implements NotificationCe
     public boolean starsLocked;
 
     public boolean starsPurchaseAvailable() {
-        return !starsLocked;
+        // Phogram has no Telegram servers to buy or spend Stars on.
+        return !CogramGateway.ENABLED && !starsLocked;
     }
     public boolean premiumFeaturesBlocked() {
-        return premiumLocked && !getUserConfig().isPremium();
+        return CogramGateway.ENABLED || premiumLocked && !getUserConfig().isPremium();
     }
     public boolean premiumPurchaseBlocked() {
-        return premiumLocked;
+        return CogramGateway.ENABLED || premiumLocked;
+    }
+    /** Gram (TON) balances and earnings, which live on Telegram's servers. */
+    public boolean tonAvailable() {
+        return !CogramGateway.ENABLED;
+    }
+
+    /**
+     * Phogram has no Premium: what Premium only lifts on the phone (folders, pins, caption and bio
+     * lengths, saved GIFs and stickers, file size) is lifted for everyone, so no limit offers Premium,
+     * and gifts, paid messages and the gift buttons are off.
+     */
+    private void applyCogramLimits() {
+        if (!CogramGateway.ENABLED) {
+            return;
+        }
+        premiumLocked = true;
+        starsLocked = true;
+        channelsLimitDefault = Math.max(channelsLimitDefault, channelsLimitPremium);
+        savedGifsLimitDefault = Math.max(savedGifsLimitDefault, savedGifsLimitPremium);
+        stickersFavedLimitDefault = Math.max(stickersFavedLimitDefault, stickersFavedLimitPremium);
+        maxPinnedDialogsCountPremium = Math.max(maxPinnedDialogsCountPremium, 10);
+        maxPinnedDialogsCountDefault = Math.max(maxPinnedDialogsCountDefault, maxPinnedDialogsCountPremium);
+        dialogFiltersLimitDefault = Math.max(dialogFiltersLimitDefault, dialogFiltersLimitPremium);
+        dialogFiltersChatsLimitDefault = Math.max(dialogFiltersChatsLimitDefault, dialogFiltersChatsLimitPremium);
+        dialogFiltersPinnedLimitDefault = Math.max(dialogFiltersPinnedLimitDefault, dialogFiltersPinnedLimitPremium);
+        publicLinksLimitDefault = Math.max(publicLinksLimitDefault, publicLinksLimitPremium);
+        captionLengthLimitDefault = Math.max(captionLengthLimitDefault, captionLengthLimitPremium);
+        storyCaptionLengthLimitDefault = Math.max(storyCaptionLengthLimitDefault, storyCaptionLengthLimitPremium);
+        aboutLengthLimitDefault = Math.max(aboutLengthLimitDefault, aboutLengthLimitPremium);
+        reactionsUserMaxDefault = Math.max(reactionsUserMaxDefault, reactionsUserMaxPremium);
+        uploadMaxFileParts = Math.max(uploadMaxFileParts, uploadMaxFilePartsPremium);
+        chatlistInvitesLimitDefault = Math.max(chatlistInvitesLimitDefault, chatlistInvitesLimitPremium);
+        chatlistJoinedLimitDefault = Math.max(chatlistJoinedLimitDefault, chatlistJoinedLimitPremium);
+        recommendedChannelsLimitDefault = Math.max(recommendedChannelsLimitDefault, recommendedChannelsLimitPremium);
+        savedDialogsPinnedLimitDefault = Math.max(savedDialogsPinnedLimitDefault, savedDialogsPinnedLimitPremium);
+        giftAttachMenuIcon = false;
+        giftTextFieldIcon = false;
+        starsPaidMessagesAvailable = false;
+        enableGiftsInProfile = false;
+        giveawayGiftsPurchaseAvailable = false;
+        starsGiftsEnabled = false;
+        stargiftsBlocked = true;
     }
 
     public List<String> directPaymentsCurrency = new ArrayList<>();
@@ -1800,6 +1843,7 @@ public class MessagesController extends BaseController implements NotificationCe
         starsSubscriptionAmountMax = mainPreferences.getLong("starsSubscriptionAmountMax", 2500L);
         starsUsdSellRate1000 = mainPreferences.getFloat("starsUsdSellRate1000", 2000);
         starsUsdWithdrawRate1000 = mainPreferences.getFloat("starsUsdWithdrawRate1000", 1200);
+        applyCogramLimits();
         sponsoredLinksInappAllow = mainPreferences.getBoolean("sponsoredLinksInappAllow", false);
         starrefProgramAllowed = mainPreferences.getBoolean("starrefProgramAllowed", false);
         starrefConnectAllowed = mainPreferences.getBoolean("starrefConnectAllowed", false);
@@ -2627,6 +2671,7 @@ public class MessagesController extends BaseController implements NotificationCe
         appConfigFetcher.fetch(currentAccount, 0, config -> AndroidUtilities.runOnUIThread(() -> {
             if (config != null && config.config instanceof TLRPC.TL_jsonObject) {
                 applyAppConfig((TLRPC.TL_jsonObject) config.config);
+                applyCogramLimits();
             }
             AndroidUtilities.cancelRunOnUIThread(loadAppConfigRunnable);
             AndroidUtilities.runOnUIThread(loadAppConfigRunnable, 4 * 60 * 1000 + 10);
