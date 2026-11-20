@@ -64,6 +64,18 @@ final class MapKinds {
         return Theme.getColor(Theme.keys_avatar_background[index]);
     }
 
+    /**
+     * The color of the routes found together, by their place: the best in green, the others in Telegram's blue and in
+     * orange. The line on the map and the border of its card share it.
+     */
+    static int routeColor(int index) {
+        switch (index) {
+            case 0: return 0xFF2EB85C;
+            case 1: return 0xFF3A8EE6;
+            default: return 0xFFF2994A;
+        }
+    }
+
     /** A kind's emoji on its soft colored circle; it redraws itself once Telegram's emoji are loaded. */
     static final class IconView extends View {
 

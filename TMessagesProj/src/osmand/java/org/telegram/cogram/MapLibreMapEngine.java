@@ -20,7 +20,9 @@ import org.maplibre.android.maps.MapLibreMapOptions;
 import org.maplibre.android.maps.MapView;
 import org.maplibre.android.maps.Style;
 import org.maplibre.android.geometry.LatLngBounds;
+import org.maplibre.android.style.expressions.Expression;
 import org.maplibre.android.style.layers.LineLayer;
+import org.maplibre.android.style.layers.SymbolLayer;
 import org.maplibre.android.style.layers.Property;
 import org.maplibre.android.style.layers.PropertyFactory;
 import org.maplibre.android.style.sources.GeoJsonSource;
@@ -390,6 +392,7 @@ final class MapLibreMapEngine implements MapEngine {
     private boolean onMapClick(LatLng point) {
         if (tapListener == null || map == null || style == null) return false;
         final PointF screen = map.getProjection().toScreenLocation(point);
+        if (onRouteClick(screen)) return true;
         final float slop = AndroidUtilities.dp(12);
         final List<Feature> features = map.queryRenderedFeatures(
                 new android.graphics.RectF(screen.x - slop, screen.y - slop, screen.x + slop, screen.y + slop), TAPPABLE_LAYERS);
@@ -626,14 +629,15 @@ final class MapLibreMapEngine implements MapEngine {
             callback.onRoutes(new ArrayList<>(), ROUTE_NOT_FOUND);
             return;
         }
-        router.route(latitude, longitude, destination.latitude, destination.longitude, avoidMotorways, routes -> {
+        router.route(latitude, longitude, destination.latitude, destination.longitude, true, routes -> {
             if (destroyed) return;
             if (routes.isEmpty() || routes.get(0).points.size() < 2) {
                 callback.onRoutes(new ArrayList<>(), ROUTE_NOT_FOUND);
                 return;
             }
-            for (Route route : routes) {
-                route.destination = destination;
+            for (int i = 0; i < routes.size(); i++) {
+                routes.get(i).destination = destination;
+                routes.get(i).index = i;
             }
             shownRoutes.clear();
             shownRoutes.addAll(routes);
@@ -641,6 +645,25 @@ final class MapLibreMapEngine implements MapEngine {
             drawRoute();
             fitRoutes();
             callback.onRoutes(routes, 0);
+        });
+    }
+
+    @Override
+    public void estimate(Place destination, RouteCallback callback) {
+        if (OsmAndOffline.installedFile() == null || !hasLocationPermission()) {
+            callback.onRoutes(new ArrayList<>(), ROUTE_NO_DATA);
+            return;
+        }
+        final double[] here = getPosition();
+        final OsmAndOffline router = offline();
+        if (here == null || router == null) {
+            callback.onRoutes(new ArrayList<>(), ROUTE_NO_LOCATION);
+            return;
+        }
+        // Only the best route: the card needs its time, not the alternatives.
+        router.route(here[0], here[1], destination.latitude, destination.longitude, false, routes -> {
+            if (destroyed) return;
+            callback.onRoutes(routes, routes.isEmpty() ? ROUTE_NOT_FOUND : 0);
         });
     }
 
@@ -658,15 +681,26 @@ final class MapLibreMapEngine implements MapEngine {
         drawRoute();
     }
 
+    private static final String ROUTE_LABELS = "phogram-route-labels";
+    private static final String ALTERNATIVE_LABELS = "phogram-route-alternatives-labels";
+
+    /** A route's line with its color, its place in the list and its time, which the labels on the map show. */
     private static Feature lineOf(Route route) {
         final List<Point> points = new ArrayList<>(route.points.size());
         for (double[] point : route.points) {
             points.add(Point.fromLngLat(point[1], point[0]));
         }
-        return Feature.fromGeometry(LineString.fromLngLats(points));
+        final Feature feature = Feature.fromGeometry(LineString.fromLngLats(points));
+        feature.addStringProperty("color", String.format("#%06X", MapKinds.routeColor(route.index) & 0xFFFFFF));
+        feature.addNumberProperty("index", route.index);
+        feature.addStringProperty("label", MapsFormat.duration(route.seconds));
+        return feature;
     }
 
-    /** Puts the shown routes on the style (again after a style change), or takes them off. */
+    /**
+     * Puts the shown routes on the style (again after a style change), or takes them off: each in its own color, as
+     * on its card in the preview, the chosen one wide and on top, the others thinner and lighter, each with its time.
+     */
     private void drawRoute() {
         if (style == null) return;
         final List<Feature> alternatives = new ArrayList<>();
@@ -687,18 +721,22 @@ final class MapLibreMapEngine implements MapEngine {
             source = new GeoJsonSource(ROUTE_SOURCE, chosenLines);
             style.addSource(alternativeSource);
             style.addSource(source);
+            final Expression color = Expression.get("color");
             final LineLayer alternativeCasing = new LineLayer(ALTERNATIVE_CASING, ALTERNATIVE_SOURCE).withProperties(
                     PropertyFactory.lineColor(0xFFFFFFFF), PropertyFactory.lineWidth(8f),
                     PropertyFactory.lineCap(Property.LINE_CAP_ROUND), PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND));
             final LineLayer alternativeLine = new LineLayer(ALTERNATIVE_LINE, ALTERNATIVE_SOURCE).withProperties(
-                    PropertyFactory.lineColor(0xFF9AA7B5), PropertyFactory.lineWidth(5f),
+                    PropertyFactory.lineColor(color), PropertyFactory.lineWidth(5f), PropertyFactory.lineOpacity(0.6f),
                     PropertyFactory.lineCap(Property.LINE_CAP_ROUND), PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND));
             final LineLayer casing = new LineLayer(ROUTE_CASING, ROUTE_SOURCE).withProperties(
-                    PropertyFactory.lineColor(0xFFFFFFFF), PropertyFactory.lineWidth(9f),
+                    PropertyFactory.lineColor(0xFFFFFFFF), PropertyFactory.lineWidth(10f),
                     PropertyFactory.lineCap(Property.LINE_CAP_ROUND), PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND));
-            final LineLayer blue = new LineLayer(ROUTE_LINE, ROUTE_SOURCE).withProperties(
-                    PropertyFactory.lineColor(0xFF3A8EE6), PropertyFactory.lineWidth(5.5f),
+            final LineLayer line = new LineLayer(ROUTE_LINE, ROUTE_SOURCE).withProperties(
+                    PropertyFactory.lineColor(color), PropertyFactory.lineWidth(6.5f),
                     PropertyFactory.lineCap(Property.LINE_CAP_ROUND), PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND));
+            // Each route's time in the middle of its line, in its color on a white halo, as the bubbles of map apps.
+            final SymbolLayer alternativeLabels = labels(ALTERNATIVE_LABELS, ALTERNATIVE_SOURCE, color);
+            final SymbolLayer labels = labels(ROUTE_LABELS, ROUTE_SOURCE, color);
             if (style.getLayer("address_label") != null) {
                 style.addLayerBelow(alternativeCasing, "address_label");
             } else {
@@ -706,11 +744,53 @@ final class MapLibreMapEngine implements MapEngine {
             }
             style.addLayerAbove(alternativeLine, ALTERNATIVE_CASING);
             style.addLayerAbove(casing, ALTERNATIVE_LINE);
-            style.addLayerAbove(blue, ROUTE_CASING);
+            style.addLayerAbove(line, ROUTE_CASING);
+            style.addLayer(alternativeLabels);
+            style.addLayer(labels);
         } else {
             source.setGeoJson(chosenLines);
             alternativeSource.setGeoJson(alternativeLines);
         }
+        final boolean navigating = navigator != null;
+        final org.maplibre.android.style.layers.Layer chosenLabels = style.getLayer(ROUTE_LABELS);
+        final org.maplibre.android.style.layers.Layer otherLabels = style.getLayer(ALTERNATIVE_LABELS);
+        // While driving, the strip at the top tells the time; the labels would only cover the road.
+        if (chosenLabels != null) chosenLabels.setProperties(PropertyFactory.visibility(navigating ? Property.NONE : Property.VISIBLE));
+        if (otherLabels != null) otherLabels.setProperties(PropertyFactory.visibility(navigating ? Property.NONE : Property.VISIBLE));
+    }
+
+    private static SymbolLayer labels(String id, String source, Expression color) {
+        return new SymbolLayer(id, source).withProperties(
+                PropertyFactory.textField(Expression.get("label")),
+                PropertyFactory.textFont(new String[] { "Noto Sans Medium" }),
+                PropertyFactory.textSize(14f),
+                PropertyFactory.textColor(color),
+                PropertyFactory.textHaloColor(0xFFFFFFFF),
+                PropertyFactory.textHaloWidth(2.5f),
+                PropertyFactory.symbolPlacement(Property.SYMBOL_PLACEMENT_LINE_CENTER),
+                PropertyFactory.textRotationAlignment(Property.TEXT_ROTATION_ALIGNMENT_VIEWPORT),
+                PropertyFactory.textAllowOverlap(true));
+    }
+
+    /** A tap on a drawn route chooses it, as its card does. */
+    private boolean onRouteClick(PointF screen) {
+        if (tapListener == null || map == null || style == null || shownRoutes.size() < 2 || navigator != null) return false;
+        final float slop = AndroidUtilities.dp(14);
+        final List<Feature> features = map.queryRenderedFeatures(
+                new android.graphics.RectF(screen.x - slop, screen.y - slop, screen.x + slop, screen.y + slop),
+                ROUTE_LINE, ALTERNATIVE_LINE);
+        for (Feature feature : features) {
+            if (feature.hasProperty("index")) {
+                final int index = feature.getNumberProperty("index").intValue();
+                for (int i = 0; i < shownRoutes.size(); i++) {
+                    if (shownRoutes.get(i).index == index) {
+                        tapListener.onRouteTapped(i);
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
     }
 
     /** Frames all the shown routes, with room for the page's cards above and below. */
@@ -798,11 +878,12 @@ final class MapLibreMapEngine implements MapEngine {
             final Place destination = current.route.destination;
             final OsmAndOffline router = offline();
             if (router != null) {
-                router.route(location.getLatitude(), location.getLongitude(), destination.latitude, destination.longitude, avoidMotorways, routes -> {
+                router.route(location.getLatitude(), location.getLongitude(), destination.latitude, destination.longitude, false, routes -> {
                     rerouting = false;
                     if (navigator == null || destroyed || routes.isEmpty()) return;
                     final Route route = routes.get(0);
                     route.destination = destination;
+                    route.index = current.route.index;
                     navigator = new RouteNavigator(route);
                     shownRoutes.clear();
                     shownRoutes.add(route);
@@ -847,7 +928,11 @@ final class MapLibreMapEngine implements MapEngine {
 
     @Override
     public void search(String query, SearchCallback callback) {
-        final LatLng center = map != null ? map.getCameraPosition().target : new LatLng(START_LATITUDE, START_LONGITUDE);
+        // From the user's last position, so the results go from the nearest to the farthest; the map's center
+        // when the position is not known.
+        final double[] here = getPosition();
+        final LatLng center = here != null ? new LatLng(here[0], here[1])
+                : map != null ? map.getCameraPosition().target : new LatLng(START_LATITUDE, START_LONGITUDE);
         final OsmAndOffline search = offline();
         if (search != null) {
             search.search(query, center.getLatitude(), center.getLongitude(), callback);

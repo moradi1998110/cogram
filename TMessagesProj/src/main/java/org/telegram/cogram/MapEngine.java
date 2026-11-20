@@ -172,6 +172,13 @@ public interface MapEngine {
         public final float[] along;
         /** Where the route goes, kept for finding it again after a wrong turn. */
         public Place destination;
+        /** What the preview calls it: the fastest, an alternative OsmAnd found, or the shortest by distance. */
+        public int label;
+        /** Its place among the routes found together, which picks its color on the map and on its card. */
+        public int index;
+        public static final int LABEL_FASTEST = 0;
+        public static final int LABEL_ALTERNATIVE = 1;
+        public static final int LABEL_SHORTEST = 2;
 
         public Route(java.util.List<double[]> points, float meters, float seconds, java.util.List<Maneuver> maneuvers, String via) {
             this.points = points;
@@ -211,6 +218,11 @@ public interface MapEngine {
      * first one chosen. Motorways can be avoided.
      */
     default void showRoutes(Place destination, boolean avoidMotorways, RouteCallback callback) {
+        callback.onRoutes(java.util.Collections.emptyList(), ROUTE_NOT_FOUND);
+    }
+
+    /** The time by car to the place from the device's position, without drawing anything; for the place's card. */
+    default void estimate(Place destination, RouteCallback callback) {
         callback.onRoutes(java.util.Collections.emptyList(), ROUTE_NOT_FOUND);
     }
 
@@ -261,6 +273,10 @@ public interface MapEngine {
 
         /** The map was pressed and held at this point. */
         void onLongPressed(double latitude, double longitude);
+
+        /** One of the drawn routes was tapped: its place among the routes shown. */
+        default void onRouteTapped(int index) {
+        }
     }
 
     default void setMapTapListener(MapTapListener listener) {

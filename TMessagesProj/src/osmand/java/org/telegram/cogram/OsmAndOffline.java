@@ -64,7 +64,7 @@ final class OsmAndOffline {
     private static final String KEY_SIZE = "zip_size";
     private static final int POLL_MS = 500;
     private static final int TIMEOUT_MS = 20_000;
-    private static final int MAX_SEARCH_RESULTS = 40;
+    private static final int MAX_SEARCH_RESULTS = 200;
     /** Java routing works within the app's large heap (largeHeap); routes across the country need room for their road data. */
     private static final int ROUTING_MEMORY_MB = 256;
 
@@ -376,6 +376,11 @@ final class OsmAndOffline {
                                 result.location.getLatitude(), result.location.getLongitude(), kindOf(result), typeOf(search, result)));
                         if (places.size() >= MAX_SEARCH_RESULTS) break;
                     }
+                    // Nearest first from where the search was made (the user's last position), then the town named as
+                    // typed above them all.
+                    java.util.Collections.sort(places, (a, b) -> Double.compare(
+                            MapEngine.distance(latitude, longitude, a.latitude, a.longitude),
+                            MapEngine.distance(latitude, longitude, b.latitude, b.longitude)));
                     promoteMatchingTowns(places, query);
                 }
             } catch (Throwable e) {
@@ -522,8 +527,11 @@ final class OsmAndOffline {
 
     // Routing: OsmAnd's car router in Java over the region's file.
 
-    /** The ways by car between two points, the best first; an empty list when there is none. */
-    void route(double fromLatitude, double fromLongitude, double toLatitude, double toLongitude, boolean avoidMotorways,
+    /**
+     * The ways by car between two points, the best first; an empty list when there is none. With alternatives, up to
+     * three different routes: OsmAnd's alternatives, and the shortest by distance when they are not enough.
+     */
+    void route(double fromLatitude, double fromLongitude, double toLatitude, double toLongitude, boolean withAlternatives,
                Utilities.Callback<List<MapEngine.Route>> callback) {
         final int request = ++routeRequest;
         routeExecutor.execute(() -> {
@@ -532,7 +540,7 @@ final class OsmAndOffline {
             try {
                 final BinaryMapIndexReader file = reader();
                 if (file != null) {
-                    routes = calculate(file, new LatLon(fromLatitude, fromLongitude), new LatLon(toLatitude, toLongitude), avoidMotorways);
+                    routes = calculate(file, new LatLon(fromLatitude, fromLongitude), new LatLon(toLatitude, toLongitude), withAlternatives);
                 }
             } catch (Throwable e) {
                 FileLog.e(e);
@@ -546,10 +554,58 @@ final class OsmAndOffline {
         });
     }
 
-    /** At most this many routes are offered: the best and two alternatives. */
+    /** At most this many routes are offered: the best and two others. */
     private static final int MAX_ROUTES = 3;
 
-    private static List<MapEngine.Route> calculate(BinaryMapIndexReader file, LatLon start, LatLon end, boolean avoidMotorways) throws Exception {
+    private static List<MapEngine.Route> calculate(BinaryMapIndexReader file, LatLon start, LatLon end, boolean withAlternatives) throws Exception {
+        final long started = android.os.SystemClock.elapsedRealtime();
+        final List<MapEngine.Route> routes = new ArrayList<>();
+        final RouteResultPreparation.RouteCalcResult result = search(file, start, end, false, withAlternatives);
+        if (result == null || !result.isCorrect() || result.getList() == null || result.getList().isEmpty()) {
+            android.util.Log.d("PhogramRoute", "no route after " + (android.os.SystemClock.elapsedRealtime() - started)
+                    + " ms: " + (result != null ? result.getError() : "no result"));
+            return routes;
+        }
+        final MapEngine.Route best = toRoute(result.getList());
+        best.label = MapEngine.Route.LABEL_FASTEST;
+        routes.add(best);
+        if (withAlternatives) {
+            final List<List<RouteSegmentResult>> alternatives = result.getAlternatives();
+            if (alternatives != null) {
+                for (List<RouteSegmentResult> alternative : alternatives) {
+                    if (routes.size() >= MAX_ROUTES) break;
+                    if (alternative == null || alternative.isEmpty()) continue;
+                    final MapEngine.Route route = toRoute(alternative);
+                    route.label = MapEngine.Route.LABEL_ALTERNATIVE;
+                    addIfDifferent(routes, route);
+                }
+            }
+            // OsmAnd finds no alternative where no other road is close enough in time; the shortest way by distance
+            // then gives the driver a real choice, as the fastest and the shortest in common map apps.
+            if (routes.size() < MAX_ROUTES) {
+                try {
+                    final RouteResultPreparation.RouteCalcResult shortest = search(file, start, end, true, false);
+                    if (shortest != null && shortest.isCorrect() && shortest.getList() != null && !shortest.getList().isEmpty()) {
+                        final MapEngine.Route route = toRoute(shortest.getList());
+                        route.label = MapEngine.Route.LABEL_SHORTEST;
+                        addIfDifferent(routes, route);
+                    }
+                } catch (Exception e) {
+                    FileLog.e(e);
+                }
+            }
+        }
+        // How long the routes took to find, for the emulator check and for reports from phones.
+        android.util.Log.d("PhogramRoute", String.format(java.util.Locale.US,
+                "found in %d ms: %.1f km, %d min, %d points, %d turns, %d other routes, via %s",
+                android.os.SystemClock.elapsedRealtime() - started, best.meters / 1000f, Math.round(best.seconds / 60f),
+                best.points.size(), best.maneuvers.size(), routes.size() - 1, best.via));
+        return routes;
+    }
+
+    /** One run of OsmAnd's car router, over its highway hierarchy; the shortest way by distance on request. */
+    private static RouteResultPreparation.RouteCalcResult search(BinaryMapIndexReader file, LatLon start, LatLon end,
+                                                                 boolean shortest, boolean alternatives) throws Exception {
         synchronized (OsmAndOffline.class) {
             if (routingRules == null) {
                 routingRules = RoutingConfiguration.getDefault();
@@ -557,10 +613,9 @@ final class OsmAndOffline {
         }
         // The region's file holds what the route needs; OsmAnd's world regions are not read for missing maps.
         RoutePlannerFrontEnd.CALCULATE_MISSING_MAPS = false;
-        final long started = android.os.SystemClock.elapsedRealtime();
         final Map<String, String> params = new LinkedHashMap<>();
-        if (avoidMotorways) {
-            params.put("avoid_motorway", "true");
+        if (shortest) {
+            params.put("short_way", "true");
         }
         final RoutingConfiguration config = routingRules.build("car",
                 new RoutingConfiguration.RoutingMemoryLimits(ROUTING_MEMORY_MB, 0), params);
@@ -569,34 +624,37 @@ final class OsmAndOffline {
         // main roads, so a route across the country, such as Basra to Mosul, takes seconds instead of searching every
         // road on the way; the start and the end are then joined to that network on the detailed roads. Where the file
         // has no such network, OsmAnd falls back to its classic search over all roads.
-        // With up to two alternatives, which the preview offers beside the best route.
-        planner.setHHRoutingConfig(RoutePlannerFrontEnd.defaultHHConfig().calcAlternative(MAX_ROUTES - 1));
+        final net.osmand.router.HHRouteDataStructure.HHRoutingConfig hh = RoutePlannerFrontEnd.defaultHHConfig();
+        if (alternatives) {
+            hh.calcAlternative(MAX_ROUTES - 1);
+        }
+        planner.setHHRoutingConfig(hh);
         final RoutingContext context = planner.buildRoutingContext(config, null, new BinaryMapIndexReader[] { file },
                 RoutePlannerFrontEnd.RouteCalculationMode.NORMAL);
-        final RouteResultPreparation.RouteCalcResult result = planner.searchRoute(context, start, end, null);
-        final List<MapEngine.Route> routes = new ArrayList<>();
-        if (result == null || !result.isCorrect() || result.getList() == null || result.getList().isEmpty()) {
-            android.util.Log.d("PhogramRoute", "no route after " + (android.os.SystemClock.elapsedRealtime() - started)
-                    + " ms: " + (result != null ? result.getError() : "no result"));
-            return routes;
+        return planner.searchRoute(context, start, end, null);
+    }
+
+    /** Adds the route unless it is the same way as one already there: about as long, and through the same middle. */
+    private static void addIfDifferent(List<MapEngine.Route> routes, MapEngine.Route route) {
+        if (route.points.size() < 2) return;
+        for (MapEngine.Route other : routes) {
+            final float longer = Math.max(other.meters, route.meters);
+            final boolean sameLength = longer <= 0 || Math.abs(other.meters - route.meters) / longer < 0.03f;
+            final double[] a = middle(other);
+            final double[] b = middle(route);
+            final boolean sameMiddle = MapEngine.distance(a[0], a[1], b[0], b[1]) < 1500;
+            if (sameLength && sameMiddle) return;
         }
-        routes.add(toRoute(result.getList()));
-        final List<List<RouteSegmentResult>> alternatives = result.getAlternatives();
-        if (alternatives != null) {
-            for (List<RouteSegmentResult> alternative : alternatives) {
-                if (routes.size() >= MAX_ROUTES) break;
-                if (alternative != null && !alternative.isEmpty()) {
-                    routes.add(toRoute(alternative));
-                }
-            }
+        routes.add(route);
+    }
+
+    /** The point halfway along a route. */
+    private static double[] middle(MapEngine.Route route) {
+        final float half = route.along[route.along.length - 1] / 2;
+        for (int i = 1; i < route.along.length; i++) {
+            if (route.along[i] >= half) return route.points.get(i);
         }
-        final MapEngine.Route best = routes.get(0);
-        // How long the routes took to find, for the emulator check and for reports from phones.
-        android.util.Log.d("PhogramRoute", String.format(java.util.Locale.US,
-                "found in %d ms: %.1f km, %d min, %d points, %d turns, %d alternatives, via %s",
-                android.os.SystemClock.elapsedRealtime() - started, best.meters / 1000f, Math.round(best.seconds / 60f),
-                best.points.size(), best.maneuvers.size(), routes.size() - 1, best.via));
-        return routes;
+        return route.points.get(route.points.size() - 1);
     }
 
     /** A route's points, turns and main road from OsmAnd's segments. */

@@ -1363,6 +1363,13 @@
     <string name="PhogramNavRoundaboutExit">في الدوّار، اسلك المخرج %1$d</string>
     <string name="PhogramNavArrive">الوصول إلى الوجهة</string>
     <string name="PhogramNavOnto">%1$s إلى %2$s</string>
+    <string name="PhogramNavGoTime">انطلق · %1$s</string>
+    <string name="PhogramNavFastestRoute">أسرع مسار</string>
+    <string name="PhogramNavShortestRoute">أقصر مسار</string>
+    <string name="PhogramNavOtherRoute">طريق آخر</string>
+    <string name="PhogramNavSlowerDistance">أبطأ بـ %1$s · %2$s</string>
+    <string name="PhogramNavEndTitle">إنهاء الرحلة؟</string>
+    <string name="PhogramNavEndText">سيتوقف التوجيه إلى هذا المكان.</string>
     <string name="PhogramAssistantTab">المساعد</string>
     <string name="PhogramAssistantGreeting">كيف أستطيع مساعدتك؟</string>
     <string name="PhogramAssistantIntro">اسأل سؤالاً، أو اكتب نصاً أو لخّصه، أو ترجم، أو صف صورة.</string>

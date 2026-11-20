@@ -63,6 +63,9 @@ final class MapsRouteUi {
         void askLocation();
 
         boolean hasLocationPermission();
+
+        /** The trip ended (End, or arrived): the page closes the place's card too. */
+        void onTripEnded();
     }
 
     static final int MODE_NONE = 0;
@@ -74,7 +77,6 @@ final class MapsRouteUi {
     private MapEngine.Place destination;
     private final List<MapEngine.Route> routes = new ArrayList<>();
     private int chosen;
-    private boolean avoidMotorways;
 
     // The preview.
     private final FrameLayout topCard;
@@ -90,7 +92,6 @@ final class MapsRouteUi {
     private final RadialProgressView progress;
     private final LinearLayout alternatives;
     private final TextView stepsButton;
-    private final TextView avoidButton;
     private final TextView startButton;
     private final TextView sendButton;
 
@@ -166,25 +167,18 @@ final class MapsRouteUi {
         stepsButton = chip(context, getString(R.string.PhogramNavSteps));
         stepsButton.setOnClickListener(v -> showSteps());
         options.addView(stepsButton, LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, 34, 0, 0, 8, 0));
-        avoidButton = chip(context, getString(R.string.PhogramNavAvoidMotorways));
-        avoidButton.setOnClickListener(v -> {
-            avoidMotorways = !avoidMotorways;
-            updateColors();
-            findRoutes();
+        sendButton = chip(context, getString(R.string.PhogramMapsSendToChat));
+        sendButton.setOnClickListener(v -> {
+            if (destination != null) host.sendToChat(destination);
         });
-        options.addView(avoidButton, LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, 34));
+        options.addView(sendButton, LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, 34));
         sheet.addView(options, LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, 34, 0, 12, 0, 0));
         final LinearLayout buttons = new LinearLayout(context);
         buttons.setOrientation(LinearLayout.HORIZONTAL);
         startButton = button(context, getString(R.string.PhogramNavStart));
         startButton.setOnClickListener(v -> startNavigation());
-        buttons.addView(startButton, LayoutHelper.createLinear(0, 46, 1f, 0, 0, 8, 0));
-        sendButton = button(context, getString(R.string.PhogramMapsSendToChat));
-        sendButton.setOnClickListener(v -> {
-            if (destination != null) host.sendToChat(destination);
-        });
-        buttons.addView(sendButton, LayoutHelper.createLinear(0, 46, 1f));
-        sheet.addView(buttons, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 46, 0, 14, 0, 0));
+        buttons.addView(startButton, LayoutHelper.createLinear(0, 48, 1f));
+        sheet.addView(buttons, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 48, 0, 14, 0, 0));
         parent.addView(sheet, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.BOTTOM));
 
         // The navigation strip at the top, in the green of Telegram's return-to-call bar.
@@ -234,7 +228,7 @@ final class MapsRouteUi {
         figures.addView(figure(context, panelDistance, panelDistanceLabel, getString(R.string.PhogramNavDistanceLeft)), LayoutHelper.createLinear(0, LayoutHelper.WRAP_CONTENT, 1f));
         endButton = button(context, getString(R.string.PhogramNavEnd));
         endButton.setPadding(dp(18), 0, dp(18), 0);
-        endButton.setOnClickListener(v -> stopNavigation(true));
+        endButton.setOnClickListener(v -> endTrip());
         figures.addView(endButton, LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, 44));
         panel.addView(figures, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 16, 14, 16, 12));
         panelProgress = new LineProgressView(context);
@@ -337,7 +331,7 @@ final class MapsRouteUi {
         if (engine == null || destination == null) return;
         final MapEngine.Place place = destination;
         showLoading(getString(R.string.PhogramMapsRouting));
-        engine.showRoutes(place, avoidMotorways, (found, error) -> {
+        engine.showRoutes(place, false, (found, error) -> {
             if (destination != place || mode != MODE_PREVIEW) return;
             progress.setVisibility(View.GONE);
             routes.clear();
@@ -387,7 +381,10 @@ final class MapsRouteUi {
         }
     }
 
-    /** Telegram's choice cards, one per route: its time, how much slower than the best, and its road. */
+    /**
+     * Telegram's choice cards, one per route, each bordered in its route's color on the map: a dot and the time, what
+     * kind of route it is (the fastest, the shortest, another way), how much slower than the fastest and how long.
+     */
     private void buildAlternatives() {
         alternatives.removeAllViews();
         if (routes.size() < 2) {
@@ -396,52 +393,74 @@ final class MapsRouteUi {
         }
         alternatives.setVisibility(View.VISIBLE);
         final Context context = alternatives.getContext();
+        final boolean rtl = LocaleController.isRTL;
         final float best = routes.get(0).seconds;
         for (int i = 0; i < routes.size(); i++) {
             final MapEngine.Route route = routes.get(i);
             final LinearLayout card = new LinearLayout(context);
             card.setOrientation(LinearLayout.VERTICAL);
-            card.setPadding(dp(12), dp(8), dp(12), dp(8));
-            final TextView time = text(context, 17, LocaleController.isRTL);
+            card.setPadding(dp(10), dp(9), dp(10), dp(9));
+            final LinearLayout top = new LinearLayout(context);
+            top.setOrientation(LinearLayout.HORIZONTAL);
+            top.setGravity(Gravity.CENTER_VERTICAL | (rtl ? Gravity.RIGHT : Gravity.LEFT));
+            final View dot = new View(context);
+            dot(dot, MapKinds.routeColor(route.index));
+            final TextView time = text(context, 17, rtl);
             time.setTypeface(AndroidUtilities.bold());
+            time.setSingleLine(true);
             time.setText(MapsFormat.duration(route.seconds));
-            final TextView note = text(context, 13, LocaleController.isRTL);
+            top.addView(dot, LayoutHelper.createLinear(9, 9, 0, 0, 6, 0));
+            top.addView(time, LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT));
+            final TextView kind = text(context, 13, rtl);
+            kind.setSingleLine(true);
+            kind.setEllipsize(TextUtils.TruncateAt.END);
+            kind.setTypeface(AndroidUtilities.bold());
+            kind.setText(getString(route.label == MapEngine.Route.LABEL_FASTEST ? R.string.PhogramNavFastestRoute
+                    : route.label == MapEngine.Route.LABEL_SHORTEST ? R.string.PhogramNavShortestRoute : R.string.PhogramNavOtherRoute));
+            final TextView note = text(context, 13, rtl);
             note.setSingleLine(true);
             note.setEllipsize(TextUtils.TruncateAt.END);
-            if (i == 0) {
-                note.setText(getString(R.string.PhogramNavFastest));
-            } else {
-                note.setText(LocaleController.formatString(R.string.PhogramNavSlower, MapsFormat.duration(Math.max(60, route.seconds - best))));
-            }
-            card.addView(time, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT));
-            card.addView(note, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT));
+            final float slower = route.seconds - best;
+            note.setText(slower >= 60
+                    ? LocaleController.formatString(R.string.PhogramNavSlowerDistance, MapsFormat.duration(slower), MapsFormat.distance(route.meters))
+                    : MapsFormat.distance(route.meters));
+            card.addView(top, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT));
+            card.addView(kind, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0, 3, 0, 0));
+            card.addView(note, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0, 1, 0, 0));
             final int index = i;
-            card.setOnClickListener(v -> {
-                chosen = index;
-                final MapEngine engine = host.engine();
-                if (engine != null) engine.selectRoute(index);
-                showChosen();
-                styleAlternatives();
-            });
+            card.setOnClickListener(v -> selectRoute(index));
             ScaleStateListAnimator.apply(card, 0.02f, 1.2f);
             alternatives.addView(card, LayoutHelper.createLinear(0, LayoutHelper.WRAP_CONTENT, 1f, 0, 0, i < routes.size() - 1 ? 8 : 0, 0));
         }
         styleAlternatives();
     }
 
+    /** Chooses one of the routes, from its card or from its line on the map. */
+    void selectRoute(int index) {
+        if (mode != MODE_PREVIEW || index < 0 || index >= routes.size()) return;
+        chosen = index;
+        final MapEngine engine = host.engine();
+        if (engine != null) engine.selectRoute(index);
+        showChosen();
+        styleAlternatives();
+    }
+
     private void styleAlternatives() {
-        final int accent = Theme.getColor(Theme.key_featuredStickers_addButton);
-        for (int i = 0; i < alternatives.getChildCount(); i++) {
+        for (int i = 0; i < alternatives.getChildCount() && i < routes.size(); i++) {
             final View card = alternatives.getChildAt(i);
-            final GradientDrawable background = new GradientDrawable();
-            background.setCornerRadius(dp(12));
+            final int color = MapKinds.routeColor(routes.get(i).index);
             final boolean selected = i == chosen;
-            background.setColor(selected ? (accent & 0x00ffffff) | 0x1A000000 : Theme.getColor(Theme.key_windowBackgroundGray));
-            background.setStroke(dp(selected ? 2 : 1), selected ? accent : Theme.getColor(Theme.key_divider));
+            final GradientDrawable background = new GradientDrawable();
+            background.setCornerRadius(dp(14));
+            // The chosen card is tinted with its route's color and bordered more strongly.
+            background.setColor(selected ? (color & 0x00ffffff) | 0x1F000000 : Theme.getColor(Theme.key_windowBackgroundWhite));
+            background.setStroke(dp(selected ? 2 : 1), selected ? color : (color & 0x00ffffff) | 0x80000000);
             card.setBackground(background);
             final LinearLayout column = (LinearLayout) card;
-            ((TextView) column.getChildAt(0)).setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText));
-            ((TextView) column.getChildAt(1)).setTextColor(Theme.getColor(i == 0 ? Theme.key_windowBackgroundWhiteGreenText : Theme.key_windowBackgroundWhiteGrayText));
+            final LinearLayout top = (LinearLayout) column.getChildAt(0);
+            ((TextView) top.getChildAt(1)).setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText));
+            ((TextView) column.getChildAt(1)).setTextColor(color);
+            ((TextView) column.getChildAt(2)).setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText));
         }
     }
 
@@ -497,7 +516,7 @@ final class MapsRouteUi {
         if (mode != MODE_NAVIGATION) return;
         if (state.arrived) {
             final String name = destination != null ? destination.name : "";
-            stopNavigation(false);
+            endTrip();
             BulletinFactory.of(host.fragment()).createSimpleBulletin(R.raw.contact_check, LocaleController.formatString(R.string.PhogramNavArrived, name)).show();
             return;
         }
@@ -524,17 +543,16 @@ final class MapsRouteUi {
         panelProgress.setProgress(state.progress, true);
     }
 
-    private void stopNavigation(boolean backToPreview) {
+    /**
+     * Ends the trip altogether: the navigation stops, the routes leave the map and the page goes back to the map with
+     * no place shown, as when the trip is over.
+     */
+    private void endTrip() {
         final MapEngine engine = host.engine();
         if (engine != null) engine.stopNavigation();
         setKeepScreenOn(false);
-        if (backToPreview && destination != null) {
-            mode = MODE_PREVIEW;
-            updateMode();
-            findRoutes();
-        } else {
-            close();
-        }
+        close();
+        host.onTripEnded();
     }
 
     private void setKeepScreenOn(boolean on) {
@@ -560,10 +578,25 @@ final class MapsRouteUi {
         updateMode();
     }
 
-    /** Back leaves the navigation for the preview, and the preview for the place's card. */
+    /**
+     * Back from the navigation asks first, with Telegram's red End, so a stray press does not end the trip; from the
+     * preview it goes back to the place's card.
+     */
     boolean onBackPressed() {
         if (mode == MODE_NAVIGATION) {
-            stopNavigation(true);
+            final Activity activity = host.fragment().getParentActivity();
+            if (activity == null) return true;
+            final AlertDialog.Builder builder = new AlertDialog.Builder(activity);
+            builder.setTitle(getString(R.string.PhogramNavEndTitle));
+            builder.setMessage(getString(R.string.PhogramNavEndText));
+            builder.setPositiveButton(getString(R.string.PhogramNavEnd), (dialog, which) -> endTrip());
+            builder.setNegativeButton(getString(R.string.Cancel), null);
+            final AlertDialog dialog = builder.create();
+            host.fragment().showDialog(dialog);
+            final View end = dialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE);
+            if (end instanceof TextView) {
+                ((TextView) end).setTextColor(Theme.getColor(Theme.key_text_RedBold));
+            }
             return true;
         }
         if (mode == MODE_PREVIEW) {
@@ -623,14 +656,9 @@ final class MapsRouteUi {
         viaText.setTextColor(gray);
         progress.setProgressColor(Theme.getColor(Theme.key_progressCircle));
         chipStyle(stepsButton, false);
-        chipStyle(avoidButton, avoidMotorways);
+        chipStyle(sendButton, false);
         startButton.setTextColor(Theme.getColor(Theme.key_featuredStickers_buttonText));
         startButton.setBackground(Theme.createSimpleSelectorRoundRectDrawable(dp(10), accent, Theme.getColor(Theme.key_featuredStickers_addButtonPressed)));
-        final GradientDrawable outline = new GradientDrawable();
-        outline.setCornerRadius(dp(10));
-        outline.setStroke(dp(1), accent);
-        sendButton.setBackground(outline);
-        sendButton.setTextColor(accent);
         // The strip takes the green of Telegram's bar for a call going on, with white on it.
         final GradientDrawable strip = new GradientDrawable();
         strip.setCornerRadius(dp(16));

@@ -250,10 +250,9 @@ if tap_view 'content-desc="Where to?"' || adb shell input tap 160 532; then
     send_fix
   done
   adb exec-out screencap -p > "$OUT/7-maps-navigation.png" || true
-  adb shell input keyevent 4
-  sleep 2
-  adb shell input keyevent 4
-  sleep 2
+  # End finishes the trip: no route, no card, the map as before; Back would ask first.
+  tap_view 'text="End"' || adb shell input tap 280 505
+  sleep 3
   adb exec-out screencap -p > "$OUT/7-maps-after-navigation.png" || true
   # The place goes to the demo chat as a location, through Telegram's chat picker.
   if tap_view 'text="Send to chat"'; then

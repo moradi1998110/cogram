@@ -11750,6 +11750,13 @@
     <string name="PhogramNavRoundaboutExit">At the roundabout, take exit %1$d</string>
     <string name="PhogramNavArrive">Arrive at your destination</string>
     <string name="PhogramNavOnto">%1$s onto %2$s</string>
+    <string name="PhogramNavGoTime">Go · %1$s</string>
+    <string name="PhogramNavFastestRoute">Fastest route</string>
+    <string name="PhogramNavShortestRoute">Shortest route</string>
+    <string name="PhogramNavOtherRoute">Another way</string>
+    <string name="PhogramNavSlowerDistance">%1$s slower · %2$s</string>
+    <string name="PhogramNavEndTitle">End the trip?</string>
+    <string name="PhogramNavEndText">The directions to this place will stop.</string>
     <string name="PhogramAssistantTab">Assistant</string>
     <string name="PhogramAssistantGreeting">How can I help you?</string>
     <string name="PhogramAssistantIntro">Ask a question, write or summarize a text, translate, or describe a photo.</string>
