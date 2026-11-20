@@ -77,6 +77,7 @@ public class ApplicationLoaderImpl extends ApplicationLoader {
     @Override
     public boolean showCustomUpdateAppPopup(Context context, BetaUpdate update, int account) {
         if (shownDialog != null && shownDialog.isShowing()) return true;
+        android.util.Log.w("PhogramUpdate", "showing the update sheet for " + update.version);
         try {
             shownDialog = new UpdateAppAlertDialog(context, update, account);
             shownDialog.show();

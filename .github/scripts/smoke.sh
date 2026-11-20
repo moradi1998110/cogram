@@ -92,6 +92,10 @@ adb shell run-as "$PACKAGE" ls -l shared_prefs > "$OUT/prefs.txt" || true
 adb shell am start -n "$PACKAGE/org.telegram.messenger.DefaultIcon"
 sleep "$START_SECONDS"
 adb exec-out screencap -p > "$OUT/1-chats.png" || true
+# Builds given the update address (usmoke* tags) show the update sheet soon after opening.
+sleep 8
+adb exec-out screencap -p > "$OUT/1-update.png" || true
+adb logcat -d -s PhogramUpdate:W | tee -a "$OUT/steps.txt" > /dev/null || true
 adb shell dumpsys meminfo "$PACKAGE" > "$OUT/meminfo-chats.txt" || true
 
 adb shell input tap 160 160

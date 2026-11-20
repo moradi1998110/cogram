@@ -9,7 +9,7 @@ import org.json.JSONObject;
 import org.telegram.messenger.regular.BuildConfig;
 import org.telegram.ui.LaunchActivity;
 import org.telegram.ui.web.HttpGetFileTask;
-import org.telegram.ui.web.HttpGetTask;
+import android.util.Log;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -34,6 +34,7 @@ import java.util.Locale;
  */
 public class PhogramUpdater {
 
+    private static final String TAG = "PhogramUpdate";
     private static PhogramUpdater instance;
 
     public static PhogramUpdater getInstance() {
@@ -134,7 +135,8 @@ public class PhogramUpdater {
         checking = true;
         firstCheck = false;
         final String url = BuildConfig.UPDATE_URL;
-        new HttpGetTask(text -> AndroidUtilities.runOnUIThread(() -> {
+        Log.w(TAG, "checking for an update");
+        fetch(url, text -> AndroidUtilities.runOnUIThread(() -> {
             checking = false;
             final int oldCode = versionCode;
             try {
@@ -159,7 +161,10 @@ public class PhogramUpdater {
                 }
                 lastCheck = System.currentTimeMillis();
                 save();
+                Log.w(TAG, "latest release " + newCode + ", this version " + currentVersionCode()
+                        + (versionCode != 0 ? ", update pending" : ", up to date"));
             } catch (Exception e) {
+                Log.w(TAG, "update check failed: " + e);
                 FileLog.e("phogram: update check failed at " + url, e);
             }
             AndroidUtilities.cancelRunOnUIThread(scheduledCheck);
@@ -172,7 +177,44 @@ public class PhogramUpdater {
             } else if (versionCode != oldCode && !ApplicationLoader.mainInterfacePaused) {
                 showPopup();
             }
-        })).execute(url);
+        }));
+    }
+
+    /**
+     * Reads update.json on a thread of its own, within 20 seconds. Telegram's HttpGetTask was used first, but it runs
+     * on the shared queue of AsyncTask, which any long task of the app holds up, and it reports a failure without its
+     * reason. The answer is null on any failure, logged with the HTTP status or the error.
+     */
+    private static void fetch(String address, Utilities.Callback<String> done) {
+        Utilities.globalQueue.postRunnable(() -> {
+            String result = null;
+            java.net.HttpURLConnection connection = null;
+            try {
+                connection = (java.net.HttpURLConnection) new java.net.URL(address).openConnection();
+                connection.setConnectTimeout(20_000);
+                connection.setReadTimeout(20_000);
+                connection.setRequestProperty("Accept", "application/json");
+                final int status = connection.getResponseCode();
+                if (status == 200) {
+                    try (InputStream in = connection.getInputStream()) {
+                        final java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+                        final byte[] buffer = new byte[8192];
+                        int n;
+                        while ((n = in.read(buffer)) > 0 && out.size() < 256 * 1024) {
+                            out.write(buffer, 0, n);
+                        }
+                        result = out.toString("UTF-8");
+                    }
+                } else {
+                    Log.w(TAG, "update.json answered HTTP " + status);
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "update.json could not be read: " + e);
+            } finally {
+                if (connection != null) connection.disconnect();
+            }
+            done.run(result);
+        });
     }
 
     /** Telegram's update sheet for the pending release, if any. */
