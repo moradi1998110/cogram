@@ -436,6 +436,21 @@ final class OsmAndOffline {
         final net.osmand.data.Amenity amenity = (net.osmand.data.Amenity) result.object;
         final String subtype = amenity.getSubType() == null ? "" : amenity.getSubType();
         final String category = amenity.getType() == null ? "" : amenity.getType().getKeyName();
+        // Towns come as places too, with types such as "city;residential;wiki_place".
+        for (String part : subtype.split(";")) {
+            switch (part) {
+                case "city":
+                case "town":
+                case "village":
+                case "hamlet":
+                case "suburb":
+                case "neighbourhood":
+                case "quarter":
+                    return MapEngine.KIND_CITY;
+                default:
+                    break;
+            }
+        }
         switch (subtype) {
             case "fuel":
             case "charging_station":
@@ -485,7 +500,8 @@ final class OsmAndOffline {
             if (result.object instanceof net.osmand.data.Amenity) {
                 final net.osmand.data.Amenity amenity = (net.osmand.data.Amenity) result.object;
                 if (amenity.getSubType() != null) {
-                    return MapPoiTypes.getDefault().getPoiTranslation(amenity.getSubType());
+                    // Only the first of several types ("city;residential;wiki_place").
+                    return MapPoiTypes.getDefault().getPoiTranslation(amenity.getSubType().split(";")[0]);
                 }
             }
         } catch (Exception e) {
@@ -553,7 +569,8 @@ final class OsmAndOffline {
         // main roads, so a route across the country, such as Basra to Mosul, takes seconds instead of searching every
         // road on the way; the start and the end are then joined to that network on the detailed roads. Where the file
         // has no such network, OsmAnd falls back to its classic search over all roads.
-        planner.setDefaultHHRoutingConfig();
+        // With up to two alternatives, which the preview offers beside the best route.
+        planner.setHHRoutingConfig(RoutePlannerFrontEnd.defaultHHConfig().calcAlternative(MAX_ROUTES - 1));
         final RoutingContext context = planner.buildRoutingContext(config, null, new BinaryMapIndexReader[] { file },
                 RoutePlannerFrontEnd.RouteCalculationMode.NORMAL);
         final RouteResultPreparation.RouteCalcResult result = planner.searchRoute(context, start, end, null);

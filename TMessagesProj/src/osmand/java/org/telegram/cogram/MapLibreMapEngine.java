@@ -757,9 +757,9 @@ final class MapLibreMapEngine implements MapEngine {
         if (map != null && map.getLocationComponent().isLocationComponentActivated()) {
             final LocationComponent location = map.getLocationComponent();
             location.setRenderMode(RenderMode.GPS);
-            location.setCameraMode(CameraMode.TRACKING_GPS);
-            location.zoomWhileTracking(NAVIGATION_ZOOM);
-            location.tiltWhileTracking(NAVIGATION_TILT);
+            // One transition to the driver, zoomed in and tilted; zooming and tilting separately while the camera
+            // is still moving into tracking is ignored by MapLibre.
+            location.setCameraMode(CameraMode.TRACKING_GPS, CAMERA_MS, NAVIGATION_ZOOM, null, NAVIGATION_TILT, null);
         }
         final android.location.LocationManager manager =
                 (android.location.LocationManager) context.getSystemService(Context.LOCATION_SERVICE);
@@ -787,6 +787,10 @@ final class MapLibreMapEngine implements MapEngine {
     private void onNavigationPosition(Location location) {
         final RouteNavigator current = navigator;
         if (current == null || destroyed || location == null) return;
+        // The arrow and the camera follow the positions navigation uses, not only those of MapLibre's own provider.
+        if (map != null && map.getLocationComponent().isLocationComponentActivated() && !"phogram".equals(location.getProvider())) {
+            map.getLocationComponent().forceLocationUpdate(location);
+        }
         final NavigationState state = current.update(location.getLatitude(), location.getLongitude());
         if (current.isOffRoute() && !rerouting && current.route.destination != null) {
             // The driver left the route: a new one from here, drawn as soon as it is found.
