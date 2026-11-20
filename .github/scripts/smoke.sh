@@ -361,7 +361,7 @@ sleep 2
 dump_screen 9-settings-end
 # Phogram has no Premium, Stars, Gram wallet or gifts: none of them may be offered in the menu or settings.
 paid=$(cat "$OUT"/8-chats-menu.xml "$OUT"/9-settings*.xml 2>/dev/null \
-  | grep -oiE 'text="[^"]*(Premium|Stars|Gram|TON|Wallet|Gift|Business)[^"]*"' | sort -u)
+  | grep -oiE 'text="[^"]*\b(Premium|Stars|Gram|TON|Wallet|Gifts?|Business)\b[^"]*"' | sort -u)
 if [ -n "$paid" ]; then
   echo "PAID SURFACES SHOWN: $paid" | tee -a "$OUT/steps.txt"
 else
