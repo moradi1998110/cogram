@@ -1731,6 +1731,11 @@ public class FileLoader extends BaseController {
         fileLoaderQueue.postRunnable(() -> {
             for (int a = 0; a < files.size(); a++) {
                 File file = files.get(a);
+                if (org.telegram.cogram.CogramGateway.isEngineFile(file)) {
+                    // Phogram shows the XMPP engine's own copy of a chat's file; the engine deletes it with
+                    // its message, and Telegram must not when it only thinks the message's media changed.
+                    continue;
+                }
                 File encrypted = new File(file.getAbsolutePath() + ".enc");
                 if (encrypted.exists()) {
                     try {

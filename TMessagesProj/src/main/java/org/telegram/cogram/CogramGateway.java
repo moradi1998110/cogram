@@ -109,6 +109,19 @@ public final class CogramGateway {
         return false;
     }
 
+    /**
+     * The XMPP engine keeps every chat's file in the app's private storage (files/attachments), out of
+     * reach of other apps, a computer on USB and backups. Telegram shows that copy itself instead of
+     * keeping a second one, so only the engine may delete it.
+     */
+    public static boolean isEngineFile(java.io.File file) {
+        if (!ENABLED || file == null) {
+            return false;
+        }
+        String engineDir = new java.io.File(ApplicationLoader.applicationContext.getFilesDir(), "attachments").getAbsolutePath() + java.io.File.separator;
+        return file.getAbsolutePath().startsWith(engineDir);
+    }
+
     public static boolean needsLogin() {
         return ENABLED && !isDemoSelected() && !XmppBackend.hasAccount(ApplicationLoader.applicationContext);
     }

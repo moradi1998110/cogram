@@ -140,7 +140,8 @@ public class DataSettingsActivity extends BaseFragment {
         dataUsageRow = rowCount++;
         storageNumRow = -1;
         storageDirs = AndroidUtilities.getRootDirs();
-        if (storageDirs.size() > 1) {
+        // Phogram keeps chats' files in its private storage only, never on a memory card.
+        if (!org.telegram.cogram.CogramGateway.ENABLED && storageDirs.size() > 1) {
             storageNumRow = rowCount++;
         }
         usageSection2Row = rowCount++;

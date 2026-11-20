@@ -394,6 +394,18 @@ if tap_view 'text="New conversation"'; then
   dump_screen 12-assistant-recent
 fi
 
+# Chats' files, pictures, logs and caches stay in the app's private storage. Outside it only the downloaded
+# map data may live (public OpenStreetMap data), so anything else there is reported.
+outside=$(adb shell "find /sdcard/Android/data/$PACKAGE /sdcard/Android/media/$PACKAGE /sdcard/Pictures/Telegram -type f 2>/dev/null" \
+  | tr -d '\r' | grep -v "/files/maps/" || true)
+if [ -n "$outside" ]; then
+  echo "FILES OUTSIDE PRIVATE STORAGE:" | tee -a "$OUT/steps.txt"
+  echo "$outside" | head -40 | tee -a "$OUT/steps.txt"
+else
+  echo "Private storage: nothing outside it but map data" | tee -a "$OUT/steps.txt"
+fi
+as_app ls -R files/Telegram cache > "$OUT/private-files.txt" 2>&1 || true
+
 adb shell pidof "$PACKAGE" > "$OUT/pid.txt" || true
 adb logcat -d -v threadtime > "$OUT/logcat.txt" || true
 adb logcat -d -b crash -v threadtime > "$OUT/logcat-crash.txt" || true

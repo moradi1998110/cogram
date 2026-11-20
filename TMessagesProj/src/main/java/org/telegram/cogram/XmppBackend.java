@@ -275,6 +275,7 @@ final class XmppBackend implements GatewayBackend {
             disableExtraAccounts(connected, account);
             calls = new XmppCalls(connected, account, selfId, callPeers);
         }
+        events.execute(this::moveToPrivateStorage);
         if (BuildVars.LOGS_ENABLED) {
             FileLog.d("cogram: engine ready, releasing " + ready.size() + " waiting requests");
         }
@@ -1017,6 +1018,92 @@ final class XmppBackend implements GatewayBackend {
         }
     }
 
+    private static final String KEY_PRIVATE_STORAGE = "private_storage_v1";
+    /** How many of a chat's newest messages are pointed at their engine files when moving to private storage. */
+    private static final int PRIVATE_STORAGE_SCAN = 5000;
+
+    /**
+     * Once, after updating: Telegram's copies of chats' files lived in Android/data and Android/media,
+     * where other apps (Android 10 and older) and a computer on USB could read them. They are deleted,
+     * as they only repeated the engine's private copies, and Telegram is pointed at the engine's files.
+     * The folders Telegram may share with the real Telegram app on old phones are left alone.
+     */
+    private void moveToPrivateStorage() {
+        if (preferences.getBoolean(KEY_PRIVATE_STORAGE, false)) {
+            return;
+        }
+        File external = context.getExternalFilesDir(null);
+        if (external != null) {
+            deleteTree(new File(external, "Telegram"));
+            deleteTree(new File(external, "logs"));
+        }
+        try {
+            for (File media : context.getExternalMediaDirs()) {
+                if (media != null) {
+                    deleteTree(new File(media, "Telegram"));
+                }
+            }
+        } catch (RuntimeException e) {
+            FileLog.e(e);
+        }
+        File externalCache = context.getExternalCacheDir();
+        if (externalCache != null) {
+            File[] children = externalCache.listFiles();
+            if (children != null) {
+                for (File child : children) {
+                    deleteTree(child);
+                }
+            }
+        }
+        // Telegram's table of where each file is still names the deleted copies; it starts over, filled
+        // with the engine's files below and with any file Telegram fetches from now on.
+        org.telegram.messenger.FileLoader.getInstance(org.telegram.messenger.UserConfig.selectedAccount).getFileDatabase().clear();
+        shownEngineFiles.clear();
+        int shown = 0;
+        for (Conversation conversation : chatsWhenReady()) {
+            synchronized (this) {
+                long peerId = peerId(conversation);
+                for (Message message : service.databaseBackend.getMessages(conversation, PRIVATE_STORAGE_SCAN, -1)) {
+                    int id = ids.findMessage(message.getUuid());
+                    // Only messages Telegram has; numbering others here would keep them from arriving as new.
+                    if (id == 0 || !isMedia(message) || isDownloading(message)) {
+                        continue;
+                    }
+                    try {
+                        media(message, id, (int) (message.getTimeSent() / 1000));
+                        shown++;
+                    } catch (RuntimeException e) {
+                        FileLog.e(e);
+                    }
+                }
+                if (BuildVars.LOGS_ENABLED) {
+                    FileLog.d("cogram: private storage, chat " + peerId + " done");
+                }
+            }
+        }
+        preferences.edit().putBoolean(KEY_PRIVATE_STORAGE, true).apply();
+        FileLog.d("cogram: moved to private storage, " + shown + " files shown from the engine");
+    }
+
+    private synchronized List<Conversation> chatsWhenReady() {
+        return service == null ? new ArrayList<>() : chats();
+    }
+
+    private static void deleteTree(File file) {
+        if (file == null || !file.exists()) {
+            return;
+        }
+        File[] children = file.isDirectory() ? file.listFiles() : null;
+        if (children != null) {
+            for (File child : children) {
+                deleteTree(child);
+            }
+        }
+        if (!file.delete()) {
+            FileLog.e("cogram: could not delete " + file);
+        }
+    }
+
     private List<Conversation> chats() {
         ArrayList<Conversation> all = new ArrayList<>();
         service.populateWithOrderedConversations(all);
@@ -1738,7 +1825,37 @@ final class XmppBackend implements GatewayBackend {
         }
         // Telegram's parser fills in the file locations its loaders use.
         SerializedData data = serialize(media);
-        return TLRPC.MessageMedia.TLdeserialize(data, data.readInt32(false), false);
+        TLRPC.MessageMedia parsed = TLRPC.MessageMedia.TLdeserialize(data, data.readInt32(false), false);
+        if (local) {
+            showEngineFile(id, parsed, file);
+        }
+        return parsed;
+    }
+
+    /** Media ids whose engine file Telegram already points at in this run, with that file's path. */
+    private final Map<Long, String> shownEngineFiles = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * Points Telegram at the engine's own copy of a chat's file, which Telegram then shows and plays as
+     * a file it has, instead of fetching it through the gateway into a second copy. Both copies used to
+     * stay on the phone, Telegram's in a folder other apps and a computer on USB could read.
+     */
+    private void showEngineFile(long mediaId, TLRPC.MessageMedia media, File file) {
+        String path = file.getAbsolutePath();
+        if (path.equals(shownEngineFiles.get(mediaId))) {
+            return;
+        }
+        TLObject attach = null;
+        if (media instanceof TLRPC.TL_messageMediaDocument && media.document != null) {
+            attach = media.document;
+        } else if (media instanceof TLRPC.TL_messageMediaPhoto && media.photo != null && !media.photo.sizes.isEmpty()) {
+            attach = media.photo.sizes.get(0);
+        }
+        if (attach == null) {
+            return;
+        }
+        org.telegram.messenger.FileLoader.getInstance(org.telegram.messenger.UserConfig.selectedAccount).setLocalPathTo(attach, path);
+        shownEngineFiles.put(mediaId, path);
     }
 
     /** The name as sent comes first, since Telegram finds its copy of a file by the name's extension. */
