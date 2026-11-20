@@ -246,12 +246,20 @@ jobs:
           cp dist/phogram-arm64.apk "$APK"
           CODE=$("$ANDROID_HOME/build-tools/36.0.0/aapt2" dump badging "$APK" | sed -n "s/.*versionCode='\([0-9]*\)'.*/\1/p" | head -1)
           SHA=$(sha256sum "$APK" | cut -d' ' -f1)
-          # What is new: the text of the release written on GitHub's Releases page, else the tag's message.
+          # What is new, for the people updating: the text of the release written on GitHub's Releases page, else its
+          # title (when it is not just the version), else the message of a tag made with git (-a). Never a commit
+          # message: a tag made on the Releases page has none of its own, and git would answer with the commit's.
           NOTES=$(gh release view "$GITHUB_REF_NAME" --json body --jq .body 2>/dev/null | tr -d '\r' || true)
           case "$NOTES" in "Automated build of"*) NOTES="";; esac
           if [ -z "$NOTES" ]; then
+            TITLE=$(gh release view "$GITHUB_REF_NAME" --json name --jq .name 2>/dev/null || true)
+            case "$TITLE" in ""|"$GITHUB_REF_NAME"|"${GITHUB_REF_NAME#v}") ;; *) NOTES="$TITLE";; esac
+          fi
+          if [ -z "$NOTES" ]; then
             git fetch -q --depth=1 origin "+refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME" || true
-            NOTES=$(git tag -l --format='%(contents)' "$GITHUB_REF_NAME" | sed '/^-----BEGIN PGP/,$d')
+            if [ "$(git cat-file -t "refs/tags/$GITHUB_REF_NAME" 2>/dev/null)" = "tag" ]; then
+              NOTES=$(git tag -l --format='%(contents)' "$GITHUB_REF_NAME" | sed '/^-----BEGIN PGP/,$d')
+            fi
           fi
           MIN=0
           if printf '%s' "$NOTES" | grep -q '^\[required\]'; then MIN=$CODE; fi
