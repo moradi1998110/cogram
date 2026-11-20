@@ -376,6 +376,7 @@ final class OsmAndOffline {
                                 result.location.getLatitude(), result.location.getLongitude(), kindOf(result), typeOf(search, result)));
                         if (places.size() >= MAX_SEARCH_RESULTS) break;
                     }
+                    promoteMatchingTowns(places, query);
                 }
             } catch (Throwable e) {
                 FileLog.e(e);
@@ -386,6 +387,34 @@ final class OsmAndOffline {
                 }
             });
         });
+    }
+
+    /**
+     * OsmAnd sorts by distance, so "Mosul" typed in Basra put a nearby restaurant of that name above the city. A town
+     * or city whose name is what was typed comes first, as people mean the place itself; the rest keep OsmAnd's order.
+     */
+    private static void promoteMatchingTowns(List<MapEngine.Place> places, String query) {
+        final String typed = normalize(query);
+        if (typed.isEmpty()) return;
+        final List<MapEngine.Place> towns = new ArrayList<>();
+        for (int i = places.size() - 1; i >= 0; i--) {
+            final MapEngine.Place place = places.get(i);
+            if (place.kind == MapEngine.KIND_CITY && normalize(place.name).equals(typed)) {
+                towns.add(0, places.remove(i));
+            }
+        }
+        places.addAll(0, towns);
+    }
+
+    /** Lower case without Arabic diacritics, the Arabic definite article or spaces at the ends, for comparing names. */
+    private static String normalize(String text) {
+        if (text == null) return "";
+        String value = text.trim().toLowerCase().replaceAll("[\\u064B-\\u0652\\u0640]", "")
+                .replace('أ', 'ا').replace('إ', 'ا').replace('آ', 'ا').replace('ة', 'ه').replace('ى', 'ي');
+        if (value.startsWith("ال") && value.length() > 3) {
+            value = value.substring(2);
+        }
+        return value;
     }
 
     /** The kind of a found place, from OsmAnd's place type (amenity subtype and category) or its address level. */

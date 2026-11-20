@@ -6,6 +6,12 @@
 -keep class net.osmand.protobuf.** { *; }
 -keep class net.osmand.binary.OsmandOdb** { *; }
 
+# The highway hierarchy (HH) routing makes its network points by reflection through their no-argument
+# constructors, so those classes keep them.
+-keep class net.osmand.router.HHRouteDataStructure** { <init>(...); *; }
+-keep class net.osmand.router.HHRoutePlanner** { *; }
+-keep class net.osmand.binary.BinaryHHRouteReaderAdapter** { *; }
+
 # The routing rules (routing.xml) name router classes and fields.
 -keep class net.osmand.router.GeneralRouter { *; }
 -keep class net.osmand.router.GeneralRouter$* { *; }
