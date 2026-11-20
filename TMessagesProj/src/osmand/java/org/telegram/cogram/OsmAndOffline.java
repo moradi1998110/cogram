@@ -729,7 +729,9 @@ final class OsmAndOffline {
             final int at = Math.min(segmentStarts.get(s), points.size() - 1);
             final TurnType turn = segment.getTurnType();
             final int exit = turn != null && turn.isRoundAbout() ? turn.getExitOut() : 0;
-            maneuvers.add(new MapEngine.Maneuver(type, exit, roadName(segment, language), at, along[at]));
+            final MapEngine.Maneuver maneuver = new MapEngine.Maneuver(type, exit, roadName(segment, language), at, along[at]);
+            maneuver.angle = turnAngle(points, along, at);
+            maneuvers.add(maneuver);
         }
         maneuvers.add(new MapEngine.Maneuver(MapEngine.Maneuver.ARRIVE, 0, "", points.size() - 1, along[points.size() - 1]));
         String via = "";
@@ -764,6 +766,24 @@ final class OsmAndOffline {
             }
         }
         return route;
+    }
+
+    /**
+     * The real angle of the turn at a point: the direction of the road 25 m after it against the direction 25 m before
+     * it, from -180 to 180, right positive. The arrows draw this angle, so they look like the junction itself.
+     */
+    private static float turnAngle(List<double[]> points, float[] along, int at) {
+        int before = at;
+        while (before > 0 && along[at] - along[before] < 25) before--;
+        int after = at;
+        while (after < points.size() - 1 && along[after] - along[at] < 25) after++;
+        if (before == at || after == at) return Float.NaN;
+        final double in = MapEngine.bearing(points.get(before)[0], points.get(before)[1], points.get(at)[0], points.get(at)[1]);
+        final double out = MapEngine.bearing(points.get(at)[0], points.get(at)[1], points.get(after)[0], points.get(after)[1]);
+        double angle = out - in;
+        while (angle > 180) angle -= 360;
+        while (angle < -180) angle += 360;
+        return (float) angle;
     }
 
     /** The road's speed limit in km/h from its maxspeed tag in the driving direction; 0 when the map does not say. */

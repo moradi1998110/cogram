@@ -146,6 +146,8 @@ public interface MapEngine {
         public final String street;
         /** Where the turn is: its index in the route's points, and its distance from the start in meters. */
         public final int pointIndex;
+        /** The real angle of the turn, from the road before to the road after, in degrees (right positive); NaN unknown. */
+        public float angle = Float.NaN;
         public final float distance;
 
         public Maneuver(int type, int exit, String street, int pointIndex, float distance) {
@@ -200,6 +202,16 @@ public interface MapEngine {
                 along[i] = along[i - 1] + (float) MapEngine.distance(points.get(i - 1)[0], points.get(i - 1)[1], points.get(i)[0], points.get(i)[1]);
             }
         }
+    }
+
+    /** The direction from one point to another, in degrees clockwise from north. */
+    static double bearing(double lat1, double lon1, double lat2, double lon2) {
+        final double p1 = Math.toRadians(lat1);
+        final double p2 = Math.toRadians(lat2);
+        final double dLon = Math.toRadians(lon2 - lon1);
+        final double y = Math.sin(dLon) * Math.cos(p2);
+        final double x = Math.cos(p1) * Math.sin(p2) - Math.sin(p1) * Math.cos(p2) * Math.cos(dLon);
+        return (Math.toDegrees(Math.atan2(y, x)) + 360) % 360;
     }
 
     /** Distance between two points on the Earth, in meters. */

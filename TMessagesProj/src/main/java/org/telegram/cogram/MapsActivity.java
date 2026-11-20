@@ -666,6 +666,12 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
             chipsRow.addView(tile, LayoutHelper.createLinear(76, 80, 0f, Gravity.CENTER_VERTICAL, 3, 0, 3, 0));
         }
         chipsScroll.addView(chipsRow, LayoutHelper.createScroll(LayoutHelper.WRAP_CONTENT, 88, Gravity.LEFT));
+        // Right to left in Arabic, Kurdish and Persian: the first category on the right, the row scrolled to it.
+        if (LocaleController.isRTL) {
+            chipsScroll.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+            chipsRow.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+            chipsScroll.post(() -> chipsScroll.fullScroll(View.FOCUS_RIGHT));
+        }
         searchSheet.addView(chipsScroll, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 88, 0, 0, 0, 4));
 
         listFrame = new FrameLayout(context);
@@ -1391,6 +1397,7 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         MyPlacesRow(Context context) {
             super(context);
             setOrientation(HORIZONTAL);
+            if (LocaleController.isRTL) setLayoutDirection(LAYOUT_DIRECTION_RTL);
             setPadding(dp(12), dp(4), dp(12), dp(10));
             final boolean rtl = LocaleController.isRTL;
             for (int i = 0; i < 2; i++) {
@@ -1415,7 +1422,7 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
                 final int index = i;
                 card.setOnClickListener(v -> openMyPlace(index));
                 ScaleStateListAnimator.apply(card, 0.02f, 1.2f);
-                addView(card, LayoutHelper.createLinear(0, 58, 1f, 0, 0, i == 0 ? 8 : 0, 0));
+                addView(card, LayoutHelper.createLinear(0, 58, 1f, i == 1 ? 4 : 0, 0, i == 0 ? 4 : 0, 0));
                 titles[i] = title;
                 subtitles[i] = subtitle;
                 icons[i] = icon;

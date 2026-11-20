@@ -105,27 +105,41 @@ final class MapKinds {
         canvas.drawText(code, cx, cy - (metrics.ascent + metrics.descent) / 2, text);
     }
 
-    /** A place on the way: its emoji on a circle in its kind's color with a white ring and a point down, as a pin. */
+    /**
+     * A place on the way, as a soft pin: one smooth teardrop (no sharp corner, its point rounded), white with a soft
+     * shadow under it, and inside it a circle in the kind's color with the kind's emoji.
+     */
     static android.graphics.Bitmap pinImage(int kind) {
-        final int size = dp(40);
-        final int height = size + dp(8);
-        final android.graphics.Bitmap bitmap = android.graphics.Bitmap.createBitmap(size, height, android.graphics.Bitmap.Config.ARGB_8888);
+        final float w = dp(38);
+        final float h = dp(48);
+        final float pad = dp(4);
+        final int width = (int) (w + pad * 2);
+        final int height = (int) (h + pad * 2);
+        final android.graphics.Bitmap bitmap = android.graphics.Bitmap.createBitmap(width, height, android.graphics.Bitmap.Config.ARGB_8888);
         final android.graphics.Canvas canvas = new android.graphics.Canvas(bitmap);
+        final float cx = width / 2f;
+        final float r = w / 2f;
+        final float cy = pad + r;
+        final float tip = pad + h;
+        // The teardrop: the round head, then two curves that meet in a rounded point.
+        final android.graphics.Path drop = new android.graphics.Path();
+        drop.addArc(new android.graphics.RectF(cx - r, cy - r, cx + r, cy + r), 150, 240);
+        final float sideX = (float) (r * Math.cos(Math.toRadians(30)));
+        final float sideY = (float) (r * Math.sin(Math.toRadians(30)));
+        drop.reset();
+        drop.moveTo(cx + sideX, cy + sideY);
+        drop.arcTo(new android.graphics.RectF(cx - r, cy - r, cx + r, cy + r), 30, -240, false);
+        drop.cubicTo(cx - r * 0.55f, cy + r * 0.95f, cx - dp(3), tip - dp(4), cx, tip);
+        drop.cubicTo(cx + dp(3), tip - dp(4), cx + r * 0.55f, cy + r * 0.95f, cx + sideX, cy + sideY);
+        drop.close();
         final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        final float r = size / 2f;
-        paint.setColor(0x33000000);
-        canvas.drawCircle(r, r + dp(1), r - dp(1), paint);
-        final android.graphics.Path point = new android.graphics.Path();
-        point.moveTo(r - dp(7), size - dp(6));
-        point.lineTo(r, height);
-        point.lineTo(r + dp(7), size - dp(6));
-        point.close();
         paint.setColor(0xFFFFFFFF);
-        canvas.drawPath(point, paint);
-        canvas.drawCircle(r, r, r - dp(2), paint);
+        paint.setShadowLayer(dp(2.5f), 0, dp(1), 0x40000000);
+        canvas.drawPath(drop, paint);
+        paint.clearShadowLayer();
         paint.setColor(color(kind));
-        canvas.drawCircle(r, r, r - dp(4.5f), paint);
-        drawEmoji(canvas, emoji(kind), r, r, dp(20));
+        canvas.drawCircle(cx, cy, r - dp(3.5f), paint);
+        drawEmoji(canvas, emoji(kind), cx, cy, dp(19));
         return bitmap;
     }
 
@@ -155,6 +169,48 @@ final class MapKinds {
         final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
         paint.setColor(0xFF2B6CB8);
         canvas.drawRoundRect(new android.graphics.RectF(0, 0, size, size), dp(9), dp(9), paint);
+        return bitmap;
+    }
+
+    /** The bubble's size, its tail's width and its corner radius, as in Telegram's message bubbles. */
+    static final float BUBBLE_SIZE = 44;
+    static final float BUBBLE_TAIL = 7;
+    static final float BUBBLE_RADIUS = 14;
+
+    /**
+     * A road's or a place's name on the map in the shape of Telegram's incoming message bubble: rounded corners and
+     * the curved tail at its bottom-left corner, which points at the road. Colors of the chat theme, with its soft
+     * shadow. The map stretches its middle around the name and keeps the corners and the tail.
+     */
+    static android.graphics.Bitmap bubbleImage() {
+        final float size = dp(BUBBLE_SIZE);
+        final float tail = dp(BUBBLE_TAIL);
+        final float radius = dp(BUBBLE_RADIUS);
+        final float shadow = dp(2);
+        final int width = (int) (size + tail);
+        final int height = (int) (size + shadow);
+        final android.graphics.Bitmap bitmap = android.graphics.Bitmap.createBitmap(width, height, android.graphics.Bitmap.Config.ARGB_8888);
+        final android.graphics.Canvas canvas = new android.graphics.Canvas(bitmap);
+        final float left = tail;
+        final float right = width;
+        final float top = 0;
+        final float bottom = size;
+        final android.graphics.Path bubble = new android.graphics.Path();
+        bubble.moveTo(left + radius, top);
+        bubble.lineTo(right - radius, top);
+        bubble.quadTo(right, top, right, top + radius);
+        bubble.lineTo(right, bottom - radius);
+        bubble.quadTo(right, bottom, right - radius, bottom);
+        // Telegram's tail: the bottom edge runs out to the tail's point, which curves back up into the left side.
+        bubble.lineTo(0, bottom);
+        bubble.quadTo(left, bottom - dp(1), left, bottom - dp(8));
+        bubble.lineTo(left, top + radius);
+        bubble.quadTo(left, top, left + radius, top);
+        bubble.close();
+        final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        paint.setColor(Theme.getColor(Theme.key_chat_inBubble));
+        paint.setShadowLayer(dp(1.5f), 0, dp(1), Theme.getColor(Theme.key_chat_inBubbleShadow));
+        canvas.drawPath(bubble, paint);
         return bitmap;
     }
 
@@ -322,10 +378,22 @@ final class MapKinds {
         }
 
         void setTurn(int type, int exit) {
+            setTurn(type, exit, Float.NaN);
+        }
+
+        /** The turn drawn at its real angle on the road when known (right positive), else from its kind. */
+        void setTurn(int type, int exit, float angle) {
             this.type = type;
             this.exit = exit;
+            this.angle = angle;
             invalidate();
         }
+
+        void setTurn(MapEngine.Maneuver maneuver) {
+            setTurn(maneuver.type, maneuver.exit, maneuver.angle);
+        }
+
+        private float angle = Float.NaN;
 
         @Override
         protected void onDraw(Canvas canvas) {
@@ -336,6 +404,11 @@ final class MapKinds {
             paint.setStyle(Paint.Style.STROKE);
             canvas.save();
             canvas.translate((w - s) / 2f, (h - s) / 2f);
+            if (!Float.isNaN(angle) && type != MapEngine.Maneuver.ARRIVE && type != MapEngine.Maneuver.U_TURN) {
+                drawAngle(canvas, s);
+                canvas.restore();
+                return;
+            }
             final boolean left = type == MapEngine.Maneuver.LEFT || type == MapEngine.Maneuver.SLIGHT_LEFT
                     || type == MapEngine.Maneuver.SHARP_LEFT || type == MapEngine.Maneuver.KEEP_LEFT || type == MapEngine.Maneuver.U_TURN;
             if (left) {
@@ -415,6 +488,55 @@ final class MapKinds {
             canvas.drawPath(path, paint);
             drawHead(canvas, endX, endY, angle, s);
             canvas.restore();
+        }
+
+        /**
+         * The turn at its real angle: the road in from below, bending at the junction by the angle; at a roundabout
+         * a ring with the road out at that angle and the exit's number.
+         */
+        private void drawAngle(Canvas canvas, float s) {
+            final float cx = s * 0.5f;
+            final float bottom = s * 0.92f;
+            final float junction = s * 0.55f;
+            final double radians = Math.toRadians(angle);
+            final float length = s * 0.4f;
+            path.rewind();
+            if (type == MapEngine.Maneuver.ROUNDABOUT) {
+                final float r = s * 0.17f;
+                final float cy = s * 0.45f;
+                canvas.drawCircle(cx, cy, r, paint);
+                path.moveTo(cx, bottom);
+                path.lineTo(cx, cy + r);
+                canvas.drawPath(path, paint);
+                // The way out leaves the ring on the side of its direction.
+                final float sx = cx + (float) (Math.sin(radians) * r);
+                final float sy = cy - (float) (Math.cos(radians) * r);
+                final float ex = cx + (float) (Math.sin(radians) * (r + s * 0.25f));
+                final float ey = cy - (float) (Math.cos(radians) * (r + s * 0.25f));
+                path.rewind();
+                path.moveTo(sx, sy);
+                path.lineTo(ex, ey);
+                canvas.drawPath(path, paint);
+                drawHead(canvas, ex, ey, angle, s);
+                if (exit > 0) {
+                    paint.setStyle(Paint.Style.FILL);
+                    paint.setTextSize(s * 0.2f);
+                    paint.setTextAlign(Paint.Align.CENTER);
+                    final Paint.FontMetrics metrics = paint.getFontMetrics();
+                    canvas.drawText(String.valueOf(exit), cx, cy - (metrics.ascent + metrics.descent) / 2, paint);
+                    paint.setStyle(Paint.Style.STROKE);
+                }
+                return;
+            }
+            // A gentle bend for small angles, as the road keeps its line; a corner for real turns.
+            final float ex = cx + (float) (Math.sin(radians) * length);
+            final float ey = junction - (float) (Math.cos(radians) * length);
+            path.moveTo(cx, bottom);
+            path.lineTo(cx, junction + s * 0.08f);
+            path.quadTo(cx, junction, cx + (float) (Math.sin(radians) * s * 0.08f), junction - (float) (Math.cos(radians) * s * 0.08f));
+            path.lineTo(ex, ey);
+            canvas.drawPath(path, paint);
+            drawHead(canvas, ex, ey, angle, s);
         }
 
         /** An arrowhead at the point, pointing at the angle (0 is up, 90 is right). */

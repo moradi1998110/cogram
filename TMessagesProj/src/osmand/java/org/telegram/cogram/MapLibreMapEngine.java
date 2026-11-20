@@ -832,6 +832,12 @@ final class MapLibreMapEngine implements MapEngine {
     private static final String WARNINGS_LAYER = "phogram-warnings-layer";
     private static final String ALONG_SOURCE = "phogram-along";
     private static final String ALONG_LAYER = "phogram-along-layer";
+    private static final String ALONG_NAMES_LAYER = "phogram-along-names";
+    /** The user moved the map away from the driver: every road's name on the route pops up, not only the next one. */
+    private boolean freeCamera;
+    /** Where along the route the places on the way were looked for, so their distance ahead stays right. */
+    private float alongBase;
+    private String nearKey = "";
     private int shownManeuver = -2;
     private final List<AlongPlace> alongPlaces = new ArrayList<>();
     private Runnable trackingListener;
@@ -846,6 +852,16 @@ final class MapLibreMapEngine implements MapEngine {
         target.addImage("phogram-plate", MapKinds.namePlate(), stretch, stretch,
                 new org.maplibre.android.maps.ImageContent(corner, MapKinds.dp(5), plate - corner, plate - MapKinds.dp(5)));
         target.addImage("phogram-arrow-head", MapKinds.arrowHead());
+        // Telegram's message bubble, stretched in its middle around a name; its corners and tail keep their shape.
+        final int tail = MapKinds.dp(MapKinds.BUBBLE_TAIL);
+        final int radius = MapKinds.dp(MapKinds.BUBBLE_RADIUS);
+        final int bubble = MapKinds.dp(MapKinds.BUBBLE_SIZE);
+        final List<org.maplibre.android.maps.ImageStretches> bubbleX = new ArrayList<>();
+        bubbleX.add(new org.maplibre.android.maps.ImageStretches(tail + radius, tail + bubble - radius));
+        final List<org.maplibre.android.maps.ImageStretches> bubbleY = new ArrayList<>();
+        bubbleY.add(new org.maplibre.android.maps.ImageStretches(radius, bubble - radius));
+        target.addImage("phogram-bubble", MapKinds.bubbleImage(), bubbleX, bubbleY,
+                new org.maplibre.android.maps.ImageContent(tail + MapKinds.dp(10), MapKinds.dp(7), tail + bubble - MapKinds.dp(10), bubble - MapKinds.dp(7)));
         for (int type = Warning.TRAFFIC_LIGHTS; type <= Warning.PEDESTRIANS; type++) {
             target.addImage("phogram-warning-" + type, MapKinds.warningImage(type));
         }
@@ -879,14 +895,30 @@ final class MapLibreMapEngine implements MapEngine {
                 PropertyFactory.textField(Expression.get("name")),
                 PropertyFactory.textFont(new String[] { "Noto Sans Medium" }),
                 PropertyFactory.textSize(14f),
-                PropertyFactory.textColor(0xFFFFFFFF),
-                PropertyFactory.iconImage("phogram-plate"),
+                PropertyFactory.textColor(Theme.getColor(Theme.key_chat_messageTextIn)),
+                // In Telegram's message bubble, its tail on the road: the name sits up and to the right of the point.
+                PropertyFactory.iconImage("phogram-bubble"),
                 PropertyFactory.iconTextFit(Property.ICON_TEXT_FIT_BOTH),
-                PropertyFactory.iconTextFitPadding(new Float[] { 4f, 9f, 4f, 9f }),
-                PropertyFactory.textAnchor(Property.TEXT_ANCHOR_BOTTOM),
-                PropertyFactory.iconAnchor(Property.ICON_ANCHOR_BOTTOM),
-                PropertyFactory.textOffset(new Float[] { 0f, -0.8f }),
+                PropertyFactory.iconTextFitPadding(new Float[] { 2f, 3f, 2f, 3f }),
+                PropertyFactory.textAnchor(Property.TEXT_ANCHOR_BOTTOM_LEFT),
+                PropertyFactory.textOffset(new Float[] { 1.2f, -0.9f }),
+                PropertyFactory.textAllowOverlap(false),
                 PropertyFactory.symbolSortKey(Expression.get("order")));
+        // A place's name over its pin, in the same bubble, once the driver is near it.
+        final SymbolLayer alongNames = new SymbolLayer(ALONG_NAMES_LAYER, ALONG_SOURCE).withProperties(
+                PropertyFactory.textField(Expression.get("name")),
+                PropertyFactory.textFont(new String[] { "Noto Sans Medium" }),
+                PropertyFactory.textSize(13f),
+                PropertyFactory.textColor(Theme.getColor(Theme.key_chat_messageTextIn)),
+                PropertyFactory.iconImage("phogram-bubble"),
+                PropertyFactory.iconTextFit(Property.ICON_TEXT_FIT_BOTH),
+                PropertyFactory.iconTextFitPadding(new Float[] { 2f, 3f, 2f, 3f }),
+                PropertyFactory.textAnchor(Property.TEXT_ANCHOR_BOTTOM_LEFT),
+                PropertyFactory.textOffset(new Float[] { 1.2f, -4.4f }),
+                PropertyFactory.textMaxWidth(10f),
+                PropertyFactory.textAllowOverlap(true),
+                PropertyFactory.iconAllowOverlap(true));
+        alongNames.setFilter(Expression.eq(Expression.get("near"), Expression.literal(true)));
         final SymbolLayer warnings = new SymbolLayer(WARNINGS_LAYER, WARNINGS_SOURCE).withProperties(
                 PropertyFactory.iconImage(Expression.get("icon")),
                 PropertyFactory.iconAllowOverlap(false),
@@ -910,6 +942,7 @@ final class MapLibreMapEngine implements MapEngine {
         style.addLayerAbove(line, MANEUVER_CASING);
         style.addLayer(warnings);
         style.addLayer(along);
+        style.addLayer(alongNames);
         style.addLayer(names);
         style.addLayer(head);
     }
@@ -975,17 +1008,47 @@ final class MapLibreMapEngine implements MapEngine {
                 setSource(MANEUVER_HEAD_SOURCE, FeatureCollection.fromFeature(head));
             }
         }
+        lastNext = next;
+        drawNames();
+    }
+
+    private Maneuver lastNext;
+
+    /**
+     * Road names on the route in Telegram's bubbles: while the camera follows the driver, only the next road's; once
+     * the user moves the map, every named road of the route pops up (each once, at its middle, where it is long
+     * enough for a name), and the map's collisions keep only those that fit.
+     */
+    private void drawNames() {
+        if (style == null || style.getSource(NAMES_SOURCE) == null) return;
+        final RouteNavigator current = navigator;
         final List<Feature> names = new ArrayList<>();
-        if (route != null && next != null) {
-            int order = 0;
-            for (Maneuver maneuver : route.maneuvers) {
-                if (maneuver.distance < next.distance || maneuver.street.isEmpty()) continue;
-                final double[] at = route.points.get(Math.min(maneuver.pointIndex + 1, route.points.size() - 1));
-                final Feature name = Feature.fromGeometry(Point.fromLngLat(at[1], at[0]));
-                name.addStringProperty("name", maneuver.street);
-                name.addNumberProperty("order", order);
-                names.add(name);
-                if (++order >= 2) break;
+        if (current != null) {
+            final Route route = current.route;
+            if (freeCamera) {
+                String previous = "";
+                for (int r = 0; r < route.roadStarts.length; r++) {
+                    final String road = route.roadNames[r] == null ? "" : route.roadNames[r];
+                    final int start = route.roadStarts[r];
+                    final int end = r + 1 < route.roadStarts.length ? route.roadStarts[r + 1] : route.points.size() - 1;
+                    if (road.isEmpty() || road.equals(previous) || route.along[end] - route.along[start] < 120) continue;
+                    previous = road;
+                    final int middle = Math.min((start + end) / 2, route.points.size() - 1);
+                    final Feature name = Feature.fromGeometry(Point.fromLngLat(route.points.get(middle)[1], route.points.get(middle)[0]));
+                    name.addStringProperty("name", road);
+                    name.addNumberProperty("order", names.size());
+                    names.add(name);
+                }
+            } else if (lastNext != null) {
+                for (Maneuver maneuver : route.maneuvers) {
+                    if (maneuver.distance < lastNext.distance || maneuver.street.isEmpty()) continue;
+                    final double[] at = route.points.get(Math.min(maneuver.pointIndex + 1, route.points.size() - 1));
+                    final Feature name = Feature.fromGeometry(Point.fromLngLat(at[1], at[0]));
+                    name.addStringProperty("name", maneuver.street);
+                    name.addNumberProperty("order", 0);
+                    names.add(name);
+                    break;
+                }
             }
         }
         setSource(NAMES_SOURCE, FeatureCollection.fromFeatures(names));
@@ -1000,6 +1063,28 @@ final class MapLibreMapEngine implements MapEngine {
         return (Math.toDegrees(Math.atan2(y, x)) + 360) % 360;
     }
 
+    /** The driver's distance along the route at the last position. */
+    private float travelled;
+
+    /** A place on the way within a kilometer ahead (or just passed): its name shows over its pin. */
+    private boolean near(AlongPlace along) {
+        final float ahead = alongBase + along.ahead - travelled;
+        return ahead > -50 && ahead < 1000;
+    }
+
+    /** Redraws the places only when one comes near or leaves, not on every position. */
+    private void updateNearPlaces() {
+        if (alongPlaces.isEmpty()) return;
+        final StringBuilder key = new StringBuilder();
+        for (int i = 0; i < alongPlaces.size(); i++) {
+            if (near(alongPlaces.get(i))) key.append(i).append(',');
+        }
+        if (!key.toString().equals(nearKey)) {
+            nearKey = key.toString();
+            drawAlong();
+        }
+    }
+
     private void drawAlong() {
         final List<Feature> features = new ArrayList<>();
         int order = 0;
@@ -1010,6 +1095,7 @@ final class MapLibreMapEngine implements MapEngine {
             feature.addStringProperty("name", along.place.name);
             feature.addStringProperty("type", along.place.type);
             feature.addNumberProperty("kind", along.place.kind);
+            feature.addBooleanProperty("near", near(along));
             feature.addNumberProperty("order", order++);
             features.add(feature);
         }
@@ -1026,8 +1112,11 @@ final class MapLibreMapEngine implements MapEngine {
             callback.onPlaces(new ArrayList<>());
             return;
         }
+        final float base = current.route.along[Math.min(current.pointIndex(), current.route.along.length - 1)];
         router.alongRoute(current.route, current.pointIndex(), kind, places -> {
             if (destroyed || navigator == null) return;
+            alongBase = base;
+            nearKey = "";
             alongPlaces.clear();
             alongPlaces.addAll(places);
             drawAlong();
@@ -1085,6 +1174,8 @@ final class MapLibreMapEngine implements MapEngine {
     public void showOverview() {
         final RouteNavigator current = navigator;
         if (map == null || current == null) return;
+        freeCamera = true;
+        drawNames();
         if (map.getLocationComponent().isLocationComponentActivated()) {
             map.getLocationComponent().setCameraMode(CameraMode.NONE);
         }
@@ -1105,6 +1196,8 @@ final class MapLibreMapEngine implements MapEngine {
     @SuppressWarnings("MissingPermission")
     public void recenter() {
         if (map == null || navigator == null || !map.getLocationComponent().isLocationComponentActivated()) return;
+        freeCamera = false;
+        drawNames();
         map.getLocationComponent().setCameraMode(CameraMode.TRACKING_GPS, CAMERA_MS, NAVIGATION_ZOOM, null, NAVIGATION_TILT, null);
     }
 
@@ -1120,6 +1213,10 @@ final class MapLibreMapEngine implements MapEngine {
         map.getLocationComponent().addOnCameraTrackingChangedListener(new org.maplibre.android.location.OnCameraTrackingChangedListener() {
             @Override
             public void onCameraTrackingDismissed() {
+                if (navigator != null) {
+                    freeCamera = true;
+                    drawNames();
+                }
                 if (navigator != null && trackingListener != null) {
                     trackingListener.run();
                 }
@@ -1145,6 +1242,7 @@ final class MapLibreMapEngine implements MapEngine {
     @SuppressWarnings("MissingPermission")
     public void startNavigation(Route route, NavigationListener listener) {
         stopNavigation();
+        freeCamera = false;
         navigator = new RouteNavigator(route);
         navigationListener = listener;
         shownRoutes.clear();
@@ -1198,6 +1296,8 @@ final class MapLibreMapEngine implements MapEngine {
             current.route.stops.remove(state.passedStop);
         }
         drawManeuver(state);
+        travelled = state.route != null && state.route.along.length > 0 ? state.route.along[state.route.along.length - 1] - state.remainingMeters : 0;
+        updateNearPlaces();
         if (current.isOffRoute() && !rerouting && current.route.destination != null) {
             // The driver left the route: a new one from here, through the stops still ahead, drawn once found.
             rerouting = true;

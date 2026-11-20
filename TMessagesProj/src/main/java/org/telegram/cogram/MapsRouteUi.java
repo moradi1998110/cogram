@@ -164,6 +164,8 @@ final class MapsRouteUi {
         sheet.addView(viaText, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0, 2, 0, 0));
         alternatives = new LinearLayout(context);
         alternatives.setOrientation(LinearLayout.HORIZONTAL);
+        // Right to left in Arabic, Kurdish and Persian: the fastest route on the right.
+        if (rtl) alternatives.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
         sheet.addView(alternatives, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0, 12, 0, 0));
         final LinearLayout options = new LinearLayout(context);
         options.setOrientation(LinearLayout.HORIZONTAL);
@@ -341,6 +343,7 @@ final class MapsRouteUi {
         expanded.addView(stopsTitle, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0, 12, 0, 6));
         stopTiles = new LinearLayout(context);
         stopTiles.setOrientation(LinearLayout.HORIZONTAL);
+        if (rtl) stopTiles.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
         for (int i = 0; i < STOP_KINDS.length; i++) {
             final int kind = STOP_KINDS[i];
             final LinearLayout tile = new LinearLayout(context);
@@ -357,7 +360,7 @@ final class MapsRouteUi {
             tile.addView(label, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 2, 4, 2, 0));
             tile.setOnClickListener(v -> showAlong(alongKind == kind ? MapEngine.KIND_OTHER : kind));
             ScaleStateListAnimator.apply(tile, 0.04f, 1.2f);
-            stopTiles.addView(tile, LayoutHelper.createLinear(0, LayoutHelper.WRAP_CONTENT, 1f, 0, 0, i < STOP_KINDS.length - 1 ? 8 : 0, 0));
+            stopTiles.addView(tile, LayoutHelper.createLinear(0, LayoutHelper.WRAP_CONTENT, 1f, i > 0 ? 4 : 0, 0, i < STOP_KINDS.length - 1 ? 4 : 0, 0));
         }
         expanded.addView(stopTiles, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT));
         // Share the trip: Telegram's send arrow, and a message with the arrival into a chat.
@@ -737,7 +740,7 @@ final class MapsRouteUi {
             final int index = i;
             card.setOnClickListener(v -> selectRoute(index));
             ScaleStateListAnimator.apply(card, 0.02f, 1.2f);
-            alternatives.addView(card, LayoutHelper.createLinear(0, LayoutHelper.WRAP_CONTENT, 1f, 0, 0, i < routes.size() - 1 ? 8 : 0, 0));
+            alternatives.addView(card, LayoutHelper.createLinear(0, LayoutHelper.WRAP_CONTENT, 1f, i > 0 ? 4 : 0, 0, i < routes.size() - 1 ? 4 : 0, 0));
         }
         styleAlternatives();
     }
@@ -785,7 +788,7 @@ final class MapsRouteUi {
             final FrameLayout row = new FrameLayout(activity);
             final MapKinds.TurnView turn = new MapKinds.TurnView(activity);
             turn.setColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayIcon));
-            turn.setTurn(maneuver.type, maneuver.exit);
+            turn.setTurn(maneuver);
             row.addView(turn, LayoutHelper.createFrame(28, 28, (rtl ? Gravity.RIGHT : Gravity.LEFT) | Gravity.CENTER_VERTICAL, rtl ? 0 : 22, 0, rtl ? 22 : 0, 0));
             final TextView words = text(activity, 15, rtl);
             words.setText(MapKinds.describe(maneuver));
@@ -836,12 +839,12 @@ final class MapsRouteUi {
             bannerStreet.setText(getString(R.string.PhogramNavRerouting));
             bannerThen.setVisibility(View.GONE);
         } else if (state.next != null) {
-            bannerTurn.setTurn(state.next.type, state.next.exit);
+            bannerTurn.setTurn(state.next);
             bannerDistance.setText(MapsFormat.distance(state.toNext));
             bannerStreet.setText(MapKinds.describe(state.next));
             // The turn after next, when it comes soon after this one.
             if (state.then != null && state.then.distance - state.next.distance < 300) {
-                bannerThenTurn.setTurn(state.then.type, state.then.exit);
+                bannerThenTurn.setTurn(state.then);
                 bannerThen.setVisibility(View.VISIBLE);
             } else {
                 bannerThen.setVisibility(View.GONE);

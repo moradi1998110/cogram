@@ -250,6 +250,12 @@ if tap_view 'content-desc="Where to?"' || adb shell input tap 160 532; then
     send_fix
   done
   adb exec-out screencap -p > "$OUT/7-maps-navigation.png" || true
+  # Moving the map pops up the route's road names in Telegram's message bubbles; then back to the driver.
+  adb shell input swipe 160 360 160 200 400 || true
+  sleep 3
+  adb exec-out screencap -p > "$OUT/7-maps-names.png" || true
+  tap_view 'content-desc="Back to my position"' || true
+  sleep 2
   # The trip panel opened by a tap, then the fuel stations on the road ahead as pins.
   tap_view 'text="Time left"' || adb shell input tap 160 520
   sleep 2
