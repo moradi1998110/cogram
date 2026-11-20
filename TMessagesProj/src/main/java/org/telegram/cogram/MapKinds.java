@@ -109,10 +109,15 @@ final class MapKinds {
      * A place on the way, as a soft pin: one smooth teardrop (no sharp corner, its point rounded), white with a soft
      * shadow under it, and inside it a circle in the kind's color with the kind's emoji.
      */
+    /** The room around a pin's drawing for its shadow; the pin's point is this far above the bitmap's bottom. */
+    static int pinPadding() {
+        return dp(4);
+    }
+
     static android.graphics.Bitmap pinImage(int kind) {
         final float w = dp(38);
         final float h = dp(48);
-        final float pad = dp(4);
+        final float pad = pinPadding();
         final int width = (int) (w + pad * 2);
         final int height = (int) (h + pad * 2);
         final android.graphics.Bitmap bitmap = android.graphics.Bitmap.createBitmap(width, height, android.graphics.Bitmap.Config.ARGB_8888);
@@ -121,16 +126,19 @@ final class MapKinds {
         final float r = w / 2f;
         final float cy = pad + r;
         final float tip = pad + h;
-        // The teardrop: the round head, then two curves that meet in a rounded point.
-        final android.graphics.Path drop = new android.graphics.Path();
-        drop.addArc(new android.graphics.RectF(cx - r, cy - r, cx + r, cy + r), 150, 240);
+        // The teardrop: the round head, two curves narrowing down, and a small round end instead of a point, as the
+        // pins of common map apps. The curves meet the end's circle on its sides, going straight down, so the outline
+        // has no corner anywhere.
         final float sideX = (float) (r * Math.cos(Math.toRadians(30)));
         final float sideY = (float) (r * Math.sin(Math.toRadians(30)));
-        drop.reset();
+        final float end = dp(3.5f);
+        final float endY = tip - end;
+        final android.graphics.Path drop = new android.graphics.Path();
         drop.moveTo(cx + sideX, cy + sideY);
         drop.arcTo(new android.graphics.RectF(cx - r, cy - r, cx + r, cy + r), 30, -240, false);
-        drop.cubicTo(cx - r * 0.55f, cy + r * 0.95f, cx - dp(3), tip - dp(4), cx, tip);
-        drop.cubicTo(cx + dp(3), tip - dp(4), cx + r * 0.55f, cy + r * 0.95f, cx + sideX, cy + sideY);
+        drop.cubicTo(cx - r * 0.62f, cy + r * 0.92f, cx - end, endY - dp(5), cx - end, endY);
+        drop.arcTo(new android.graphics.RectF(cx - end, endY - end, cx + end, endY + end), 180, -180, false);
+        drop.cubicTo(cx + end, endY - dp(5), cx + r * 0.62f, cy + r * 0.92f, cx + sideX, cy + sideY);
         drop.close();
         final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
         paint.setColor(0xFFFFFFFF);
@@ -143,19 +151,156 @@ final class MapKinds {
         return bitmap;
     }
 
-    /** A warning on the road: its emoji on a white circle with a red ring, as a road sign. */
+    private static final int SIGN_RED = 0xFFD32F2F;
+    private static final int SIGN_BLUE = 0xFF1565C0;
+    private static final int SIGN_DARK = 0xFF212121;
+
+    /**
+     * A warning on the road drawn as its traffic sign, so each is told apart at a glance: the speed camera as the blue
+     * camera sign with its radar waves, the traffic lights and the speed bump in the red warning triangle, the railway
+     * crossing as its red and white cross, the stop as the red octagon, the pedestrians as the blue crossing sign.
+     */
     static android.graphics.Bitmap warningImage(int type) {
-        final int size = dp(30);
+        final int size = dp(34);
         final android.graphics.Bitmap bitmap = android.graphics.Bitmap.createBitmap(size, size, android.graphics.Bitmap.Config.ARGB_8888);
         final android.graphics.Canvas canvas = new android.graphics.Canvas(bitmap);
         final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        final float r = size / 2f;
-        paint.setColor(0xFFE53935);
-        canvas.drawCircle(r, r, r - dp(1), paint);
-        paint.setColor(0xFFFFFFFF);
-        canvas.drawCircle(r, r, r - dp(3.5f), paint);
-        drawEmoji(canvas, warningEmoji(type), r, r, dp(16));
+        final float s = size;
+        final float c = s / 2f;
+        switch (type) {
+            case MapEngine.Warning.SPEED_CAMERA: {
+                blueSquare(canvas, paint, s);
+                paint.setStyle(Paint.Style.FILL);
+                paint.setColor(0xFFFFFFFF);
+                // The camera on its post, looking right, with the radar waves in front of the lens.
+                final android.graphics.RectF body = new android.graphics.RectF(s * 0.18f, s * 0.36f, s * 0.58f, s * 0.60f);
+                canvas.drawRoundRect(body, dp(2), dp(2), paint);
+                canvas.drawRect(s * 0.58f, s * 0.41f, s * 0.66f, s * 0.55f, paint);
+                canvas.drawRect(s * 0.33f, s * 0.60f, s * 0.40f, s * 0.80f, paint);
+                canvas.drawRect(s * 0.25f, s * 0.78f, s * 0.48f, s * 0.83f, paint);
+                paint.setColor(SIGN_BLUE);
+                canvas.drawCircle(s * 0.30f, s * 0.48f, s * 0.05f, paint);
+                paint.setColor(0xFFFFFFFF);
+                paint.setStyle(Paint.Style.STROKE);
+                paint.setStrokeWidth(dp(1.8f));
+                paint.setStrokeCap(Paint.Cap.ROUND);
+                for (int i = 0; i < 2; i++) {
+                    final float radius = s * (0.10f + i * 0.09f);
+                    canvas.drawArc(new android.graphics.RectF(s * 0.66f - radius, s * 0.48f - radius, s * 0.66f + radius, s * 0.48f + radius),
+                            -40, 80, false, paint);
+                }
+                break;
+            }
+            case MapEngine.Warning.TRAFFIC_LIGHTS: {
+                warningTriangle(canvas, paint, s);
+                paint.setStyle(Paint.Style.FILL);
+                paint.setColor(SIGN_DARK);
+                canvas.drawRoundRect(new android.graphics.RectF(c - s * 0.09f, s * 0.36f, c + s * 0.09f, s * 0.80f), dp(2), dp(2), paint);
+                final int[] lights = { 0xFFFF3B30, 0xFFFFC107, 0xFF34C759 };
+                for (int i = 0; i < 3; i++) {
+                    paint.setColor(lights[i]);
+                    canvas.drawCircle(c, s * (0.44f + i * 0.13f), s * 0.05f, paint);
+                }
+                break;
+            }
+            case MapEngine.Warning.LEVEL_CROSSING: {
+                // The railway crossing's cross: two white bars edged in red.
+                paint.setStyle(Paint.Style.STROKE);
+                paint.setStrokeCap(Paint.Cap.ROUND);
+                final float in = s * 0.16f;
+                for (int pass = 0; pass < 2; pass++) {
+                    paint.setColor(pass == 0 ? SIGN_RED : 0xFFFFFFFF);
+                    paint.setStrokeWidth(pass == 0 ? s * 0.22f : s * 0.12f);
+                    canvas.drawLine(in, in, s - in, s - in, paint);
+                    canvas.drawLine(s - in, in, in, s - in, paint);
+                }
+                break;
+            }
+            case MapEngine.Warning.STOP: {
+                final android.graphics.Path octagon = new android.graphics.Path();
+                for (int i = 0; i < 8; i++) {
+                    final double angle = Math.toRadians(22.5 + i * 45);
+                    final float x = c + (float) (Math.cos(angle) * (c - dp(1)));
+                    final float y = c + (float) (Math.sin(angle) * (c - dp(1)));
+                    if (i == 0) octagon.moveTo(x, y); else octagon.lineTo(x, y);
+                }
+                octagon.close();
+                paint.setStyle(Paint.Style.FILL);
+                paint.setColor(0xFFFFFFFF);
+                canvas.drawPath(octagon, paint);
+                canvas.save();
+                canvas.scale(0.88f, 0.88f, c, c);
+                paint.setColor(SIGN_RED);
+                canvas.drawPath(octagon, paint);
+                canvas.restore();
+                final android.text.TextPaint text = new android.text.TextPaint(Paint.ANTI_ALIAS_FLAG);
+                text.setColor(0xFFFFFFFF);
+                text.setTypeface(AndroidUtilities.bold());
+                text.setTextSize(s * 0.25f);
+                text.setTextAlign(Paint.Align.CENTER);
+                final Paint.FontMetrics metrics = text.getFontMetrics();
+                canvas.drawText("STOP", c, c - (metrics.ascent + metrics.descent) / 2, text);
+                break;
+            }
+            case MapEngine.Warning.PEDESTRIANS: {
+                blueSquare(canvas, paint, s);
+                final android.graphics.Path triangle = new android.graphics.Path();
+                triangle.moveTo(c, s * 0.16f);
+                triangle.lineTo(s * 0.84f, s * 0.80f);
+                triangle.lineTo(s * 0.16f, s * 0.80f);
+                triangle.close();
+                paint.setStyle(Paint.Style.FILL);
+                paint.setColor(0xFFFFFFFF);
+                paint.setPathEffect(new android.graphics.CornerPathEffect(dp(2)));
+                canvas.drawPath(triangle, paint);
+                paint.setPathEffect(null);
+                drawEmoji(canvas, "🚶", c, s * 0.58f, s * 0.36f);
+                break;
+            }
+            default: {
+                // The speed bump: the warning triangle with the bump on the road.
+                warningTriangle(canvas, paint, s);
+                paint.setStyle(Paint.Style.STROKE);
+                paint.setColor(SIGN_DARK);
+                paint.setStrokeWidth(dp(2.2f));
+                paint.setStrokeCap(Paint.Cap.ROUND);
+                final android.graphics.Path bump = new android.graphics.Path();
+                bump.moveTo(s * 0.28f, s * 0.72f);
+                bump.lineTo(s * 0.38f, s * 0.72f);
+                bump.cubicTo(s * 0.42f, s * 0.52f, s * 0.58f, s * 0.52f, s * 0.62f, s * 0.72f);
+                bump.lineTo(s * 0.72f, s * 0.72f);
+                canvas.drawPath(bump, paint);
+                break;
+            }
+        }
         return bitmap;
+    }
+
+    /** The blue square of information signs, with a thin white edge. */
+    private static void blueSquare(android.graphics.Canvas canvas, Paint paint, float s) {
+        paint.setStyle(Paint.Style.FILL);
+        paint.setColor(0xFFFFFFFF);
+        canvas.drawRoundRect(new android.graphics.RectF(0, 0, s, s), dp(6), dp(6), paint);
+        paint.setColor(SIGN_BLUE);
+        canvas.drawRoundRect(new android.graphics.RectF(dp(1.5f), dp(1.5f), s - dp(1.5f), s - dp(1.5f)), dp(5), dp(5), paint);
+    }
+
+    /** The warning triangle: white, with a red edge and rounded corners. */
+    private static void warningTriangle(android.graphics.Canvas canvas, Paint paint, float s) {
+        final android.graphics.Path triangle = new android.graphics.Path();
+        triangle.moveTo(s / 2f, dp(3));
+        triangle.lineTo(s - dp(2), s - dp(4));
+        triangle.lineTo(dp(2), s - dp(4));
+        triangle.close();
+        paint.setPathEffect(new android.graphics.CornerPathEffect(dp(3)));
+        paint.setStyle(Paint.Style.FILL);
+        paint.setColor(0xFFFFFFFF);
+        canvas.drawPath(triangle, paint);
+        paint.setStyle(Paint.Style.STROKE);
+        paint.setStrokeWidth(dp(3));
+        paint.setColor(SIGN_RED);
+        canvas.drawPath(triangle, paint);
+        paint.setPathEffect(null);
     }
 
     /**

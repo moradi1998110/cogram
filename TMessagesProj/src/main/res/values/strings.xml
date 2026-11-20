@@ -11667,6 +11667,8 @@
     <string name="PhogramMapsSharePlace">Share location</string>
     <string name="PhogramMapsSendToChat">Send to chat</string>
     <string name="PhogramMapsSent">Location sent.</string>
+    <string name="PhogramMapsSentTo">Location sent to **%1$s**.</string>
+    <string name="PhogramMapsSentToMany">Location sent to **%1$d chats**.</string>
     <string name="PhogramMapsSharedLocation">Location</string>
     <string name="PhogramMapsServer">Map server</string>
     <string name="PhogramMapsServerDefault">Internet</string>
@@ -11773,6 +11775,8 @@
     <string name="PhogramNavStopReached">You reached your stop: %1$s.</string>
     <string name="PhogramNavShareMessage">I\'m on my way to %1$s. I should arrive at %2$s.</string>
     <string name="PhogramNavTripShared">Your trip was shared.</string>
+    <string name="PhogramNavTripSharedTo">Your trip was shared with **%1$s**.</string>
+    <string name="PhogramNavTripSharedToMany">Your trip was shared with **%1$d chats**.</string>
     <string name="PhogramNavWarnLights">Traffic lights</string>
     <string name="PhogramNavWarnRailway">Railway crossing</string>
     <string name="PhogramNavWarnCamera">Speed camera</string>

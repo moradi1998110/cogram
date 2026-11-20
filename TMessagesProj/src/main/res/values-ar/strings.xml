@@ -1280,6 +1280,8 @@
     <string name="PhogramMapsSharePlace">مشاركة الموقع</string>
     <string name="PhogramMapsSendToChat">إرسال إلى محادثة</string>
     <string name="PhogramMapsSent">أُرسل الموقع.</string>
+    <string name="PhogramMapsSentTo">أُرسل الموقع إلى **%1$s**.</string>
+    <string name="PhogramMapsSentToMany">أُرسل الموقع إلى **%1$d من المحادثات**.</string>
     <string name="PhogramMapsSharedLocation">موقع</string>
     <string name="PhogramMapsServer">خادم الخرائط</string>
     <string name="PhogramMapsServerDefault">الإنترنت</string>
@@ -1386,6 +1388,8 @@
     <string name="PhogramNavStopReached">وصلت إلى محطة الوقوف: %1$s.</string>
     <string name="PhogramNavShareMessage">أنا في الطريق إلى %1$s، وموعد وصولي المتوقع %2$s.</string>
     <string name="PhogramNavTripShared">تمت مشاركة مشوارك.</string>
+    <string name="PhogramNavTripSharedTo">تمت مشاركة مشوارك مع **%1$s**.</string>
+    <string name="PhogramNavTripSharedToMany">تمت مشاركة مشوارك مع **%1$d من المحادثات**.</string>
     <string name="PhogramNavWarnLights">إشارة مرور</string>
     <string name="PhogramNavWarnRailway">تقاطع سكة قطار</string>
     <string name="PhogramNavWarnCamera">كاميرا سرعة</string>

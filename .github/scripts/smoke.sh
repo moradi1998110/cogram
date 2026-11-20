@@ -226,6 +226,7 @@ if tap_view 'content-desc="Where to?"' || adb shell input tap 160 532; then
   adb shell input text Mosul
   sleep 6
   dump_screen 7-maps-search
+  adb logcat -d -s PhogramSearch:D | tee -a "$OUT/steps.txt" > /dev/null || true
   # The first result, at the top of the results list.
   tap_view_top 'content-desc="Search results"' || adb shell input tap 160 175
   sleep 5
@@ -266,6 +267,7 @@ if tap_view 'content-desc="Where to?"' || adb shell input tap 160 532; then
       send_fix
     done
     adb exec-out screencap -p > "$OUT/7-maps-along.png" || true
+    adb logcat -d -s PhogramAlong:D | tee -a "$OUT/steps.txt" > /dev/null || true
   fi
   # End finishes the trip: no route, no card, the map as before; Back would ask first.
   tap_view 'text="End"' || adb shell input tap 280 505

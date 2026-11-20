@@ -1015,6 +1015,10 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
     @Override
     public void onBecomeFullyVisible() {
         super.onBecomeFullyVisible();
+        if (pendingSentNotice != null) {
+            AndroidUtilities.cancelRunOnUIThread(pendingSentNotice);
+            pendingSentNotice.run();
+        }
         if (MapEngines.isAvailable() && !mapEngineRequested) {
             mapEngineRequested = true;
             // One frame for the progress circle first: the engine's first start holds the main thread for a moment.
@@ -1147,14 +1151,16 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         routeInfo.setVisibility(View.GONE);
         updatePlaceSave();
         placeCard.setVisibility(View.VISIBLE);
+        // The same soft pin as the places on the way, in the place's color with its emoji, with a round end.
+        placePin.setImageBitmap(MapKinds.pinImage(place.kind));
         placePin.setVisibility(View.INVISIBLE);
         updateSearchBar();
         updateLayout();
         mapEngine.showPlace(place, (x, y) -> {
             if (shownPlace != place) return;
-            // The pin's point is the middle of its bottom edge.
+            // The pin's point is the middle of its bottom edge, above the room left for its shadow.
             placePin.setTranslationX(x - placePin.getWidth() / 2f);
-            placePin.setTranslationY(y - placePin.getHeight());
+            placePin.setTranslationY(y - placePin.getHeight() + MapKinds.pinPadding());
             placePin.setVisibility(View.VISIBLE);
         });
     }
@@ -1218,6 +1224,56 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         }
     }
 
+    /** Shown once the map is back after the chat picker; at the latest after the picker's closing animation. */
+    private Runnable pendingSentNotice;
+    private static final long SENT_NOTICE_DELAY_MS = 450;
+
+    /**
+     * Telegram's notice after forwarding, for a place or a trip sent from the map: the forward animation with its tick,
+     * "sent to Name" with the chat's name in bold (a tap on it opens the chat), the saved messages animation when sent
+     * to oneself, or the number of chats when sent to several.
+     */
+    private void showSentNotice(java.util.List<MessagesStorage.TopicKey> dids, boolean trip) {
+        if (dids == null || dids.isEmpty()) return;
+        final int count = dids.size();
+        final long did = dids.get(0).dialogId;
+        final Runnable[] notice = new Runnable[1];
+        notice[0] = () -> {
+            if (pendingSentNotice != notice[0]) return;
+            pendingSentNotice = null;
+            final Activity activity = getParentActivity();
+            if (activity == null || fragmentView == null) return;
+            final Bulletin.LottieLayout layout = new Bulletin.LottieLayout(activity, getResourceProvider());
+            final boolean self = count == 1 && did == getUserConfig().getClientUserId();
+            final CharSequence text;
+            if (count > 1) {
+                text = AndroidUtilities.replaceTags(LocaleController.formatString(
+                        trip ? R.string.PhogramNavTripSharedToMany : R.string.PhogramMapsSentToMany, count));
+            } else {
+                final String name;
+                if (self) {
+                    name = getString(R.string.SavedMessages);
+                } else if (did < 0) {
+                    final TLRPC.Chat chat = getMessagesController().getChat(-did);
+                    name = chat != null ? chat.title : "";
+                } else {
+                    name = org.telegram.messenger.UserObject.getFirstName(getMessagesController().getUser(did));
+                }
+                text = AndroidUtilities.replaceSingleTag(LocaleController.formatString(
+                                trip ? R.string.PhogramNavTripSharedTo : R.string.PhogramMapsSentTo, name),
+                        -1, AndroidUtilities.REPLACING_TAG_TYPE_LINKBOLD,
+                        () -> presentFragment(org.telegram.ui.ChatActivity.of(did)));
+            }
+            layout.setAnimation(self ? R.raw.saved_messages : R.raw.forward, 30, 30);
+            layout.textView.setText(text);
+            layout.postDelayed(() -> layout.performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP,
+                    android.view.HapticFeedbackConstants.FLAG_IGNORE_GLOBAL_SETTING), 300);
+            Bulletin.make(this, layout, Bulletin.DURATION_SHORT).show();
+        };
+        pendingSentNotice = notice[0];
+        AndroidUtilities.runOnUIThread(notice[0], SENT_NOTICE_DELAY_MS);
+    }
+
     /** Telegram's chat picker, then the trip's message (where to, the arrival) goes to each picked chat. */
     private void shareTripText(String text) {
         final Bundle args = new Bundle();
@@ -1230,7 +1286,7 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
                         null, null, null, false, null, null, null, notify, scheduleDate, 0, null, false));
             }
             fragment.finishFragment();
-            BulletinFactory.of(this).createSimpleBulletin(R.raw.forward, getString(R.string.PhogramNavTripShared)).show();
+            showSentNotice(dids, true);
             return true;
         });
         presentFragment(picker);
@@ -1259,7 +1315,7 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
                         SendMessagesHelper.SendMessageParams.of(venue, key.dialogId, null, null, null, null, notify, scheduleDate, 0));
             }
             fragment.finishFragment();
-            BulletinFactory.of(this).createSimpleBulletin(R.raw.forward, getString(R.string.PhogramMapsSent)).show();
+            showSentNotice(dids, false);
             return true;
         });
         presentFragment(picker);

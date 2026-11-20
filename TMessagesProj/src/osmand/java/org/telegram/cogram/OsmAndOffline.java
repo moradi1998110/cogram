@@ -311,6 +311,16 @@ final class OsmAndOffline {
         if (reader != null) {
             net.osmand.router.PhogramHHCache.clear();
             warmedUp = false;
+            for (int i = 0; i < readerCopies.length; i++) {
+                if (readerCopies[i] != null) {
+                    try {
+                        readerCopies[i].close();
+                    } catch (Exception e) {
+                        FileLog.e(e);
+                    }
+                    readerCopies[i] = null;
+                }
+            }
             try {
                 reader.close();
             } catch (Exception e) {
@@ -321,8 +331,24 @@ final class OsmAndOffline {
         readerFile = null;
     }
 
-    /** OsmAnd's reader of the region's file, opened on first use; null without the file. */
-    private static synchronized BinaryMapIndexReader reader() throws Exception {
+    // Who reads the region's file. Each has its own reader: a reader moves one position in the file as it reads, so
+    // two threads sharing one (a search while a route is found, the places on the way while the route is found again)
+    // read each other's bytes, which failed the search or left its thread stuck, and the search then answered no more.
+    private static final int READ_SEARCH = 0;
+    private static final int READ_ROUTE = 1;
+    private static final int READ_ALONG = 2;
+    private static final BinaryMapIndexReader[] readerCopies = new BinaryMapIndexReader[3];
+
+    /** The search's reader of the region's file, opened on first use; null without the file. */
+    private static BinaryMapIndexReader reader() throws Exception {
+        return reader(READ_SEARCH);
+    }
+
+    /**
+     * The reader of the region's file for one thread: the search's opens the file and reads its index; the others
+     * share that index (OsmAnd's copy of a reader) over their own handle of the file.
+     */
+    private static synchronized BinaryMapIndexReader reader(int user) throws Exception {
         final File file = installedFile();
         if (file == null) {
             closeReader();
@@ -333,7 +359,13 @@ final class OsmAndOffline {
             reader = new BinaryMapIndexReader(new RandomAccessFile(file, "r"), file);
             readerFile = file;
         }
-        return reader;
+        if (user == READ_SEARCH) {
+            return reader;
+        }
+        if (readerCopies[user] == null) {
+            readerCopies[user] = new BinaryMapIndexReader(new RandomAccessFile(file, "r"), reader);
+        }
+        return readerCopies[user];
     }
 
     private static String language() {
@@ -362,6 +394,7 @@ final class OsmAndOffline {
         final LatLon center = new LatLon(latitude, longitude);
         searchExecutor.execute(() -> {
             if (request != searchRequest) return;
+            final long started = android.os.SystemClock.elapsedRealtime();
             final List<MapEngine.Place> places = new ArrayList<>();
             try {
                 final BinaryMapIndexReader file = reader();
@@ -389,7 +422,9 @@ final class OsmAndOffline {
                 }
             } catch (Throwable e) {
                 FileLog.e(e);
+                android.util.Log.d("PhogramSearch", "failed: " + e);
             }
+            android.util.Log.d("PhogramSearch", places.size() + " places in " + (android.os.SystemClock.elapsedRealtime() - started) + " ms");
             AndroidUtilities.runOnUIThread(() -> {
                 if (!destroyed && request == searchRequest) {
                     callback.onResults(query, places);
@@ -561,7 +596,7 @@ final class OsmAndOffline {
             if (request != routeRequest) return;
             List<MapEngine.Route> routes = new ArrayList<>();
             try {
-                final BinaryMapIndexReader file = reader();
+                final BinaryMapIndexReader file = reader(READ_ROUTE);
                 if (file != null) {
                     routes = calculate(file, new LatLon(fromLatitude, fromLongitude), new LatLon(toLatitude, toLongitude), withAlternatives && via.isEmpty(), via);
                 }
@@ -588,7 +623,7 @@ final class OsmAndOffline {
             if (request != estimateRequest) return;
             List<MapEngine.Route> routes = new ArrayList<>();
             try {
-                final BinaryMapIndexReader file = reader();
+                final BinaryMapIndexReader file = reader(READ_ROUTE);
                 if (file != null) {
                     routes = calculate(file, new LatLon(fromLatitude, fromLongitude), new LatLon(toLatitude, toLongitude), false, new ArrayList<>());
                 }
@@ -614,7 +649,7 @@ final class OsmAndOffline {
         routeExecutor.execute(() -> {
             final long started = android.os.SystemClock.elapsedRealtime();
             try {
-                final BinaryMapIndexReader file = reader();
+                final BinaryMapIndexReader file = reader(READ_ROUTE);
                 if (file != null) {
                     search(file, new LatLon(33.3152, 44.3661), new LatLon(33.3000, 44.3900), false, null);
                 }
@@ -872,6 +907,8 @@ final class OsmAndOffline {
     /** How far from the road a place may be to count as on the way, in meters. */
     private static final double ALONG_RADIUS = 400;
     private static final int MAX_ALONG = 40;
+    /** How far ahead on the route the places are looked for, in meters. */
+    private static final float ALONG_AHEAD = 60_000;
     private final ExecutorService alongExecutor = Executors.newSingleThreadExecutor();
     private volatile int alongRequest;
 
@@ -879,15 +916,20 @@ final class OsmAndOffline {
     void alongRoute(MapEngine.Route route, int fromIndex, int kind, Utilities.Callback<List<MapEngine.AlongPlace>> callback) {
         final int request = ++alongRequest;
         alongExecutor.execute(() -> {
+            final long started = android.os.SystemClock.elapsedRealtime();
             final List<MapEngine.AlongPlace> places = new ArrayList<>();
             try {
-                final BinaryMapIndexReader file = reader();
+                final BinaryMapIndexReader file = reader(READ_ALONG);
                 if (file != null && request == alongRequest) {
                     // The route ahead, a point every 200 m or so, which is what OsmAnd's search around a line needs.
                     final List<net.osmand.Location> line = new ArrayList<>();
                     final List<Integer> lineIndex = new ArrayList<>();
+                    // Only the road ahead within ALONG_AHEAD: across the country the search of the whole route read the
+                    // places of every town on it and stopped at its limit before reaching the near ones.
                     float last = -1;
+                    final float from = route.along[Math.max(0, Math.min(fromIndex, route.along.length - 1))];
                     for (int i = Math.max(0, fromIndex); i < route.points.size(); i++) {
+                        if (route.along[i] - from > ALONG_AHEAD) break;
                         if (last >= 0 && route.along[i] - last < 200 && i != route.points.size() - 1) continue;
                         last = route.along[i];
                         line.add(new net.osmand.Location("route", route.points.get(i)[0], route.points.get(i)[1]));
@@ -951,7 +993,10 @@ final class OsmAndOffline {
                 }
             } catch (Throwable e) {
                 FileLog.e(e);
+                android.util.Log.d("PhogramAlong", "failed: " + e);
             }
+            android.util.Log.d("PhogramAlong", "kind " + kind + ": " + places.size() + " places in "
+                    + (android.os.SystemClock.elapsedRealtime() - started) + " ms");
             AndroidUtilities.runOnUIThread(() -> {
                 if (!destroyed && request == alongRequest) {
                     callback.run(places);

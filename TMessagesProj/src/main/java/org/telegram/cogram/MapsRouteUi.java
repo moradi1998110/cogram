@@ -258,6 +258,7 @@ final class MapsRouteUi {
     private TextView streetPill;
     private LinearLayout speedGroup;
     private TextView warningChip;
+    private int warningChipType = -1;
     private ImageView overviewButton;
     private ImageView recenterButton;
     private LinearLayout expanded;
@@ -542,8 +543,17 @@ final class MapsRouteUi {
             streetPill.setVisibility(View.VISIBLE);
         }
         if (state.warning != null) {
-            warningChip.setText(MapKinds.warningEmoji(state.warning.type) + "  " + warningName(state.warning.type)
-                    + " · " + MapsFormat.distance(state.toWarning));
+            // The same sign as on the road, beside the name and the distance.
+            if (warningChipType != state.warning.type) {
+                warningChipType = state.warning.type;
+                final android.graphics.drawable.BitmapDrawable sign = new android.graphics.drawable.BitmapDrawable(
+                        warningChip.getResources(), MapKinds.warningImage(state.warning.type));
+                sign.setBounds(0, 0, dp(22), dp(22));
+                warningChip.setCompoundDrawablesRelative(sign, null, null, null);
+                warningChip.setCompoundDrawablePadding(dp(8));
+                warningChip.setGravity(Gravity.CENTER_VERTICAL);
+            }
+            warningChip.setText(warningName(state.warning.type) + " · " + MapsFormat.distance(state.toWarning));
             warningChip.setVisibility(View.VISIBLE);
         } else {
             warningChip.setVisibility(View.GONE);
