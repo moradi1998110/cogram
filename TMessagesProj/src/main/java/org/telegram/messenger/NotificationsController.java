@@ -1134,6 +1134,12 @@ public class NotificationsController extends BaseController implements Notificat
                     }
                     continue;
                 }
+                if (org.telegram.cogram.CogramGateway.ENABLED && messageObject.messageOwner != null
+                        && messageObject.messageOwner.action instanceof TLRPC.TL_messageActionPhoneCall
+                        && !(messageObject.messageOwner.action.reason instanceof TLRPC.TL_phoneCallDiscardReasonMissed)) {
+                    // Phogram logs every call in the chat; only a call nobody answered is worth a notification.
+                    continue;
+                }
                 if (messageObject.isStoryPush) {
                     long date = messageObject.messageOwner == null ? System.currentTimeMillis() : messageObject.messageOwner.date * 1000L;
                     long dialogId = messageObject.getDialogId();

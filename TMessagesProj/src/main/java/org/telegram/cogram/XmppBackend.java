@@ -184,6 +184,15 @@ final class XmppBackend implements GatewayBackend {
         }
 
         @Override
+        public void callEnded(String sessionId, String reason) {
+            preferences.edit().putString(CALL_REASON_PREFIX + sessionId, reason).apply();
+            endedCalls.add(sessionId);
+            // The engine writes the call's entry as the call ends, so it is shown right after.
+            scheduleSync();
+            settleLater(1_000);
+        }
+
+        @Override
         public void push(TLRPC.Updates updates, long peerId) {
             UpdatesListener target;
             synchronized (XmppBackend.this) {
@@ -607,7 +616,7 @@ final class XmppBackend implements GatewayBackend {
                 }
                 for (Message message : loadedMessages(conversation)) {
                     int known = ids.findMessage(message.getUuid());
-                    if (known == 0 && !(isMedia(message) && isDownloading(message)) && !callUnsettled(message)) {
+                    if (known == 0 && !(isMedia(message) && isDownloading(message))) {
                         updates.add(createNewMessageUpdate(message, peerId));
                         snapshots.put(ids.findMessage(message.getUuid()), snapshot(message));
                     } else if (known != 0) {
@@ -1337,11 +1346,16 @@ final class XmppBackend implements GatewayBackend {
         Map<String, Message> calls = callEntries(loaded);
         ArrayList<Message> shown = new ArrayList<>();
         for (Message message : loaded) {
-            if (isShown(message) && (!isLoggedCall(message) || calls.get(message.getRemoteMsgId()) == message)) {
+            if (isShown(message) && (!isLoggedCall(message) || isShownCall(message, calls))) {
                 shown.add(message);
             }
         }
         return shown;
+    }
+
+    /** The one entry kept for its call, once the call has settled. */
+    private boolean isShownCall(Message message, Map<String, Message> calls) {
+        return calls.get(message.getRemoteMsgId()) == message && !callUnsettled(message);
     }
 
     private static boolean isLoggedCall(Message message) {
@@ -1375,27 +1389,66 @@ final class XmppBackend implements GatewayBackend {
     /**
      * Whether a call entry that says "not answered" may still be answered. Telegram's server only logs a
      * call once it ended, and Telegram shows a "missed call" notification for every unanswered entry, so
-     * such an entry waits while its call is going on and for a while after it was proposed.
+     * such an entry waits while its call is going on and, unless this phone saw the call end, for a while
+     * after it was proposed. It stays out of every answer meanwhile, chat lists and histories included: an
+     * entry Telegram got there counts as known and would never come to it as a new message.
      */
     private boolean callUnsettled(Message message) {
         if (!isLoggedCall(message) || RtpSessionStatus.of(message.getBody()).successful) {
             return false;
         }
+        String session = message.getRemoteMsgId();
         Account account = account();
         if (account != null) {
             eu.siacs.conversations.xmpp.jingle.JingleRtpConnection ongoing = account.getXmppConnection()
                     .getManager(eu.siacs.conversations.xmpp.manager.JingleManager.class).getOngoingRtpConnection();
-            if (ongoing != null && message.getRemoteMsgId().equals(ongoing.getId().sessionId)) {
-                settleTimer.schedule(this::scheduleSync, 5, java.util.concurrent.TimeUnit.SECONDS);
+            if (ongoing != null && session.equals(ongoing.getId().sessionId)) {
+                settleLater(5_000);
                 return true;
             }
         }
+        if (endedCalls.contains(session)) {
+            return false;
+        }
         long left = message.getTimeSent() + CALL_SETTLE_MS - System.currentTimeMillis();
         if (left > 0) {
-            settleTimer.schedule(this::scheduleSync, left + 500, java.util.concurrent.TimeUnit.MILLISECONDS);
+            settleLater(left + 500);
             return true;
         }
         return false;
+    }
+
+    /** Calls this phone saw end, whose entries need not wait. */
+    private final Set<String> endedCalls = Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>());
+    private final java.util.concurrent.atomic.AtomicLong settleAt = new java.util.concurrent.atomic.AtomicLong();
+
+    /** One timer, for the earliest entry to settle, since every answer asks again. */
+    private void settleLater(long delayMs) {
+        long now = System.currentTimeMillis();
+        long at = now + delayMs;
+        long pending = settleAt.get();
+        if (pending > now && pending <= at) {
+            return;
+        }
+        settleAt.set(at);
+        settleTimer.schedule(() -> {
+            settleAt.compareAndSet(at, 0);
+            scheduleSync();
+        }, delayMs, java.util.concurrent.TimeUnit.MILLISECONDS);
+    }
+
+    private static final String CALL_REASON_PREFIX = "call_reason_";
+
+    /** How an unanswered call ended, which tells Telegram's entry apart: missed, declined or cancelled. */
+    private TLRPC.PhoneCallDiscardReason callReason(String session) {
+        String reason = session == null ? null : preferences.getString(CALL_REASON_PREFIX + session, null);
+        if (XmppCalls.REASON_BUSY.equals(reason)) {
+            return new TLRPC.TL_phoneCallDiscardReasonBusy();
+        }
+        if (XmppCalls.REASON_DISCONNECT.equals(reason)) {
+            return new TLRPC.TL_phoneCallDiscardReasonDisconnect();
+        }
+        return new TLRPC.TL_phoneCallDiscardReasonMissed();
     }
 
     private static boolean isShown(Message message) {
@@ -1712,7 +1765,7 @@ final class XmppBackend implements GatewayBackend {
             action.duration = (int) (status.duration / 1000);
             action.flags |= TLObject.FLAG_1;
         } else {
-            action.reason = new TLRPC.TL_phoneCallDiscardReasonMissed();
+            action.reason = callReason(message.getRemoteMsgId());
             action.flags |= TLObject.FLAG_0;
         }
         TLRPC.TL_messageService tl = new TLRPC.TL_messageService();
@@ -2353,8 +2406,10 @@ final class XmppBackend implements GatewayBackend {
         }
         for (Conversation conversation : chats()) {
             long peerId = peerId(conversation);
-            for (Message message : service.databaseBackend.getMessages(conversation, CALL_HISTORY_SCAN, -1)) {
-                if (message.getType() == Message.TYPE_RTP_SESSION) {
+            List<Message> scanned = service.databaseBackend.getMessages(conversation, CALL_HISTORY_SCAN, -1);
+            Map<String, Message> calls = callEntries(scanned);
+            for (Message message : scanned) {
+                if (message.getType() == Message.TYPE_RTP_SESSION && (!isLoggedCall(message) || isShownCall(message, calls))) {
                     TLRPC.Message call = toTl(message, peerId);
                     if (offsetId == 0 || call.id < offsetId) {
                         history.add(call);
@@ -2569,8 +2624,10 @@ final class XmppBackend implements GatewayBackend {
         int scan = aroundOffset ? HISTORY_AROUND_LIMIT : limit * HISTORY_SCAN_FACTOR;
         ArrayList<TLRPC.Message> newestFirst = ids.inTransaction(() -> {
             ArrayList<TLRPC.Message> converted = new ArrayList<>();
-            for (Message message : service.databaseBackend.getMessages(conversation, scan, before)) {
-                if (isShown(message)) {
+            List<Message> scanned = service.databaseBackend.getMessages(conversation, scan, before);
+            Map<String, Message> calls = callEntries(scanned);
+            for (Message message : scanned) {
+                if (isShown(message) && (!isLoggedCall(message) || isShownCall(message, calls))) {
                     converted.add(toTl(message, userId));
                 }
             }
