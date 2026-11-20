@@ -269,6 +269,11 @@ public interface MapEngine {
         /** A new route is being found after the driver left this one. */
         public boolean rerouting;
         public Route route;
+        /** The driver's position put on the route's line, how far the real one is from it, and the road's heading there. */
+        public double onRouteLatitude;
+        public double onRouteLongitude;
+        public float fromRoute;
+        public float roadBearing;
         /** The road the driver is on, its speed limit in km/h (0 unknown), and the driver's speed. */
         public String street = "";
         public float speedLimit;

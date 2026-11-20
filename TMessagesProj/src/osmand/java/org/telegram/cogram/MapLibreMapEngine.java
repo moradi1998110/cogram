@@ -156,7 +156,13 @@ final class MapLibreMapEngine implements MapEngine {
         map.setMaxZoomPreference(19);
         map.setCameraPosition(new CameraPosition.Builder()
                 .target(new LatLng(START_LATITUDE, START_LONGITUDE)).zoom(START_ZOOM).build());
-        map.addOnCameraMoveStartedListener(reason -> AndroidUtilities.cancelRunOnUIThread(startOffline));
+        map.addOnCameraMoveStartedListener(reason -> {
+            AndroidUtilities.cancelRunOnUIThread(startOffline);
+            // Each move of the map by the driver while it is away from them starts the way back to driving again.
+            if (reason == MapLibreMap.OnCameraMoveStartedListener.REASON_API_GESTURE && navigator != null && freeCamera && trackingListener != null) {
+                trackingListener.run();
+            }
+        });
         map.addOnMapClickListener(this::onMapClick);
         map.addOnMapLongClickListener(point -> {
             if (tapListener == null) return false;
@@ -875,8 +881,7 @@ final class MapLibreMapEngine implements MapEngine {
             map.getLocationComponent().setCameraMode(CameraMode.NONE);
         }
         final int side = AndroidUtilities.dp(40);
-        map.animateCamera(CameraUpdateFactory.newLatLngBounds(bounds.build(), side, AndroidUtilities.dp(150), side,
-                attributionBottom + AndroidUtilities.dp(250)), CAMERA_MS);
+        frameFlat(bounds.build(), new int[] { side, AndroidUtilities.dp(150), side, attributionBottom + AndroidUtilities.dp(250) });
     }
 
     // On the road while navigating: the next turn drawn as a white arrow on the route, the names of the coming roads
@@ -1253,9 +1258,20 @@ final class MapLibreMapEngine implements MapEngine {
         bounds.include(new LatLng(current.route.points.get(current.route.points.size() - 1)[0], current.route.points.get(current.route.points.size() - 1)[1]));
         if (from >= current.route.points.size() - 1) return;
         final int side = AndroidUtilities.dp(48);
-        map.animateCamera(CameraUpdateFactory.newCameraPosition(new CameraPosition.Builder(map.getCameraPosition()).tilt(0).bearing(0).build()), 1);
-        map.animateCamera(CameraUpdateFactory.newLatLngBounds(bounds.build(), side, AndroidUtilities.dp(170), side,
-                attributionBottom + AndroidUtilities.dp(120)), CAMERA_MS);
+        frameFlat(bounds.build(), new int[] { side, AndroidUtilities.dp(170), side, attributionBottom + AndroidUtilities.dp(120) });
+    }
+
+    /**
+     * Frames the bounds seen from straight above with north up, in one move. The frame is worked out for the flat
+     * camera itself: framed from the tilted, turned camera of the driving view, only part of the route fitted, and it
+     * took two or three presses to see all of it.
+     */
+    private void frameFlat(LatLngBounds bounds, int[] padding) {
+        if (map == null) return;
+        map.cancelTransitions();
+        final CameraPosition flat = map.getCameraForLatLngBounds(bounds, padding, 0, 0);
+        if (flat == null) return;
+        map.animateCamera(CameraUpdateFactory.newCameraPosition(flat), CAMERA_MS);
     }
 
     @Override
@@ -1321,6 +1337,12 @@ final class MapLibreMapEngine implements MapEngine {
         listenToTracking();
         if (map != null && map.getLocationComponent().isLocationComponentActivated()) {
             final LocationComponent location = map.getLocationComponent();
+            // While driving the arrow is moved only by the navigation, on the route's line; MapLibre's own reading of
+            // the GPS made it jump between the raw position and the matched one.
+            if (location.getLocationEngine() != null) {
+                savedLocationEngine = location.getLocationEngine();
+                location.setLocationEngine(null);
+            }
             location.setRenderMode(RenderMode.GPS);
             // One transition to the driver, zoomed in and tilted; zooming and tilting separately while the camera
             // is still moving into tracking is ignored by MapLibre.
@@ -1352,12 +1374,9 @@ final class MapLibreMapEngine implements MapEngine {
     private void onNavigationPosition(Location location) {
         final RouteNavigator current = navigator;
         if (current == null || destroyed || location == null) return;
-        // The arrow and the camera follow the positions navigation uses, not only those of MapLibre's own provider.
-        if (map != null && map.getLocationComponent().isLocationComponentActivated() && !"phogram".equals(location.getProvider())) {
-            map.getLocationComponent().forceLocationUpdate(location);
-        }
         final NavigationState state = current.update(location.getLatitude(), location.getLongitude());
         state.speed = location.hasSpeed() ? location.getSpeed() * 3.6f : 0;
+        showDriver(location, state);
         // A stop reached leaves the route's stops, so a new route after a wrong turn does not go back to it.
         if (state.passedStop != null) {
             current.route.stops.remove(state.passedStop);
@@ -1397,9 +1416,46 @@ final class MapLibreMapEngine implements MapEngine {
         }
     }
 
+    /** MapLibre's own reading of the GPS, set aside while driving and given back after. */
+    private org.maplibre.android.location.engine.LocationEngine savedLocationEngine;
+    /** The heading last shown; kept while the car is almost still, when the GPS heading is only noise. */
+    private float shownBearing = Float.NaN;
+    private static final float STILL_KMH = 5;
+
+    /**
+     * The arrow and the camera: on the route's line, heading along the road, while the driver is on the route (within
+     * the distance that counts as leaving it); the real position once off it. Below walking pace the heading stays as
+     * it was, so the map does not swing about when starting off or stopping.
+     */
+    private void showDriver(Location real, NavigationState state) {
+        if (map == null || !map.getLocationComponent().isLocationComponentActivated()) return;
+        final boolean onRoute = state.route != null && state.fromRoute <= 45;
+        final Location shown = new Location(real);
+        if (onRoute) {
+            shown.setLatitude(state.onRouteLatitude);
+            shown.setLongitude(state.onRouteLongitude);
+        }
+        final boolean moving = real.hasSpeed() && real.getSpeed() * 3.6f >= STILL_KMH;
+        float bearing;
+        if (moving) {
+            bearing = onRoute ? state.roadBearing : (real.hasBearing() ? real.getBearing() : shownBearing);
+        } else {
+            // Still: the heading shown so far, or the road's at the very start.
+            bearing = !Float.isNaN(shownBearing) ? shownBearing : onRoute ? state.roadBearing : Float.NaN;
+        }
+        if (Float.isNaN(bearing)) {
+            shown.removeBearing();
+        } else {
+            shownBearing = bearing;
+            shown.setBearing(bearing);
+        }
+        map.getLocationComponent().forceLocationUpdate(shown);
+    }
+
     @Override
     @SuppressWarnings("MissingPermission")
     public void stopNavigation() {
+        shownBearing = Float.NaN;
         if (navigationUpdates != null) {
             final android.location.LocationManager manager =
                     (android.location.LocationManager) context.getSystemService(Context.LOCATION_SERVICE);
@@ -1417,6 +1473,10 @@ final class MapLibreMapEngine implements MapEngine {
         drawRoadMarks();
         if (map != null && map.getLocationComponent().isLocationComponentActivated()) {
             final LocationComponent location = map.getLocationComponent();
+            if (savedLocationEngine != null) {
+                location.setLocationEngine(savedLocationEngine);
+                savedLocationEngine = null;
+            }
             location.setCameraMode(CameraMode.NONE);
             location.setRenderMode(RenderMode.NORMAL);
             map.animateCamera(CameraUpdateFactory.newCameraPosition(new CameraPosition.Builder(map.getCameraPosition())

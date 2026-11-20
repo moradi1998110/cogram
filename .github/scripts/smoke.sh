@@ -255,7 +255,19 @@ if tap_view 'content-desc="Where to?"' || adb shell input tap 160 532; then
   adb shell input swipe 160 360 160 200 400 || true
   sleep 3
   adb exec-out screencap -p > "$OUT/7-maps-names.png" || true
-  tap_view 'content-desc="Back to my position"' || true
+  # The way back to driving counts down from 10 s, then follows the driver again by itself.
+  sleep 2
+  adb exec-out screencap -p > "$OUT/7-maps-countdown.png" || true
+  sleep 9
+  send_fix
+  sleep 2
+  adb exec-out screencap -p > "$OUT/7-maps-back-to-driving.png" || true
+  # The overview frames the whole route ahead at the first press.
+  if tap_view 'content-desc="Overview"'; then
+    sleep 3
+    adb exec-out screencap -p > "$OUT/7-maps-overview.png" || true
+    tap_view 'content-desc="Back to my position"' || true
+  fi
   sleep 2
   # The trip panel opened by a tap, then the fuel stations on the road ahead as pins.
   tap_view 'text="Time left"' || adb shell input tap 160 520

@@ -25,9 +25,10 @@ import org.telegram.messenger.R;
 import org.telegram.ui.ActionBar.AlertDialog;
 import org.telegram.ui.ActionBar.BaseFragment;
 import org.telegram.ui.ActionBar.Theme;
+import org.telegram.ui.Components.AnimatedTextView;
 import org.telegram.ui.Components.BulletinFactory;
 import org.telegram.ui.Components.LayoutHelper;
-import org.telegram.ui.Components.LineProgressView;
+
 import org.telegram.ui.Components.RadialProgressView;
 import org.telegram.ui.Components.ScaleStateListAnimator;
 
@@ -101,20 +102,23 @@ final class MapsRouteUi {
     // The navigation.
     private final FrameLayout banner;
     private final MapKinds.TurnView bannerTurn;
-    private final TextView bannerDistance;
+    private final AnimatedTextView bannerDistance;
     private final TextView bannerStreet;
     private final LinearLayout bannerThen;
     private final TextView bannerThenText;
     private final MapKinds.TurnView bannerThenTurn;
     private final LinearLayout panel;
-    private final TextView panelArrival;
-    private final TextView panelTime;
-    private final TextView panelDistance;
+    private final AnimatedTextView panelArrival;
+    private final AnimatedTextView panelTime;
+    private final AnimatedTextView panelDistance;
     private final TextView panelArrivalLabel;
     private final TextView panelTimeLabel;
     private final TextView panelDistanceLabel;
     private final TextView endButton;
-    private final LineProgressView panelProgress;
+    private final TripProgressView panelProgress;
+    /** The first route's length: the whole trip, against which the bar measures, also after a new route. */
+    private float tripMeters;
+    private MapEngine.Route progressRoute;
 
     MapsRouteUi(Context context, FrameLayout parent, Host host) {
         this.host = host;
@@ -193,9 +197,10 @@ final class MapsRouteUi {
         banner.setClickable(true);
         bannerTurn = new MapKinds.TurnView(context);
         banner.addView(bannerTurn, LayoutHelper.createFrame(52, 52, (rtl ? Gravity.RIGHT : Gravity.LEFT) | Gravity.TOP, rtl ? 0 : 12, 12, rtl ? 12 : 0, 0));
-        bannerDistance = text(context, 28, rtl);
-        bannerDistance.setTypeface(AndroidUtilities.bold());
-        banner.addView(bannerDistance, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.TOP, rtl ? 14 : 76, 8, rtl ? 76 : 14, 0));
+        bannerDistance = number(context, 28);
+        bannerDistance.setGravity(rtl ? Gravity.RIGHT : Gravity.LEFT);
+
+        banner.addView(bannerDistance, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, 38, Gravity.TOP, rtl ? 14 : 76, 8, rtl ? 76 : 14, 0));
         bannerStreet = text(context, 16, rtl);
         bannerStreet.setMaxLines(2);
         banner.addView(bannerStreet, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.TOP, rtl ? 14 : 76, 46, rtl ? 76 : 14, 12));
@@ -222,13 +227,13 @@ final class MapsRouteUi {
         final LinearLayout figures = new LinearLayout(context);
         figures.setOrientation(LinearLayout.HORIZONTAL);
         figures.setGravity(Gravity.CENTER_VERTICAL);
-        panelArrival = text(context, 22, rtl);
+        panelArrival = number(context, 18);
         panelArrivalLabel = text(context, 13, rtl);
         figures.addView(figure(context, panelArrival, panelArrivalLabel, getString(R.string.PhogramNavArrival)), LayoutHelper.createLinear(0, LayoutHelper.WRAP_CONTENT, 1f));
-        panelTime = text(context, 22, rtl);
+        panelTime = number(context, 18);
         panelTimeLabel = text(context, 13, rtl);
         figures.addView(figure(context, panelTime, panelTimeLabel, getString(R.string.PhogramNavTimeLeft)), LayoutHelper.createLinear(0, LayoutHelper.WRAP_CONTENT, 1f));
-        panelDistance = text(context, 22, rtl);
+        panelDistance = number(context, 18);
         panelDistanceLabel = text(context, 13, rtl);
         figures.addView(figure(context, panelDistance, panelDistanceLabel, getString(R.string.PhogramNavDistanceLeft)), LayoutHelper.createLinear(0, LayoutHelper.WRAP_CONTENT, 1f));
         endButton = button(context, getString(R.string.PhogramNavEnd));
@@ -236,8 +241,8 @@ final class MapsRouteUi {
         endButton.setOnClickListener(v -> endTrip());
         figures.addView(endButton, LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, 44));
         panel.addView(figures, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 16, 14, 16, 12));
-        panelProgress = new LineProgressView(context);
-        panel.addView(panelProgress, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 3, 16, 0, 16, 12));
+        panelProgress = new TripProgressView(context);
+        panel.addView(panelProgress, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 12, 0, 12, 8));
         parent.addView(panel, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.BOTTOM));
         createNavigationExtras(context, parent);
 
@@ -260,7 +265,9 @@ final class MapsRouteUi {
     private TextView warningChip;
     private int warningChipType = -1;
     private ImageView overviewButton;
-    private ImageView recenterButton;
+    private CountdownButton recenterButton;
+    /** How long the map waits, after the driver last moved it, before it goes back to following them. */
+    private static final int BACK_TO_DRIVING_SECONDS = 10;
     private LinearLayout expanded;
     private View panelHandle;
     private TextView destinationText;
@@ -318,7 +325,7 @@ final class MapsRouteUi {
         overviewButton.setOnClickListener(v -> {
             final MapEngine engine = host.engine();
             if (engine != null) engine.showOverview();
-            recenterButton.setVisibility(View.VISIBLE);
+            showBackToDriving();
         });
         parent.addView(overviewButton, LayoutHelper.createFrame(44, 44, (rtl ? Gravity.LEFT : Gravity.RIGHT) | Gravity.BOTTOM, 12, 0, 12, 0));
         // The voice: on or off with one tap, as Telegram's mute button; its language in the trip panel.
@@ -334,12 +341,8 @@ final class MapsRouteUi {
         });
         parent.addView(muteButton, LayoutHelper.createFrame(44, 44, (rtl ? Gravity.LEFT : Gravity.RIGHT) | Gravity.BOTTOM, 12, 0, 12, 0));
         muteButton.setVisibility(View.GONE);
-        recenterButton = roundButton(context, R.drawable.msg_current_location, getString(R.string.PhogramNavRecenter));
-        recenterButton.setOnClickListener(v -> {
-            final MapEngine engine = host.engine();
-            if (engine != null) engine.recenter();
-            recenterButton.setVisibility(View.GONE);
-        });
+        recenterButton = styleRound(new CountdownButton(context), R.drawable.msg_current_location, getString(R.string.PhogramNavRecenter));
+        recenterButton.setOnClickListener(v -> backToDriving());
         parent.addView(recenterButton, LayoutHelper.createFrame(44, 44, (rtl ? Gravity.LEFT : Gravity.RIGHT) | Gravity.BOTTOM, 12, 0, 12, 0));
         overviewButton.setVisibility(View.GONE);
         recenterButton.setVisibility(View.GONE);
@@ -472,8 +475,26 @@ final class MapsRouteUi {
         host.fragment().showDialog(builder.create());
     }
 
+    /** The map moved away from the driver: the way back shows and counts down, from the top on each new move. */
+    private void showBackToDriving() {
+        if (mode != MODE_NAVIGATION) return;
+        recenterButton.setVisibility(View.VISIBLE);
+        recenterButton.start(BACK_TO_DRIVING_SECONDS, this::backToDriving);
+    }
+
+    /** Back to following the driver, centered, tilted and turning with the road. */
+    private void backToDriving() {
+        recenterButton.stop();
+        recenterButton.setVisibility(View.GONE);
+        final MapEngine engine = host.engine();
+        if (engine != null && mode == MODE_NAVIGATION) engine.recenter();
+    }
+
     private static ImageView roundButton(Context context, int icon, String description) {
-        final ImageView button = new ImageView(context);
+        return styleRound(new ImageView(context), icon, description);
+    }
+
+    private static <T extends ImageView> T styleRound(T button, int icon, String description) {
         button.setImageResource(icon);
         button.setScaleType(ImageView.ScaleType.CENTER);
         button.setContentDescription(description);
@@ -677,6 +698,7 @@ final class MapsRouteUi {
             button.setBackground(Theme.createSimpleSelectorCircleDrawable(dp(44), Theme.getColor(Theme.key_location_actionBackground), Theme.getColor(Theme.key_location_actionPressedBackground)));
             button.setColorFilter(new PorterDuffColorFilter(Theme.getColor(Theme.key_location_actionActiveIcon), PorterDuff.Mode.MULTIPLY));
         }
+        recenterButton.setColors(Theme.getColor(Theme.key_featuredStickers_addButton), Theme.getColor(Theme.key_location_actionActiveIcon));
         final GradientDrawable handle = new GradientDrawable();
         handle.setCornerRadius(dp(2));
         handle.setColor(Theme.getColor(Theme.key_sheet_scrollUp));
@@ -745,14 +767,26 @@ final class MapsRouteUi {
         return view;
     }
 
-    private static LinearLayout figure(Context context, TextView value, TextView label, String name) {
+    /**
+     * A number of the trip in Telegram's animated text: when it changes only the characters that differ roll, down
+     * as the number falls and up as it grows, as Telegram's counters.
+     */
+    private static AnimatedTextView number(Context context, int sizeDp) {
+        final AnimatedTextView view = new AnimatedTextView(context, false, true, true);
+        view.setTextSize(dp(sizeDp));
+        view.setTypeface(AndroidUtilities.bold());
+        view.setAnimationProperties(0.35f, 0, 320, org.telegram.ui.Components.CubicBezierInterpolator.EASE_OUT_QUINT);
+        return view;
+    }
+
+    private static LinearLayout figure(Context context, AnimatedTextView value, TextView label, String name) {
         final LinearLayout column = new LinearLayout(context);
         column.setOrientation(LinearLayout.VERTICAL);
-        value.setTypeface(AndroidUtilities.bold());
         value.setGravity(Gravity.CENTER);
+        value.setEllipsizeByGradient(true);
         label.setGravity(Gravity.CENTER);
         label.setText(name);
-        column.addView(value, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT));
+        column.addView(value, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 28));
         column.addView(label, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT));
         return column;
     }
@@ -966,16 +1000,56 @@ final class MapsRouteUi {
         if (engine == null || chosen >= routes.size()) return;
         mode = MODE_NAVIGATION;
         updateMode();
-        bannerDistance.setText("");
+        bannerDistance.setText("", false);
         bannerStreet.setText(getString(R.string.PhogramNavStarting));
         setKeepScreenOn(true);
         engine.setTrackingListener(() -> {
-            if (mode == MODE_NAVIGATION) recenterButton.setVisibility(View.VISIBLE);
+            if (mode == MODE_NAVIGATION) showBackToDriving();
         });
-        engine.startNavigation(routes.get(chosen), this::onNavigation);
+        // The bar starts from zero for each trip, in the chosen route's color.
+        final MapEngine.Route route = routes.get(chosen);
+        tripMeters = route.along.length > 0 ? route.along[route.along.length - 1] : 0;
+        progressRoute = route;
+        panelProgress.reset(MapKinds.routeColor(route.index), stopFractions(route));
+        engine.startNavigation(route, this::onNavigation);
         if (voice == null) voice = new VoiceGuide(host.fragment().getParentActivity() != null ? host.fragment().getParentActivity() : org.telegram.messenger.ApplicationLoader.applicationContext);
         voice.onStart();
         updateMuteButton();
+    }
+
+    /**
+     * The trip's progress on the bar: the way done against the whole trip as first planned, so a new route after a
+     * wrong turn or a stop added carries on from where the car is instead of starting over.
+     */
+    private void updateTripProgress(MapEngine.NavigationState state) {
+        if (state.route != null && state.route != progressRoute) {
+            progressRoute = state.route;
+            panelProgress.setStops(stopFractions(state.route));
+        }
+        final float total = Math.max(tripMeters, state.remainingMeters);
+        panelProgress.setProgress(total > 0 ? 1 - state.remainingMeters / total : 0);
+    }
+
+    /** Where the route's stops are on the bar, as fractions of the whole trip. */
+    private float[] stopFractions(MapEngine.Route route) {
+        if (route.stops == null || route.stops.isEmpty() || route.points.isEmpty() || tripMeters <= 0) return new float[0];
+        final float length = route.along[route.along.length - 1];
+        final float[] fractions = new float[route.stops.size()];
+        for (int s = 0; s < fractions.length; s++) {
+            final MapEngine.Place stop = route.stops.get(s);
+            double best = Double.MAX_VALUE;
+            int index = 0;
+            for (int i = 0; i < route.points.size(); i++) {
+                final double d = MapEngine.distance(stop.latitude, stop.longitude, route.points.get(i)[0], route.points.get(i)[1]);
+                if (d < best) {
+                    best = d;
+                    index = i;
+                }
+            }
+            final float total = Math.max(tripMeters, length);
+            fractions[s] = Math.max(0, Math.min(1, 1 - (length - route.along[index]) / total));
+        }
+        return fractions;
     }
 
     private void onNavigation(MapEngine.NavigationState state) {
@@ -992,12 +1066,12 @@ final class MapsRouteUi {
         }
         if (state.rerouting) {
             bannerTurn.setTurn(MapEngine.Maneuver.STRAIGHT, 0);
-            bannerDistance.setText("");
+            bannerDistance.setText("", false);
             bannerStreet.setText(getString(R.string.PhogramNavRerouting));
             bannerThen.setVisibility(View.GONE);
         } else if (state.next != null) {
             bannerTurn.setTurn(state.next);
-            bannerDistance.setText(MapsFormat.distance(state.toNext));
+            bannerDistance.setText(MapsFormat.distance(state.toNext), true);
             bannerStreet.setText(MapKinds.describe(state.next));
             // The turn after next, when it comes soon after this one.
             if (state.then != null && state.then.distance - state.next.distance < 300) {
@@ -1007,10 +1081,10 @@ final class MapsRouteUi {
                 bannerThen.setVisibility(View.GONE);
             }
         }
-        panelArrival.setText(MapsFormat.arrival(state.remainingSeconds));
-        panelTime.setText(MapsFormat.duration(state.remainingSeconds));
-        panelDistance.setText(MapsFormat.distance(state.remainingMeters));
-        panelProgress.setProgress(state.progress, true);
+        panelArrival.setText(MapsFormat.arrival(state.remainingSeconds), true);
+        panelTime.setText(MapsFormat.duration(state.remainingSeconds), true);
+        panelDistance.setText(MapsFormat.distance(state.remainingMeters), true);
+        updateTripProgress(state);
         updateDriving(state);
         if (voice != null) voice.onNavigation(state);
     }
@@ -1093,6 +1167,7 @@ final class MapsRouteUi {
         overviewButton.setVisibility(driving ? View.VISIBLE : View.GONE);
         muteButton.setVisibility(driving ? View.VISIBLE : View.GONE);
         if (!driving) {
+            recenterButton.stop();
             recenterButton.setVisibility(View.GONE);
             warningChip.setVisibility(View.GONE);
             alongKind = MapEngine.KIND_OTHER;
@@ -1179,8 +1254,7 @@ final class MapsRouteUi {
         final int red = Theme.getColor(Theme.key_text_RedRegular);
         endButton.setTextColor(red);
         endButton.setBackground(Theme.createSimpleSelectorRoundRectDrawable(dp(10), (red & 0x00ffffff) | 0x1F000000, (red & 0x00ffffff) | 0x33000000));
-        panelProgress.setProgressColor(accent);
-        panelProgress.setBackColor(Theme.getColor(Theme.key_divider));
+        panelProgress.setColors(Theme.getColor(Theme.key_divider), Theme.getColor(Theme.key_windowBackgroundWhite));
         if (speedView != null) styleNavigationExtras();
         styleAlternatives();
     }

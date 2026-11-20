@@ -90,7 +90,7 @@ final class MapKinds {
     }
 
     /** Telegram's emoji when its picture is loaded, else the system's, centered in the box. */
-    private static void drawEmoji(android.graphics.Canvas canvas, String code, float cx, float cy, float size) {
+    static void drawEmoji(android.graphics.Canvas canvas, String code, float cx, float cy, float size) {
         final Drawable drawable = Emoji.getEmojiDrawable(code);
         if (drawable instanceof Emoji.EmojiDrawable && ((Emoji.EmojiDrawable) drawable).isLoaded()) {
             final int half = (int) (size / 2);
@@ -394,6 +394,10 @@ final class MapKinds {
         private final android.graphics.RectF arc = new android.graphics.RectF();
         private float speed;
         private float limit;
+        /** The speed in Telegram's animated text: its digits roll as it changes. */
+        private final org.telegram.ui.Components.AnimatedTextView.AnimatedTextDrawable number =
+                new org.telegram.ui.Components.AnimatedTextView.AnimatedTextDrawable(false, true, true);
+        private int shownSpeed = -1;
 
         SpeedView(Context context) {
             super(context);
@@ -402,12 +406,26 @@ final class MapKinds {
             text.setTextAlign(Paint.Align.CENTER);
             text.setTypeface(AndroidUtilities.bold());
             unit.setTextAlign(Paint.Align.CENTER);
+            number.setCallback(this);
+            number.setTypeface(AndroidUtilities.bold());
+            number.setGravity(android.view.Gravity.CENTER);
+            number.setAnimationProperties(0.35f, 0, 300, org.telegram.ui.Components.CubicBezierInterpolator.EASE_OUT_QUINT);
         }
 
         void set(float speed, float limit) {
             this.speed = Math.max(0, speed);
+            final int rounded = Math.round(this.speed);
+            if (rounded != shownSpeed) {
+                number.setText(String.valueOf(rounded), shownSpeed >= 0 && isLaidOut(), rounded < shownSpeed);
+                shownSpeed = rounded;
+            }
             this.limit = limit;
             invalidate();
+        }
+
+        @Override
+        protected boolean verifyDrawable(@androidx.annotation.NonNull Drawable who) {
+            return who == number || super.verifyDrawable(who);
         }
 
         @Override
@@ -427,7 +445,10 @@ final class MapKinds {
             canvas.drawArc(arc, 135, 270 * Math.min(1, speed / top), false, ring);
             text.setTextSize(size * 0.34f);
             text.setColor(over ? 0xFFE53935 : Theme.getColor(Theme.key_windowBackgroundWhiteBlackText));
-            canvas.drawText(String.valueOf(Math.round(speed)), r, r + size * 0.1f, text);
+            number.setTextSize(size * 0.34f);
+            number.setTextColor(text.getColor());
+            number.setBounds(0, (int) (r - size * 0.22f), (int) size, (int) (r + size * 0.18f));
+            number.draw(canvas);
             unit.setTextSize(size * 0.15f);
             unit.setColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText));
             canvas.drawText(org.telegram.messenger.LocaleController.getString(org.telegram.messenger.R.string.PhogramNavKmh), r, r + size * 0.3f, unit);

@@ -70,6 +70,15 @@ final class RouteNavigator {
         }
         offRoute = best > OFF_ROUTE_METERS ? offRoute + 1 : 0;
         index = bestSegment;
+        {
+            // The point on the line and the heading of its segment, which the arrow and the camera follow.
+            final double[] a = points.get(bestSegment);
+            final double[] b = points.get(bestSegment + 1);
+            state.onRouteLatitude = a[0] + (b[0] - a[0]) * bestFraction;
+            state.onRouteLongitude = a[1] + (b[1] - a[1]) * bestFraction;
+            state.fromRoute = (float) best;
+            state.roadBearing = (float) MapEngine.bearing(a[0], a[1], b[0], b[1]);
+        }
         final float segmentLength = route.along[bestSegment + 1] - route.along[bestSegment];
         final float travelled = route.along[bestSegment] + (float) (segmentLength * bestFraction);
         final float total = route.along[route.along.length - 1];
