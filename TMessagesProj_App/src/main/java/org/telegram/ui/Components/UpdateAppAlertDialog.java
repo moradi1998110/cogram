@@ -286,8 +286,11 @@ public class UpdateAppAlertDialog extends BottomSheet {
             changelogTextView.setLinkTextColor(Theme.getColor(Theme.key_dialogTextLink));
             changelogTextView.setText(Emoji.replaceEmoji(appUpdate.changelog, changelogTextView.getPaint().getFontMetricsInt(), false));
             NotificationCenter.listenEmojiLoading(changelogTextView);
-            changelogTextView.setGravity(Gravity.LEFT | Gravity.TOP);
-            linearLayout.addView(changelogTextView, LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, Gravity.LEFT | Gravity.TOP, 23, 15, 23, 0));
+            // What is new reads from its own side: Arabic from the right, English from the left, whatever the app's language.
+            changelogTextView.setTextDirection(View.TEXT_DIRECTION_FIRST_STRONG);
+            changelogTextView.setTextAlignment(View.TEXT_ALIGNMENT_TEXT_START);
+            changelogTextView.setGravity(Gravity.START | Gravity.TOP);
+            linearLayout.addView(changelogTextView, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.TOP, 23, 15, 23, 0));
         }
 
         FrameLayout.LayoutParams frameLayoutParams = new FrameLayout.LayoutParams(LayoutHelper.MATCH_PARENT, AndroidUtilities.getShadowHeight(), Gravity.BOTTOM | Gravity.LEFT);
