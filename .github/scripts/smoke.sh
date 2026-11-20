@@ -334,7 +334,15 @@ dump_screen 7-chat-location
 back_to_chats() {
   adb shell am start -n "$PACKAGE/org.telegram.messenger.DefaultIcon" > /dev/null
   sleep 5
-  tap_view 'text="Chats"' || true
+  # The app may come back inside a chat (the map's "Send to chat" leaves it there), where the tabs
+  # are hidden and "More options" is the chat's menu, so back is pressed until the tabs show.
+  for attempt in 1 2 3 4; do
+    if tap_view 'text="Chats"'; then
+      break
+    fi
+    adb shell input keyevent 4 || true
+    sleep 2
+  done
   sleep 2
 }
 
