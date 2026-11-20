@@ -86,9 +86,32 @@ adb shell am force-stop "$PACKAGE"
 echo '<?xml version="1.0" encoding="utf-8"?><map><boolean name="demo" value="true" /></map>' > "$OUT/cogram_gateway.xml"
 adb push "$OUT/cogram_gateway.xml" /data/local/tmp/cogram_gateway.xml > /dev/null || true
 adb shell chmod 644 /data/local/tmp/cogram_gateway.xml || true
-adb shell run-as "$PACKAGE" mkdir -p shared_prefs || true
-adb shell run-as "$PACKAGE" cp /data/local/tmp/cogram_gateway.xml shared_prefs/cogram_gateway.xml || true
-adb shell run-as "$PACKAGE" ls -l shared_prefs > "$OUT/prefs.txt" || true
+# The app's private files: through run-as on debug builds. Production builds refuse run-as, as they are not
+# debuggable, so there the emulator's root is used; nothing in the app opens them.
+APP_ROOT=""
+if ! adb shell run-as "$PACKAGE" true > /dev/null 2>&1; then
+  APP_ROOT=1
+  adb root > /dev/null 2>&1 || true
+  adb wait-for-device
+  sleep 3
+fi
+as_app() {
+  if [ -n "$APP_ROOT" ]; then
+    adb shell "cd /data/data/$PACKAGE && $*"
+  else
+    adb shell run-as "$PACKAGE" "$@"
+  fi
+}
+as_app mkdir -p shared_prefs || true
+as_app cp /data/local/tmp/cogram_gateway.xml shared_prefs/cogram_gateway.xml || true
+if [ -n "$APP_ROOT" ]; then
+  # Written by root: the file is given back to the app, with the app's own security label.
+  OWNER=$(adb shell stat -c %u:%g "/data/data/$PACKAGE" | tr -d '\r')
+  adb shell chown -R "$OWNER" "/data/data/$PACKAGE/shared_prefs" || true
+  adb shell chmod 660 "/data/data/$PACKAGE/shared_prefs/cogram_gateway.xml" || true
+  adb shell restorecon -R "/data/data/$PACKAGE/shared_prefs" || true
+fi
+as_app ls -lZ shared_prefs > "$OUT/prefs.txt" || true
 adb shell am start -n "$PACKAGE/org.telegram.messenger.DefaultIcon"
 sleep "$START_SECONDS"
 adb exec-out screencap -p > "$OUT/1-chats.png" || true
@@ -184,7 +207,7 @@ if tap_view 'content-desc="Download"'; then
   done
   sleep 20
   dump_screen 7-maps-search-data
-  adb shell run-as "$PACKAGE" ls -l files 2>/dev/null > "$OUT/files.txt" || true
+  as_app ls -l files 2>/dev/null > "$OUT/files.txt" || true
   adb shell ls -l /sdcard/Android/data/$PACKAGE/files/maps /sdcard/Android/data/$PACKAGE/files/maps/osmand >> "$OUT/files.txt" 2>&1 || true
 fi
 # The emulator reports a fixed position, in Basra, where the directions to Mosul start; the app was given the
@@ -353,5 +376,5 @@ adb shell pidof "$PACKAGE" > "$OUT/pid.txt" || true
 adb logcat -d -v threadtime > "$OUT/logcat.txt" || true
 adb logcat -d -b crash -v threadtime > "$OUT/logcat-crash.txt" || true
 adb shell dumpsys activity exit-info "$PACKAGE" > "$OUT/exit-info.txt" || true
-adb shell run-as "$PACKAGE" cat files/cogram_crash.txt > "$OUT/java-crash.txt" || true
+as_app cat files/cogram_crash.txt > "$OUT/java-crash.txt" || true
 exit 0
