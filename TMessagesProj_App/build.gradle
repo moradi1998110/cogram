@@ -21,6 +21,10 @@ configurations.all {
 
 dependencies {
     implementation project(':TMessagesProj')
+    // Telegram's update sheet, used here, is built on AndroidX classes the app already carries through the main
+    // module (core 1.16.0, and the fragment library under appcompat 1.7.0); declared for compiling only.
+    compileOnly 'androidx.core:core:1.16.0'
+    compileOnly 'androidx.fragment:fragment:1.5.4'
     coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.5'
 }
 
