@@ -186,13 +186,22 @@ fi
 # The emulator reports a fixed position, in Basra, where the directions to Mosul start; the app was given the
 # location permission at install, and the emulator's location service is turned on first.
 adb shell cmd location set-location-enabled true || true
-adb emu geo fix 47.7804 30.5085 || true
+# The emulator's own GPS did not report to the app, so Android's test provider stands in for the GPS: the shell may
+# give positions to it, and the app reads them as the GPS's.
+adb shell appops set com.android.shell android:mock_location allow || true
+adb shell cmd location providers add-test-provider gps || true
+adb shell cmd location providers set-test-provider-enabled gps true || true
+send_fix() {
+  adb shell cmd location providers set-test-provider-location gps --location 30.5085,47.7804 --accuracy 5 || true
+  adb emu geo fix 47.7804 30.5085 || true
+}
+send_fix
 tap_view 'content-desc="My location"' || true
 # A phone's GPS keeps reporting; the emulator reports only when told, so the position is sent again while the map
 # listens for it.
 for fix in 1 2 3; do
   sleep 1
-  adb emu geo fix 47.7804 30.5085 || true
+  send_fix
 done
 sleep 5
 adb exec-out screencap -p > "$OUT/7-maps-location.png" || true
@@ -223,10 +232,11 @@ if tap_view 'content-desc="Where to?"' || adb shell input tap 160 532; then
   dump_screen 7-maps-place
   # Directions by car from Basra to Mosul, offline: how long the route takes is written to the log.
   adb logcat -c || true
-  adb emu geo fix 47.7804 30.5085 || true
+  send_fix
   tap_view 'text="Directions"' || adb shell input tap 88 523
   for wait in $(seq 1 36); do
     sleep 5
+    send_fix
     adb logcat -d -s PhogramRoute:D | grep -q PhogramRoute && break
   done
   sleep 4

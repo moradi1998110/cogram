@@ -442,12 +442,93 @@ final class MapLibreMapEngine implements MapEngine {
         }
         org.telegram.messenger.ApplicationLoader.getLocationServiceProvider().getLastLocation(fix -> AndroidUtilities.runOnUIThread(() -> {
             if (destroyed) return;
-            if (fix == null) {
-                callback.onRoute(null, ROUTE_NO_LOCATION);
-            } else {
+            if (fix != null) {
                 routeFrom(fix, destination, callback);
+                return;
             }
+            // No position kept yet (after a restart, or with the GPS just turned on): the GPS is asked for a new one.
+            currentLocation(fresh -> {
+                if (destroyed) return;
+                if (fresh == null) {
+                    callback.onRoute(null, ROUTE_NO_LOCATION);
+                } else {
+                    routeFrom(fresh, destination, callback);
+                }
+            });
         }));
+    }
+
+    private static final long FRESH_LOCATION_TIMEOUT_MS = 20_000;
+
+    /** One new position from the GPS (or the network, where the phone has it), or null after twenty seconds. */
+    @SuppressWarnings("MissingPermission")
+    private void currentLocation(Utilities.Callback<Location> done) {
+        final android.location.LocationManager manager =
+                (android.location.LocationManager) context.getSystemService(Context.LOCATION_SERVICE);
+        if (manager == null || !hasLocationPermission()) {
+            done.run(null);
+            return;
+        }
+        final boolean[] finished = { false };
+        final android.location.LocationListener[] listeners = new android.location.LocationListener[1];
+        final Runnable finish = () -> {
+            if (finished[0]) return;
+            finished[0] = true;
+            if (listeners[0] != null) {
+                try {
+                    manager.removeUpdates(listeners[0]);
+                } catch (Exception e) {
+                    FileLog.e(e);
+                }
+            }
+        };
+        final Runnable timeout = () -> {
+            if (finished[0]) return;
+            finish.run();
+            done.run(null);
+        };
+        // A full listener, not a lambda: before Android 10 the system also calls the status methods, which have no
+        // default bodies there.
+        listeners[0] = new android.location.LocationListener() {
+            @Override
+            public void onLocationChanged(Location location) {
+                AndroidUtilities.runOnUIThread(() -> {
+                    if (finished[0]) return;
+                    AndroidUtilities.cancelRunOnUIThread(timeout);
+                    finish.run();
+                    done.run(location);
+                });
+            }
+
+            @Override
+            public void onStatusChanged(String provider, int status, android.os.Bundle extras) {
+            }
+
+            @Override
+            public void onProviderEnabled(String provider) {
+            }
+
+            @Override
+            public void onProviderDisabled(String provider) {
+            }
+        };
+        boolean asked = false;
+        for (String provider : new String[] { android.location.LocationManager.GPS_PROVIDER, android.location.LocationManager.NETWORK_PROVIDER }) {
+            try {
+                if (manager.isProviderEnabled(provider)) {
+                    manager.requestLocationUpdates(provider, 1000, 0, listeners[0], android.os.Looper.getMainLooper());
+                    asked = true;
+                }
+            } catch (Exception e) {
+                FileLog.e(e);
+            }
+        }
+        if (!asked) {
+            finish.run();
+            done.run(null);
+            return;
+        }
+        AndroidUtilities.runOnUIThread(timeout, FRESH_LOCATION_TIMEOUT_MS);
     }
 
     private void routeFrom(Location here, Place destination, RouteCallback callback) {
