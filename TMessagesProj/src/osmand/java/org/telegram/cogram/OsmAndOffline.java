@@ -91,6 +91,8 @@ final class OsmAndOffline {
     };
     private volatile int searchRequest;
     private volatile int routeRequest;
+    private volatile int estimateRequest;
+    private static boolean warmedUp;
 
     OsmAndOffline(Context context) {
         listeners.add(listener);
@@ -307,6 +309,8 @@ final class OsmAndOffline {
 
     private static synchronized void closeReader() {
         if (reader != null) {
+            net.osmand.router.PhogramHHCache.clear();
+            warmedUp = false;
             try {
                 reader.close();
             } catch (Exception e) {
@@ -536,7 +540,7 @@ final class OsmAndOffline {
 
     /**
      * The ways by car between two points, the best first; an empty list when there is none. With alternatives, up to
-     * three different routes: OsmAnd's alternatives, and the shortest by distance when they are not enough.
+     * three different routes from OsmAnd's highway hierarchy.
      */
     void route(double fromLatitude, double fromLongitude, double toLatitude, double toLongitude, boolean withAlternatives,
                Utilities.Callback<List<MapEngine.Route>> callback) {
@@ -573,6 +577,54 @@ final class OsmAndOffline {
         });
     }
 
+    /**
+     * Only the best route, for the time on a place's card. Estimates have their own turn, so a newer route does not
+     * drop an estimate that the preview is about to reuse; a newer estimate drops an older one.
+     */
+    void estimate(double fromLatitude, double fromLongitude, double toLatitude, double toLongitude,
+                  Utilities.Callback<List<MapEngine.Route>> callback) {
+        final int request = ++estimateRequest;
+        routeExecutor.execute(() -> {
+            if (request != estimateRequest) return;
+            List<MapEngine.Route> routes = new ArrayList<>();
+            try {
+                final BinaryMapIndexReader file = reader();
+                if (file != null) {
+                    routes = calculate(file, new LatLon(fromLatitude, fromLongitude), new LatLon(toLatitude, toLongitude), false, new ArrayList<>());
+                }
+            } catch (Throwable e) {
+                FileLog.e(e);
+            }
+            final List<MapEngine.Route> result = routes;
+            AndroidUtilities.runOnUIThread(() -> {
+                if (!destroyed && request == estimateRequest) {
+                    callback.run(result);
+                }
+            });
+        });
+    }
+
+    /**
+     * Loads the highway hierarchy network ahead, with a short route in Baghdad, so the first real route does not wait
+     * for it. Runs once per file, in the routes' turn.
+     */
+    static void warmUp() {
+        if (warmedUp || installedFile() == null) return;
+        warmedUp = true;
+        routeExecutor.execute(() -> {
+            final long started = android.os.SystemClock.elapsedRealtime();
+            try {
+                final BinaryMapIndexReader file = reader();
+                if (file != null) {
+                    search(file, new LatLon(33.3152, 44.3661), new LatLon(33.3000, 44.3900), false, null);
+                }
+            } catch (Throwable e) {
+                FileLog.e(e);
+            }
+            android.util.Log.d("PhogramRoute", "network loaded ahead in " + (android.os.SystemClock.elapsedRealtime() - started) + " ms");
+        });
+    }
+
     /** At most this many routes are offered: the best and two others. */
     private static final int MAX_ROUTES = 3;
 
@@ -580,7 +632,7 @@ final class OsmAndOffline {
                                                   List<LatLon> via) throws Exception {
         final long started = android.os.SystemClock.elapsedRealtime();
         final List<MapEngine.Route> routes = new ArrayList<>();
-        final RouteResultPreparation.RouteCalcResult result = search(file, start, end, false, withAlternatives, via);
+        final RouteResultPreparation.RouteCalcResult result = search(file, start, end, withAlternatives, via);
         if (result == null || !result.isCorrect() || result.getList() == null || result.getList().isEmpty()) {
             android.util.Log.d("PhogramRoute", "no route after " + (android.os.SystemClock.elapsedRealtime() - started)
                     + " ms: " + (result != null ? result.getError() : "no result"));
@@ -600,20 +652,8 @@ final class OsmAndOffline {
                     addIfDifferent(routes, route);
                 }
             }
-            // OsmAnd finds no alternative where no other road is close enough in time; the shortest way by distance
-            // then gives the driver a real choice, as the fastest and the shortest in common map apps.
-            if (routes.size() < MAX_ROUTES) {
-                try {
-                    final RouteResultPreparation.RouteCalcResult shortest = search(file, start, end, true, false, null);
-                    if (shortest != null && shortest.isCorrect() && shortest.getList() != null && !shortest.getList().isEmpty()) {
-                        final MapEngine.Route route = toRoute(shortest.getList());
-                        route.label = MapEngine.Route.LABEL_SHORTEST;
-                        addIfDifferent(routes, route);
-                    }
-                } catch (Exception e) {
-                    FileLog.e(e);
-                }
-            }
+            // The shortest way by distance is not searched any more: it cannot use the highway hierarchy, so across the
+            // country it searched every road and took most of the time of a preview.
         }
         // How long the routes took to find, for the emulator check and for reports from phones.
         android.util.Log.d("PhogramRoute", String.format(java.util.Locale.US,
@@ -623,9 +663,9 @@ final class OsmAndOffline {
         return routes;
     }
 
-    /** One run of OsmAnd's car router, over its highway hierarchy; the shortest way by distance on request. */
+    /** One run of OsmAnd's car router, over its highway hierarchy. Runs on the routes' thread only. */
     private static RouteResultPreparation.RouteCalcResult search(BinaryMapIndexReader file, LatLon start, LatLon end,
-                                                                 boolean shortest, boolean alternatives, List<LatLon> via) throws Exception {
+                                                                 boolean alternatives, List<LatLon> via) throws Exception {
         synchronized (OsmAndOffline.class) {
             if (routingRules == null) {
                 routingRules = RoutingConfiguration.getDefault();
@@ -634,9 +674,6 @@ final class OsmAndOffline {
         // The region's file holds what the route needs; OsmAnd's world regions are not read for missing maps.
         RoutePlannerFrontEnd.CALCULATE_MISSING_MAPS = false;
         final Map<String, String> params = new LinkedHashMap<>();
-        if (shortest) {
-            params.put("short_way", "true");
-        }
         final RoutingConfiguration config = routingRules.build("car",
                 new RoutingConfiguration.RoutingMemoryLimits(ROUTING_MEMORY_MB, 0), params);
         final RoutePlannerFrontEnd planner = new RoutePlannerFrontEnd();
@@ -651,7 +688,13 @@ final class OsmAndOffline {
         planner.setHHRoutingConfig(hh);
         final RoutingContext context = planner.buildRoutingContext(config, null, new BinaryMapIndexReader[] { file },
                 RoutePlannerFrontEnd.RouteCalculationMode.NORMAL);
-        return planner.searchRoute(context, start, end, via == null || via.isEmpty() ? null : via);
+        // The network of main roads, loaded once for this file and kept: loading it took seconds on every route.
+        net.osmand.router.PhogramHHCache.use(hh, context, file);
+        try {
+            return planner.searchRoute(context, start, end, via == null || via.isEmpty() ? null : via);
+        } finally {
+            net.osmand.router.PhogramHHCache.keep(hh, file);
+        }
     }
 
     /** Adds the route unless it is the same way as one already there: about as long, and through the same middle. */
@@ -972,6 +1015,7 @@ final class OsmAndOffline {
         listeners.remove(listener);
         searchRequest++;
         routeRequest++;
+        estimateRequest++;
     }
 
     /**

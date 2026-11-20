@@ -307,6 +307,8 @@ final class MapLibreMapEngine implements MapEngine {
             AndroidUtilities.cancelRunOnUIThread(startOffline);
             offline = new OsmAndOffline(context);
             offline.setDownloadListener(downloadListener);
+            // The main roads' network loads now, while the driver looks at the map, not at the first route.
+            OsmAndOffline.warmUp();
             if (map != null) {
                 final CameraPosition camera = map.getCameraPosition();
                 offline.setCenter(camera.target.getLatitude(), camera.target.getLongitude(), camera.zoom);
@@ -628,29 +630,74 @@ final class MapLibreMapEngine implements MapEngine {
         AndroidUtilities.runOnUIThread(timeout, FRESH_LOCATION_TIMEOUT_MS);
     }
 
+    // The last estimate (the best route for a place's card), which the preview of the same place shows at once.
+    private static final float ESTIMATE_REUSE_METERS = 150;
+    private static final long ESTIMATE_REUSE_MS = 5 * 60_000;
+    private Place estimatePlace;
+    private double[] estimateFrom;
+    private long estimateTime;
+    private List<Route> estimateRoutes;
+    private final List<Utilities.Callback<List<Route>>> estimateWaiters = new ArrayList<>();
+    /** Counts the previews; a preview's late alternatives are dropped once another preview, a route or a trip began. */
+    private int previewTurn;
+
+    private static boolean samePlace(Place a, Place b) {
+        return a != null && b != null && a.latitude == b.latitude && a.longitude == b.longitude;
+    }
+
+    /**
+     * The preview: the best route first, as soon as it is known (from the card's estimate, often already there), then
+     * the other routes when OsmAnd has found them, without making the driver wait for them.
+     */
     private void routeFrom(double latitude, double longitude, Place destination, RouteCallback callback) {
         final OsmAndOffline router = offline();
         if (router == null) {
             callback.onRoutes(new ArrayList<>(), ROUTE_NOT_FOUND);
             return;
         }
-        router.route(latitude, longitude, destination.latitude, destination.longitude, true, routes -> {
-            if (destroyed) return;
+        final int turn = ++previewTurn;
+        final Utilities.Callback<List<Route>> showBest = routes -> {
+            if (destroyed || turn != previewTurn || navigator != null) return;
             if (routes.isEmpty() || routes.get(0).points.size() < 2) {
                 callback.onRoutes(new ArrayList<>(), ROUTE_NOT_FOUND);
                 return;
             }
-            for (int i = 0; i < routes.size(); i++) {
-                routes.get(i).destination = destination;
-                routes.get(i).index = i;
-            }
-            shownRoutes.clear();
-            shownRoutes.addAll(routes);
-            chosenRoute = 0;
-            drawRoute();
+            final List<Route> best = new ArrayList<>();
+            best.add(routes.get(0));
+            showPreviewRoutes(best, destination, true, callback);
+            // The other routes, which take longer: they replace the list when found and differ from the best.
+            router.route(latitude, longitude, destination.latitude, destination.longitude, true, all -> {
+                if (destroyed || turn != previewTurn || navigator != null) return;
+                if (all.size() < 2 || all.get(0).points.size() < 2) return;
+                showPreviewRoutes(all, destination, false, callback);
+            });
+        };
+        final boolean reuse = samePlace(estimatePlace, destination) && estimateFrom != null
+                && android.os.SystemClock.elapsedRealtime() - estimateTime < ESTIMATE_REUSE_MS
+                && MapEngine.distance(estimateFrom[0], estimateFrom[1], latitude, longitude) < ESTIMATE_REUSE_METERS;
+        if (reuse && estimateRoutes != null && !estimateRoutes.isEmpty()) {
+            showBest.run(estimateRoutes);
+        } else if (reuse && estimateRoutes == null) {
+            // The card's estimate is still being found: the preview takes it when it comes.
+            estimateWaiters.add(showBest);
+        } else {
+            router.route(latitude, longitude, destination.latitude, destination.longitude, false, showBest);
+        }
+    }
+
+    private void showPreviewRoutes(List<Route> routes, Place destination, boolean fit, RouteCallback callback) {
+        for (int i = 0; i < routes.size(); i++) {
+            routes.get(i).destination = destination;
+            routes.get(i).index = i;
+        }
+        shownRoutes.clear();
+        shownRoutes.addAll(routes);
+        chosenRoute = 0;
+        drawRoute();
+        if (fit) {
             fitRoutes();
-            callback.onRoutes(routes, 0);
-        });
+        }
+        callback.onRoutes(new ArrayList<>(routes), 0);
     }
 
     @Override
@@ -665,9 +712,22 @@ final class MapLibreMapEngine implements MapEngine {
             callback.onRoutes(new ArrayList<>(), ROUTE_NO_LOCATION);
             return;
         }
-        // Only the best route: the card needs its time, not the alternatives.
-        router.route(here[0], here[1], destination.latitude, destination.longitude, false, routes -> {
+        // Only the best route: the card needs its time, not the alternatives. It is kept for the preview.
+        estimatePlace = destination;
+        estimateFrom = here;
+        estimateTime = android.os.SystemClock.elapsedRealtime();
+        estimateRoutes = null;
+        // A preview waiting for this place keeps waiting, now for this newer estimate.
+        router.estimate(here[0], here[1], destination.latitude, destination.longitude, routes -> {
             if (destroyed) return;
+            if (samePlace(estimatePlace, destination)) {
+                estimateRoutes = routes;
+                final List<Utilities.Callback<List<Route>>> waiting = new ArrayList<>(estimateWaiters);
+                estimateWaiters.clear();
+                for (Utilities.Callback<List<Route>> waiter : waiting) {
+                    waiter.run(routes);
+                }
+            }
             callback.onRoutes(routes, routes.isEmpty() ? ROUTE_NOT_FOUND : 0);
         });
     }
@@ -681,6 +741,7 @@ final class MapLibreMapEngine implements MapEngine {
 
     @Override
     public void clearRoute() {
+        previewTurn++;
         shownRoutes.clear();
         chosenRoute = 0;
         drawRoute();
@@ -1242,6 +1303,7 @@ final class MapLibreMapEngine implements MapEngine {
     @SuppressWarnings("MissingPermission")
     public void startNavigation(Route route, NavigationListener listener) {
         stopNavigation();
+        previewTurn++;
         freeCamera = false;
         navigator = new RouteNavigator(route);
         navigationListener = listener;
