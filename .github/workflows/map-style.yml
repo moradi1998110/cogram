@@ -1,0 +1,113 @@
+name: Map style
+# Builds Phogram's map style into the app's assets (TMessagesProj/src/main/assets/phogram_map): Protomaps' light and
+# dark styles made Phogram's by .github/map-style/build-style.mjs, the landmark icons the app draws (Maki and Temaki,
+# both CC0) and the label fonts as map glyphs: Roboto (Apache-2.0, Telegram's font) with Noto Sans Arabic (OFL) for
+# Arabic. Only the style changes; the map tiles on the phones stay as they are. Every tool and asset is pinned.
+#
+# A tag mapstyle* on the branch map-style runs it, and the result is committed back onto that branch.
+on:
+  push:
+    tags:
+      - 'mapstyle*'
+
+permissions:
+  contents: write
+
+env:
+  # Protomaps basemaps (BSD-3-Clause), the same commit as the tiles' (map-data.yml): its style generator.
+  BASEMAPS_COMMIT: 42ffaaa4a85a41bfcb23e43cc0f5b492a5eca123
+  MAKI_VERSION: 8.2.0
+  TEMAKI_VERSION: 5.13.0
+  ROBOTO_URL: https://github.com/googlefonts/roboto/releases/download/v2.138/roboto-unhinted.zip
+  NOTO_ARABIC_URL: https://github.com/notofonts/arabic/releases/download/NotoSansArabic-v2.013/NotoSansArabic-v2.013.zip
+  # stadiamaps/sdf_font_tools (BSD-3-Clause); no RustSec advisory for it or its font crates. It only reads the pinned
+  # fonts above, here, and nothing of it ships in the app.
+  GLYPHS_VERSION: 1.5.1
+  ASSETS: TMessagesProj/src/main/assets/phogram_map
+
+jobs:
+  style:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: map-style
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Protomaps' styles with Arabic labels
+        run: |
+          git init -q /tmp/basemaps
+          git -C /tmp/basemaps fetch -q --depth 1 https://github.com/protomaps/basemaps.git "$BASEMAPS_COMMIT"
+          git -C /tmp/basemaps checkout -q FETCH_HEAD
+          cd /tmp/basemaps/styles
+          npm ci --no-audit --no-fund
+          mkdir -p /tmp/protomaps
+          for flavor in light dark; do
+            npx tsx src/cli.ts "/tmp/protomaps/style-$flavor.json" "pmtiles://PHOGRAM_TILES" "$flavor" ar \
+              "asset://phogram_map/sprites/$flavor" "asset://phogram_map/fonts/{fontstack}/{range}.pbf"
+          done
+
+      - name: Maki and Temaki icons
+        run: |
+          mkdir -p /tmp/icons && cd /tmp/icons
+          npm pack --silent "@mapbox/maki@$MAKI_VERSION" "@rapideditor/temaki@$TEMAKI_VERSION"
+          mkdir maki temaki
+          tar -xzf mapbox-maki-*.tgz -C maki
+          tar -xzf rapideditor-temaki-*.tgz -C temaki
+          ls maki/package/icons | wc -l
+          ls temaki/package/icons | wc -l
+
+      - name: Phogram's styles and landmark icons
+        run: |
+          node .github/map-style/build-style.mjs /tmp/protomaps /tmp/icons/maki/package/icons \
+            /tmp/icons/temaki/package/icons /tmp/style
+          cp /tmp/style/style-light.json /tmp/style/style-dark.json /tmp/style/poi_icons.json "$ASSETS/"
+
+      - name: Label fonts as map glyphs
+        run: |
+          mkdir -p /tmp/fonts/src /tmp/fonts/zip && cd /tmp/fonts
+          curl -sSfL --retry 3 -o zip/roboto.zip "$ROBOTO_URL"
+          curl -sSfL --retry 3 -o zip/arabic.zip "$NOTO_ARABIC_URL"
+          sha256sum zip/*.zip
+          unzip -q -o zip/roboto.zip -d roboto
+          unzip -q -o zip/arabic.zip -d arabic
+          for w in Regular Medium Bold; do
+            cp "$(find roboto -name "Roboto-$w.ttf" | head -1)" src/
+            cp "$(find arabic -path '*unhinted*' -name "NotoSansArabic-$w.ttf" | head -1)" src/
+          done
+          ls -l src
+          cargo install build_pbf_glyphs --version "$GLYPHS_VERSION" --locked --quiet
+          build_pbf_glyphs src out
+          ls out
+          # Each Phogram font joins Roboto's Latin and punctuation with Noto Sans Arabic's Arabic ranges. Only the
+          # ranges Iraq's names use are kept, as before.
+          LATIN="0-255 256-511 512-767 768-1023 8192-8447 8448-8703 65280-65535"
+          ARABIC="1536-1791 1792-2047 2048-2303 64256-64511 64512-64767 64768-65023 65024-65279"
+          rm -rf "$GITHUB_WORKSPACE/$ASSETS/fonts/Phogram "*
+          for w in Regular Medium Bold; do
+            latin=$(find out -maxdepth 1 -type d -name "Roboto $w" | head -1)
+            arabic=$(find out -maxdepth 1 -type d -name "Noto Sans Arabic $w" | head -1)
+            test -n "$latin" && test -n "$arabic"
+            dest="$GITHUB_WORKSPACE/$ASSETS/fonts/Phogram $w"
+            mkdir -p "$dest"
+            for r in $LATIN; do cp "$latin/$r.pbf" "$dest/"; done
+            for r in $ARABIC; do cp "$arabic/$r.pbf" "$dest/"; done
+          done
+          du -sh "$GITHUB_WORKSPACE/$ASSETS/fonts/"*
+
+      - name: Commit the style onto map-style
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$ASSETS"
+          if git diff --cached --quiet; then
+            echo "The style did not change."
+            exit 0
+          fi
+          git commit -q -m "Map style: built by the map-style workflow from $GITHUB_REF_NAME"
+          git push origin HEAD:map-style

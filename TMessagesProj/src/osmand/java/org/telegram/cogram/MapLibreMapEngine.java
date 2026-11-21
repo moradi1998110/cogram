@@ -834,7 +834,7 @@ final class MapLibreMapEngine implements MapEngine {
     private static SymbolLayer labels(String id, String source, Expression color) {
         return new SymbolLayer(id, source).withProperties(
                 PropertyFactory.textField(Expression.get("label")),
-                PropertyFactory.textFont(new String[] { "Noto Sans Medium" }),
+                PropertyFactory.textFont(new String[] { "Phogram Medium" }),
                 PropertyFactory.textSize(14f),
                 PropertyFactory.textColor(color),
                 PropertyFactory.textHaloColor(0xFFFFFFFF),
@@ -911,6 +911,7 @@ final class MapLibreMapEngine implements MapEngine {
 
     /** The road images, made once per style. */
     private void addRoadImages(Style target) {
+        PoiBadges.addTo(context, target);
         final int plate = MapKinds.dp(28);
         final int corner = MapKinds.dp(9);
         final List<org.maplibre.android.maps.ImageStretches> stretch = new ArrayList<>();
@@ -959,7 +960,7 @@ final class MapLibreMapEngine implements MapEngine {
                 PropertyFactory.iconIgnorePlacement(true));
         final SymbolLayer names = new SymbolLayer(NAMES_LAYER, NAMES_SOURCE).withProperties(
                 PropertyFactory.textField(Expression.get("name")),
-                PropertyFactory.textFont(new String[] { "Noto Sans Medium" }),
+                PropertyFactory.textFont(new String[] { "Phogram Medium" }),
                 PropertyFactory.textSize(14f),
                 PropertyFactory.textColor(Theme.getColor(Theme.key_chat_messageTextIn)),
                 // In Telegram's message bubble, its tail on the road: the name sits up and to the right of the point.
@@ -973,7 +974,7 @@ final class MapLibreMapEngine implements MapEngine {
         // A place's name over its pin, in the same bubble, once the driver is near it.
         final SymbolLayer alongNames = new SymbolLayer(ALONG_NAMES_LAYER, ALONG_SOURCE).withProperties(
                 PropertyFactory.textField(Expression.get("name")),
-                PropertyFactory.textFont(new String[] { "Noto Sans Medium" }),
+                PropertyFactory.textFont(new String[] { "Phogram Medium" }),
                 PropertyFactory.textSize(13f),
                 PropertyFactory.textColor(Theme.getColor(Theme.key_chat_messageTextIn)),
                 PropertyFactory.iconImage("phogram-bubble"),
@@ -1000,7 +1001,7 @@ final class MapLibreMapEngine implements MapEngine {
                 PropertyFactory.iconSize(Expression.interpolate(Expression.linear(), Expression.zoom(),
                         Expression.stop(8, 0.6f), Expression.stop(14, 1f))),
                 PropertyFactory.textField(Expression.get("label")),
-                PropertyFactory.textFont(new String[] { "Noto Sans Medium" }),
+                PropertyFactory.textFont(new String[] { "Phogram Medium" }),
                 PropertyFactory.textSize(12f),
                 PropertyFactory.textColor(0xFF1A1A1A),
                 PropertyFactory.textHaloColor(0xFFFFFFFF),
