@@ -65,15 +65,39 @@ final class MapKinds {
     }
 
     /**
-     * The color of the routes found together, by their place: the best in green, the others in Telegram's blue and in
-     * orange. The line on the map and the border of its card share it.
+     * The color of the routes found together, by their place: the best in the user's Telegram accent, the others in
+     * two of Telegram's colors that do not look like it. The line on the map and the border of its card share it.
      */
     static int routeColor(int index) {
-        switch (index) {
-            case 0: return 0xFF2EB85C;
-            case 1: return 0xFF3A8EE6;
-            default: return 0xFFF2994A;
+        if (index == 0) {
+            return accent();
         }
+        final int[] others = { 0xFF76C84D, 0xFFF28C48, 0xFF8E85EE, 0xFF549CDD };
+        int found = 0;
+        for (int color : others) {
+            if (hueDistance(color, accent()) < 40) continue;
+            if (++found == index) return color;
+        }
+        return others[1];
+    }
+
+    /** Telegram's accent color, as the theme the user chose has it. */
+    static int accent() {
+        return Theme.getColor(Theme.key_featuredStickers_addButton) | 0xFF000000;
+    }
+
+    /** A deeper shade of the accent, for outlines around it. */
+    static int accentDark() {
+        return ColorUtils.blendARGB(accent(), 0xFF000000, 0.3f);
+    }
+
+    private static float hueDistance(int a, int b) {
+        final float[] ha = new float[3];
+        final float[] hb = new float[3];
+        ColorUtils.colorToHSL(a, ha);
+        ColorUtils.colorToHSL(b, hb);
+        final float d = Math.abs(ha[0] - hb[0]);
+        return Math.min(d, 360 - d);
     }
 
     // Images the map draws on the road, made once per style from Telegram's emoji and colors.
@@ -312,7 +336,7 @@ final class MapKinds {
         final android.graphics.Bitmap bitmap = android.graphics.Bitmap.createBitmap(size, size, android.graphics.Bitmap.Config.ARGB_8888);
         final android.graphics.Canvas canvas = new android.graphics.Canvas(bitmap);
         final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        paint.setColor(0xFF2B6CB8);
+        paint.setColor(accent());
         canvas.drawRoundRect(new android.graphics.RectF(0, 0, size, size), dp(9), dp(9), paint);
         return bitmap;
     }
@@ -370,7 +394,7 @@ final class MapKinds {
         head.lineTo(size - dp(2), size - dp(3));
         head.lineTo(dp(2), size - dp(3));
         head.close();
-        paint.setColor(0xFF1F4E8C);
+        paint.setColor(accentDark());
         paint.setStyle(Paint.Style.STROKE);
         paint.setStrokeWidth(dp(2));
         paint.setStrokeJoin(Paint.Join.ROUND);

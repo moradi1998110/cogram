@@ -221,7 +221,17 @@ final class MapLibreMapEngine implements MapEngine {
         if (map == null || style == null || !hasLocationPermission()) return;
         final LocationComponent location = map.getLocationComponent();
         if (!location.isLocationComponentActivated()) {
+            // The user's position in Telegram's accent color, as the route and the road plates.
+            final int accent = MapTheme.accent();
+            final org.maplibre.android.location.LocationComponentOptions dot =
+                    org.maplibre.android.location.LocationComponentOptions.builder(context)
+                            .foregroundTintColor(accent)
+                            .bearingTintColor(accent)
+                            .accuracyColor(accent)
+                            .accuracyAlpha(0.15f)
+                            .build();
             location.activateLocationComponent(LocationComponentActivationOptions.builder(context, style)
+                    .locationComponentOptions(dot)
                     .useDefaultLocationEngine(true).build());
         }
         location.setLocationComponentEnabled(resumed);
@@ -911,6 +921,7 @@ final class MapLibreMapEngine implements MapEngine {
 
     /** The road images, made once per style. */
     private void addRoadImages(Style target) {
+        MapTheme.apply(target, Theme.isCurrentThemeDark());
         PoiBadges.addTo(context, target);
         final int plate = MapKinds.dp(28);
         final int corner = MapKinds.dp(9);
@@ -947,7 +958,7 @@ final class MapLibreMapEngine implements MapEngine {
         style.addSource(new GeoJsonSource(WARNINGS_SOURCE, empty));
         style.addSource(new GeoJsonSource(ALONG_SOURCE, empty));
         final LineLayer casing = new LineLayer(MANEUVER_CASING, MANEUVER_SOURCE).withProperties(
-                PropertyFactory.lineColor(0xFF1F4E8C), PropertyFactory.lineWidth(10f),
+                PropertyFactory.lineColor(MapKinds.accentDark()), PropertyFactory.lineWidth(10f),
                 PropertyFactory.lineCap(Property.LINE_CAP_BUTT), PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND));
         final LineLayer line = new LineLayer(MANEUVER_LINE, MANEUVER_SOURCE).withProperties(
                 PropertyFactory.lineColor(0xFFFFFFFF), PropertyFactory.lineWidth(6f),

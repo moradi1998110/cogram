@@ -22,20 +22,23 @@ if (!outDir) {
   process.exit(2);
 }
 
-// Categories: the badge's color, and the label's color on the light and the dark map.
+// Categories: the badge's color, and the label's color on the light and the dark map. The badges take Telegram's
+// own seven colors, those of its profile pictures (red, orange, violet, green, cyan, blue, pink), so the map reads
+// as part of Telegram; the few categories past seven take shades between them. Labels are darker shades of the
+// badge on the light map and lighter ones on the dark map, for contrast.
 const CATEGORIES = {
-  food:       { badge: '#F57C00', light: '#B85C00', dark: '#FFB366' },
-  shop:       { badge: '#1E88E5', light: '#1565C0', dark: '#82B9F2' },
-  health:     { badge: '#E53935', light: '#C62828', dark: '#FF8A80' },
-  religion:   { badge: '#00897B', light: '#00695C', dark: '#6FD3C5' },
-  education:  { badge: '#8D6E63', light: '#5D4037', dark: '#D7B9A8' },
-  transport:  { badge: '#3F51B5', light: '#303F9F', dark: '#A3ADEB' },
-  finance:    { badge: '#00838F', light: '#006064', dark: '#7FD6DE' },
-  government: { badge: '#546E7A', light: '#37474F', dark: '#B0BEC5' },
-  leisure:    { badge: '#43A047', light: '#2E7D32', dark: '#8FD48F' },
-  culture:    { badge: '#8E24AA', light: '#6A1B9A', dark: '#D69CE6' },
-  lodging:    { badge: '#D81B60', light: '#AD1457', dark: '#F48FB1' },
-  other:      { badge: '#757575', light: '#424242', dark: '#BDBDBD' },
+  health:     { badge: '#E56555', light: '#B8402F', dark: '#FF9A8C' }, // Telegram red
+  food:       { badge: '#F28C48', light: '#B25A17', dark: '#FFB37F' }, // Telegram orange
+  culture:    { badge: '#8E85EE', light: '#5B51C4', dark: '#B9B2FF' }, // Telegram violet
+  leisure:    { badge: '#76C84D', light: '#3E8A1E', dark: '#A3E283' }, // Telegram green
+  transport:  { badge: '#5FBED5', light: '#227F96', dark: '#93DCEE' }, // Telegram cyan
+  shop:       { badge: '#549CDD', light: '#2565A3', dark: '#8FC0EE' }, // Telegram blue
+  lodging:    { badge: '#F2749A', light: '#B83B62', dark: '#FFA3BF' }, // Telegram pink
+  religion:   { badge: '#45AE9D', light: '#1F7567', dark: '#83D6C8' }, // between green and cyan
+  finance:    { badge: '#3E9DB5', light: '#1C6577', dark: '#86CBDC' }, // deeper cyan
+  education:  { badge: '#C08A5B', light: '#7E5530', dark: '#E2B992' }, // warm brown beside orange
+  government: { badge: '#7C8C9E', light: '#4A5866', dark: '#B9C4D0' }, // slate
+  other:      { badge: '#8E969E', light: '#4E555C', dark: '#C2C8CE' },
 };
 
 // Protomaps' "kind" of a landmark (OSM's amenity, shop, tourism... value) -> category and icon names, the first one
