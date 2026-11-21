@@ -68,11 +68,14 @@ final class MapKinds {
         return MapSymbols.has(symbol(kind));
     }
 
+    /** Fuel stations' green, the color of fuel stations' signs, so the most sought landmark on a trip stands out. */
+    static final int FUEL_GREEN = 0xFF12A150;
+
     /** The kind's color: the map badge's for landmarks (Telegram's colors), Telegram's avatar colors for the rest. */
     static int color(int kind) {
         switch (kind) {
             case MapEngine.KIND_FOOD: return 0xFFF28C48;
-            case MapEngine.KIND_FUEL: return 0xFF5FBED5;
+            case MapEngine.KIND_FUEL: return FUEL_GREEN;
             case MapEngine.KIND_PARKING: return 0xFF5FBED5;
             case MapEngine.KIND_HEALTH: return 0xFFE56555;
             case MapEngine.KIND_PHARMACY: return 0xFFE56555;
@@ -130,6 +133,11 @@ final class MapKinds {
      * border and a soft shadow, pointing up (the map turns it with the heading).
      */
     static android.graphics.Bitmap navigationArrow() {
+        return navigationArrow(false);
+    }
+
+    /** The driver's arrow; stale, in grey, while the GPS has given no position for a while, as Waze shows it. */
+    static android.graphics.Bitmap navigationArrow(boolean stale) {
         final int size = dp(46);
         final android.graphics.Bitmap bitmap = android.graphics.Bitmap.createBitmap(size, size, android.graphics.Bitmap.Config.ARGB_8888);
         final android.graphics.Canvas canvas = new android.graphics.Canvas(bitmap);
@@ -151,7 +159,7 @@ final class MapKinds {
         paint.clearShadowLayer();
         paint.setStyle(Paint.Style.FILL_AND_STROKE);
         paint.setStrokeWidth(dp(1));
-        paint.setColor(accent());
+        paint.setColor(stale ? 0xFF9AA0A6 : accent());
         canvas.drawPath(arrow, paint);
         return bitmap;
     }

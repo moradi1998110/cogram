@@ -32,6 +32,9 @@ const CATEGORIES = {
   culture:    { badge: '#8E85EE', light: '#5B51C4', dark: '#B9B2FF' }, // Telegram violet
   leisure:    { badge: '#76C84D', light: '#3E8A1E', dark: '#A3E283' }, // Telegram green
   transport:  { badge: '#5FBED5', light: '#227F96', dark: '#93DCEE' }, // Telegram cyan
+  // Fuel stations stand apart from the rest of transport in the green of fuel stations' signs: the landmark drivers
+  // look for most. Deeper than the parks' green and the mosques' teal, so the three do not blend.
+  fuel:       { badge: '#12A150', light: '#0B7436', dark: '#6FDC98' },
   shop:       { badge: '#549CDD', light: '#2565A3', dark: '#8FC0EE' }, // Telegram blue
   lodging:    { badge: '#F2749A', light: '#B83B62', dark: '#FFA3BF' }, // Telegram pink
   religion:   { badge: '#45AE9D', light: '#1F7567', dark: '#83D6C8' }, // between green and cyan
@@ -66,10 +69,10 @@ const KINDS = {
   school: ['education', 'school'], university: ['education', 'college'], college: ['education', 'college'],
   kindergarten: ['education', 'school'], library: ['education', 'library'],
 
-  fuel: ['transport', 'fuel'], parking: ['transport', 'parking'], bus_station: ['transport', 'bus'],
+  fuel: ['fuel', 'fuel'], parking: ['transport', 'parking'], bus_station: ['transport', 'bus'],
   bus_stop: ['transport', 'bus'], station: ['transport', 'rail'], aerodrome: ['transport', 'airport'],
   car_repair: ['transport', 'car-repair'], car_wash: ['transport', 'car'], car_rental: ['transport', 'car-rental'],
-  charging_station: ['transport', 'charging-station', 'fuel'], taxi: ['transport', 'taxi', 'car'],
+  charging_station: ['fuel', 'charging-station', 'fuel'], taxi: ['transport', 'taxi', 'car'],
 
   bank: ['finance', 'bank'], atm: ['finance', 'atm', 'bank'], bureau_de_change: ['finance', 'bank'],
   money_transfer: ['finance', 'bank'],

@@ -797,8 +797,12 @@ final class MapsRouteUi {
             unit.setTextSize(TypedValue.COMPLEX_UNIT_DIP, Math.max(11, sizeDp * 0.62f));
             unit.setTypeface(AndroidUtilities.bold());
             unit.setSingleLine(true);
+            // Telegram lays its rows out left to right in every language, so in Arabic the unit goes first, to the
+            // number's left, and the figure reads from the right as Arabic text does ("25 د").
+            final boolean rtl = org.telegram.messenger.LocaleController.isRTL;
+            if (rtl) addView(unit, LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, Gravity.BOTTOM, 4, 0, 4, (int) (sizeDp * 0.12f)));
             addView(number, LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, LayoutHelper.MATCH_PARENT));
-            addView(unit, LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, Gravity.BOTTOM, 4, 0, 4, (int) (sizeDp * 0.12f)));
+            if (!rtl) addView(unit, LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, Gravity.BOTTOM, 4, 0, 4, (int) (sizeDp * 0.12f)));
         }
 
         void set(String[] parts, boolean animated) {

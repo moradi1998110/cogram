@@ -223,28 +223,49 @@ final class MapLibreMapEngine implements MapEngine {
     private void activateLocation() {
         if (map == null || style == null || !hasLocationPermission()) return;
         final LocationComponent location = map.getLocationComponent();
-        // The user's position in Telegram's accent color, as the route and the road plates. While navigating the
-        // marker is the driver's arrow, a style image (gpsName) the tint leaves alone: tinting MapLibre's own arrow
-        // turned it into a flat disc.
+        final boolean driving = navigator != null;
+        if (!location.isLocationComponentActivated()) {
+            location.activateLocationComponent(LocationComponentActivationOptions.builder(context, style)
+                    .locationComponentOptions(locationOptions(driving))
+                    .useDefaultLocationEngine(true).build());
+        } else if (locationRestyle) {
+            location.applyStyle(locationOptions(driving));
+        }
+        locationRestyle = false;
+        location.setLocationComponentEnabled(resumed);
+        // A new style (a change of theme) during a trip keeps the driver's arrow and the camera on the driver; it
+        // brought back the dot and left the camera behind.
+        location.setRenderMode(driving ? RenderMode.GPS : RenderMode.NORMAL);
+        if (driving) {
+            if (location.getLocationEngine() != null) {
+                savedLocationEngine = location.getLocationEngine();
+                location.setLocationEngine(null);
+            }
+            if (!freeCamera) {
+                location.setCameraMode(CameraMode.TRACKING_GPS, CAMERA_MS, NAVIGATION_ZOOM, null, NAVIGATION_TILT, null);
+            }
+        }
+    }
+
+    /**
+     * The user's position in Telegram's accent color, as the route and the road plates. While navigating the marker is
+     * the driver's arrow, a style image (gpsName) the tint leaves alone: tinting MapLibre's own arrow turned it into a
+     * flat disc. MapLibre swaps the marker for its stale icon once no position has come for a while, and in GPS mode
+     * that icon is its own arrow tinted, the same flat disc: while driving the stale icon is our arrow in grey.
+     */
+    private org.maplibre.android.location.LocationComponentOptions locationOptions(boolean driving) {
         final int accent = MapTheme.accent();
-        final org.maplibre.android.location.LocationComponentOptions dot =
+        final org.maplibre.android.location.LocationComponentOptions.Builder options =
                 org.maplibre.android.location.LocationComponentOptions.builder(context)
                         .foregroundTintColor(accent)
                         .bearingTintColor(accent)
                         .accuracyColor(accent)
                         .accuracyAlpha(0.15f)
-                        .gpsName(NAV_ARROW)
-                        .build();
-        if (!location.isLocationComponentActivated()) {
-            location.activateLocationComponent(LocationComponentActivationOptions.builder(context, style)
-                    .locationComponentOptions(dot)
-                    .useDefaultLocationEngine(true).build());
-        } else if (locationRestyle) {
-            location.applyStyle(dot);
+                        .gpsName(NAV_ARROW);
+        if (driving) {
+            options.foregroundStaleName(NAV_ARROW_STALE);
         }
-        locationRestyle = false;
-        location.setLocationComponentEnabled(resumed);
-        location.setRenderMode(RenderMode.NORMAL);
+        return options.build();
     }
 
     @Override
@@ -526,6 +547,7 @@ final class MapLibreMapEngine implements MapEngine {
     private static final String ROUTE_SOURCE = "phogram-route";
     /** The driver's arrow while navigating, a style image the position marker uses (MapKinds.navigationArrow). */
     private static final String NAV_ARROW = "phogram-nav-arrow";
+    private static final String NAV_ARROW_STALE = "phogram-nav-arrow-stale";
     private static final String ROUTE_CASING = "phogram-route-casing";
     private static final String ROUTE_LINE = "phogram-route-line";
     private static final String ALTERNATIVE_SOURCE = "phogram-route-alternatives";
@@ -960,7 +982,8 @@ final class MapLibreMapEngine implements MapEngine {
     private void addRoadImages(Style target) {
         MapTheme.apply(target, Theme.isCurrentThemeDark());
         PoiBadges.addTo(context, target);
-        target.addImage(NAV_ARROW, MapKinds.navigationArrow());
+        target.addImage(NAV_ARROW, MapKinds.navigationArrow(false));
+        target.addImage(NAV_ARROW_STALE, MapKinds.navigationArrow(true));
         final int plate = MapKinds.dp(28);
         final int corner = MapKinds.dp(9);
         final List<org.maplibre.android.maps.ImageStretches> stretch = new ArrayList<>();
@@ -1383,21 +1406,13 @@ final class MapLibreMapEngine implements MapEngine {
         chosenRoute = 0;
         drawRoute();
         drawRoadMarks();
+        // The driver's options (the grey arrow for a stale position) and, with a navigator set, the driving marker:
+        // the arrow moved only by the navigation, on the route's line (MapLibre's own reading of the GPS made it jump
+        // between the raw position and the matched one), and one transition to the driver, zoomed in and tilted
+        // (zooming and tilting separately while the camera is still moving into tracking is ignored by MapLibre).
+        locationRestyle = true;
         activateLocation();
         listenToTracking();
-        if (map != null && map.getLocationComponent().isLocationComponentActivated()) {
-            final LocationComponent location = map.getLocationComponent();
-            // While driving the arrow is moved only by the navigation, on the route's line; MapLibre's own reading of
-            // the GPS made it jump between the raw position and the matched one.
-            if (location.getLocationEngine() != null) {
-                savedLocationEngine = location.getLocationEngine();
-                location.setLocationEngine(null);
-            }
-            location.setRenderMode(RenderMode.GPS);
-            // One transition to the driver, zoomed in and tilted; zooming and tilting separately while the camera
-            // is still moving into tracking is ignored by MapLibre.
-            location.setCameraMode(CameraMode.TRACKING_GPS, CAMERA_MS, NAVIGATION_ZOOM, null, NAVIGATION_TILT, null);
-        }
         final android.location.LocationManager manager =
                 (android.location.LocationManager) context.getSystemService(Context.LOCATION_SERVICE);
         if (manager == null || !hasLocationPermission()) return;
@@ -1565,6 +1580,7 @@ final class MapLibreMapEngine implements MapEngine {
                 savedLocationEngine = null;
             }
             location.setCameraMode(CameraMode.NONE);
+            location.applyStyle(locationOptions(false));
             location.setRenderMode(RenderMode.NORMAL);
             map.animateCamera(CameraUpdateFactory.newCameraPosition(new CameraPosition.Builder(map.getCameraPosition())
                     .tilt(0).bearing(0).build()), CAMERA_MS);
