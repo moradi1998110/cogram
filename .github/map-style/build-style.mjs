@@ -199,6 +199,10 @@ const FONT = { 'Noto Sans Regular': 'Phogram Regular', 'Noto Sans Medium': 'Phog
 function swapFonts(value) {
   if (typeof value === 'string') return FONT[value] || value;
   if (Array.isArray(value)) return value.map(swapFonts);
+  // Names in two languages carry their fonts inside the text's format options.
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, swapFonts(v)]));
+  }
   return value;
 }
 
@@ -233,6 +237,7 @@ function transform(style, flavor) {
   style.transition = { duration: 300, delay: 0 };
   for (const layer of style.layers) {
     if (layer.layout && layer.layout['text-font']) layer.layout['text-font'] = swapFonts(layer.layout['text-font']);
+    if (layer.layout && layer.layout['text-field']) layer.layout['text-field'] = swapFonts(layer.layout['text-field']);
     const color = colors[layer.id];
     if (color && layer.paint) {
       const key = layer.type === 'background' ? 'background-color' : layer.type === 'fill' ? 'fill-color' : layer.type === 'line' ? 'line-color' : null;
