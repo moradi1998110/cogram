@@ -27,7 +27,10 @@ env:
   ECMWF_OPENDATA_VERSION: 0.3.35
   ECCODES_VERSION: 2.50.1
   WEATHER_RESOL: 0p1
-  WEATHER_MAX_STEP: '72'
+  # Two days ahead covers any trip in Iraq, and every run reaches it (the 06 and 18 UTC runs stop at 90 h).
+  WEATHER_MAX_STEP: '48'
+  WEATHER_SOURCES: ecmwf,aws
+  WEATHER_SOURCE_MINUTES: '15'
 
 jobs:
   tiles:

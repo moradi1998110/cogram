@@ -11,6 +11,7 @@ Environment: WEATHER_RESOL (0p1 or 0p25), WEATHER_MAX_STEP (hours), WEATHER_SOUR
 
 import json
 import os
+import signal
 import sys
 import urllib.request
 
@@ -33,10 +34,18 @@ def published_version(url):
 def main():
     target, index_url = sys.argv[1], sys.argv[2] if len(sys.argv) > 2 else ''
     resol = os.environ.get('WEATHER_RESOL', '0p1')
-    max_step = int(os.environ.get('WEATHER_MAX_STEP', '72'))
+    max_step = int(os.environ.get('WEATHER_MAX_STEP', '48'))
     steps = list(range(3, max_step + 1, 3))
     errors = []
-    for source in os.environ.get('WEATHER_SOURCES', 'aws,ecmwf').split(','):
+    # ECMWF's own portal first: the cloud mirrors may not carry the 0.1 degree files and answer 503, which the
+    # client retries for hours. Each source gets a time limit, then the next one is tried.
+    limit = int(os.environ.get('WEATHER_SOURCE_MINUTES', '15')) * 60
+    def too_slow(*_):
+        raise TimeoutError(f'no answer in {limit} s')
+
+    signal.signal(signal.SIGALRM, too_slow)
+    for source in os.environ.get('WEATHER_SOURCES', 'ecmwf,aws').split(','):
+        signal.alarm(limit)
         try:
             client = Client(source=source.strip(), model='ifs', resol=resol)
             run = client.latest(type='fc', step=max_step, param='2t', levtype='sfc')
@@ -53,6 +62,8 @@ def main():
         except Exception as e:
             errors.append(f'{source}: {e}')
             print(f'{source} failed: {e}', file=sys.stderr)
+        finally:
+            signal.alarm(0)
     raise SystemExit('every source failed: ' + '; '.join(errors))
 
 
