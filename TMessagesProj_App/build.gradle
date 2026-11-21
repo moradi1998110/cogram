@@ -95,8 +95,14 @@ android {
         resources {
             excludes += ['META-INF/BCKEY.DSA', 'META-INF/BCKEY.SF', 'META-INF/LICENSE.md', 'META-INF/versions/9/OSGI-INF/MANIFEST.MF']
         }
+        // Native libraries and code stay uncompressed and page-aligned in the APK, so Android runs them from
+        // it instead of unpacking a second copy at install (about 50 MB of libraries and 30 MB of code).
+        // The APK grows, but releases also go out gzipped, so the download does not.
         jniLibs {
-            useLegacyPackaging = true
+            useLegacyPackaging = false
+        }
+        dex {
+            useLegacyPackaging = false
         }
     }
 
