@@ -73,7 +73,9 @@ jobs:
           mkdir -p /tmp/fonts/src /tmp/fonts/zip && cd /tmp/fonts
           curl -sSfL --retry 3 -o zip/roboto.zip "$ROBOTO_URL"
           curl -sSfL --retry 3 -o zip/arabic.zip "$NOTO_ARABIC_URL"
-          sha256sum zip/*.zip
+          # The fonts as first fetched for this workflow; a changed file stops the build.
+          echo "70f64c718510a601fbcf752aafe644314dacaeb85474dc689c89787c4a72a728  zip/roboto.zip" | sha256sum -c -
+          echo "1301aceaea84c501cf2e6dcfb3182e2328c8eae5725817fcb239672bda7154f1  zip/arabic.zip" | sha256sum -c -
           unzip -q -o zip/roboto.zip -d roboto
           unzip -q -o zip/arabic.zip -d arabic
           for w in Regular Medium Bold; do
@@ -90,9 +92,13 @@ jobs:
           ARABIC="1536-1791 1792-2047 2048-2303 64256-64511 64512-64767 64768-65023 65024-65279"
           rm -rf "$GITHUB_WORKSPACE/$ASSETS/fonts/Phogram "*
           for w in Regular Medium Bold; do
-            latin=$(find out -maxdepth 1 -type d -name "Roboto $w" | head -1)
-            arabic=$(find out -maxdepth 1 -type d -name "Noto Sans Arabic $w" | head -1)
-            test -n "$latin" && test -n "$arabic"
+            # The tool names each font's folder after its file.
+            latin="out/Roboto-$w"
+            arabic="out/NotoSansArabic-$w"
+            if [ ! -d "$latin" ] || [ ! -d "$arabic" ]; then
+              echo "missing glyphs for $w"
+              exit 1
+            fi
             dest="$GITHUB_WORKSPACE/$ASSETS/fonts/Phogram $w"
             mkdir -p "$dest"
             for r in $LATIN; do cp "$latin/$r.pbf" "$dest/"; done
