@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Phogram notification small icon: the seven-cell hex "M" mark as a flat white silhouette.
+     Android tints it; the accent colour stays Telegram blue via setColor(0xff11acfa) in NotificationsController. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M2.87,8.207Q4.782,12 2.87,15.793L7.99,15.793Q6.079,12 7.99,8.207Z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M16.01,8.207Q17.921,12 16.01,15.793L21.13,15.793Q19.218,12 21.13,8.207Z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M4.15,10.424Q8.391,10.665 10.72,14.217L13.28,9.783Q9.039,9.542 6.71,5.99Z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M13.28,14.217Q15.609,10.665 19.85,10.424L17.29,5.99Q14.961,9.542 10.72,9.783Z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M11.672,1.19Q12,1 12.328,1.19L14.628,2.517Q14.956,2.707 14.956,3.086L14.956,5.741Q14.956,6.121 14.628,6.31L12.328,7.638Q12,7.828 11.672,7.638L9.372,6.31Q9.044,6.121 9.044,5.741L9.044,3.086Q9.044,2.707 9.372,2.517Z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M18.241,4.983Q18.57,4.793 18.898,4.983L21.198,6.31Q21.526,6.5 21.526,6.879L21.526,9.534Q21.526,9.914 21.198,10.103L18.898,11.431Q18.57,11.621 18.241,11.431L15.942,10.103Q15.613,9.914 15.613,9.534L15.613,6.879Q15.613,6.5 15.942,6.31Z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M18.241,12.569Q18.57,12.379 18.898,12.569L21.198,13.897Q21.526,14.086 21.526,14.466L21.526,17.121Q21.526,17.5 21.198,17.69L18.898,19.017Q18.57,19.207 18.241,19.017L15.942,17.69Q15.613,17.5 15.613,17.121L15.613,14.466Q15.613,14.086 15.942,13.897Z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M11.672,16.362Q12,16.172 12.328,16.362L14.628,17.69Q14.956,17.879 14.956,18.259L14.956,20.914Q14.956,21.293 14.628,21.483L12.328,22.81Q12,23 11.672,22.81L9.372,21.483Q9.044,21.293 9.044,20.914L9.044,18.259Q9.044,17.879 9.372,17.69Z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M5.102,12.569Q5.43,12.379 5.759,12.569L8.058,13.897Q8.387,14.086 8.387,14.466L8.387,17.121Q8.387,17.5 8.058,17.69L5.759,19.017Q5.43,19.207 5.102,19.017L2.802,17.69Q2.474,17.5 2.474,17.121L2.474,14.466Q2.474,14.086 2.802,13.897Z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M5.102,4.983Q5.43,4.793 5.759,4.983L8.058,6.31Q8.387,6.5 8.387,6.879L8.387,9.534Q8.387,9.914 8.058,10.103L5.759,11.431Q5.43,11.621 5.102,11.431L2.802,10.103Q2.474,9.914 2.474,9.534L2.474,6.879Q2.474,6.5 2.802,6.31Z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M11.672,8.776Q12,8.586 12.328,8.776L14.628,10.103Q14.956,10.293 14.956,10.672L14.956,13.328Q14.956,13.707 14.628,13.897L12.328,15.224Q12,15.414 11.672,15.224L9.372,13.897Q9.044,13.707 9.044,13.328L9.044,10.672Q9.044,10.293 9.372,10.103Z" />
+</vector>

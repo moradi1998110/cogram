@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Your location: a cell in Telegram's location blue, on the white cell. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="28dp"
+    android:height="28dp"
+    android:viewportWidth="28"
+    android:viewportHeight="28">
+    <path
+        android:fillColor="#FF3A8EE6"
+        android:pathData="M12.095,5.6Q14,4.5 15.905,5.6L20.322,8.15Q22.227,9.25 22.227,11.45L22.227,16.55Q22.227,18.75 20.322,19.85L15.905,22.4Q14,23.5 12.095,22.4L7.678,19.85Q5.773,18.75 5.773,16.55L5.773,11.45Q5.773,9.25 7.678,8.15Z" />
+</vector>

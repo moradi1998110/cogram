@@ -13,6 +13,7 @@ import org.maplibre.android.camera.CameraUpdateFactory;
 import org.maplibre.android.geometry.LatLng;
 import org.maplibre.android.location.LocationComponent;
 import org.maplibre.android.location.LocationComponentActivationOptions;
+import org.maplibre.android.location.LocationComponentOptions;
 import org.maplibre.android.location.modes.CameraMode;
 import org.maplibre.android.location.modes.RenderMode;
 import org.maplibre.android.maps.MapLibreMap;
@@ -215,13 +216,27 @@ final class MapLibreMapEngine implements MapEngine {
                 || context.checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED;
     }
 
-    /** The blue dot, from Android's own location service (Phogram ships no Google location). */
+    /**
+     * Your place on the map, from Android's own location service (Phogram ships no Google location): a cell of
+     * Phogram's hexagon mark in Telegram's location blue on a white cell, grey when the fix is old, and the same cell
+     * with an arrow while navigating.
+     */
     @SuppressWarnings("MissingPermission")
     private void activateLocation() {
         if (map == null || style == null || !hasLocationPermission()) return;
         final LocationComponent location = map.getLocationComponent();
         if (!location.isLocationComponentActivated()) {
+            final LocationComponentOptions marker = LocationComponentOptions.builder(context)
+                    .backgroundDrawable(R.drawable.phogram_location_background)
+                    .backgroundDrawableStale(R.drawable.phogram_location_background)
+                    .foregroundDrawable(R.drawable.phogram_location_foreground)
+                    .foregroundDrawableStale(R.drawable.phogram_location_foreground_stale)
+                    .gpsDrawable(R.drawable.phogram_location_navigation)
+                    .accuracyColor(0xFF3A8EE6)
+                    .accuracyAlpha(0.15f)
+                    .build();
             location.activateLocationComponent(LocationComponentActivationOptions.builder(context, style)
+                    .locationComponentOptions(marker)
                     .useDefaultLocationEngine(true).build());
         }
         location.setLocationComponentEnabled(resumed);

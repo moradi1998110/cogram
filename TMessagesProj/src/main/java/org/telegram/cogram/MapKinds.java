@@ -106,14 +106,40 @@ final class MapKinds {
     }
 
     /**
-     * A place on the way, as a soft pin: one smooth teardrop (no sharp corner, its point rounded), white with a soft
-     * shadow under it, and inside it a circle in the kind's color with the kind's emoji.
+     * A hexagon standing on a point, its corners rounded by {@code corner}: one cell of Phogram's mark, the shape of
+     * every place on the map.
      */
+    static android.graphics.Path hexagon(float cx, float cy, float r, float corner) {
+        final float[] xs = new float[6];
+        final float[] ys = new float[6];
+        for (int i = 0; i < 6; i++) {
+            final double angle = Math.toRadians(-90 + 60 * i);
+            xs[i] = cx + (float) (Math.cos(angle) * r);
+            ys[i] = cy + (float) (Math.sin(angle) * r);
+        }
+        final float f = Math.min(corner / r, 0.5f);
+        final android.graphics.Path path = new android.graphics.Path();
+        for (int i = 0; i < 6; i++) {
+            final int before = (i + 5) % 6;
+            final int after = (i + 1) % 6;
+            final float ax = xs[i] + (xs[before] - xs[i]) * f;
+            final float ay = ys[i] + (ys[before] - ys[i]) * f;
+            if (i == 0) path.moveTo(ax, ay); else path.lineTo(ax, ay);
+            path.quadTo(xs[i], ys[i], xs[i] + (xs[after] - xs[i]) * f, ys[i] + (ys[after] - ys[i]) * f);
+        }
+        path.close();
+        return path;
+    }
+
     /** The room around a pin's drawing for its shadow; the pin's point is this far above the bitmap's bottom. */
     static int pinPadding() {
         return dp(4);
     }
 
+    /**
+     * A place on the map as a pin with a hexagon head, a cell of Phogram's mark: white with a soft shadow, a short
+     * point under it with its end rounded, and inside it a smaller cell in the kind's Telegram color with its emoji.
+     */
     static android.graphics.Bitmap pinImage(int kind) {
         final float w = dp(38);
         final float h = dp(48);
@@ -123,31 +149,26 @@ final class MapKinds {
         final android.graphics.Bitmap bitmap = android.graphics.Bitmap.createBitmap(width, height, android.graphics.Bitmap.Config.ARGB_8888);
         final android.graphics.Canvas canvas = new android.graphics.Canvas(bitmap);
         final float cx = width / 2f;
-        final float r = w / 2f;
+        final float r = dp(19);
         final float cy = pad + r;
         final float tip = pad + h;
-        // The teardrop: the round head, two curves narrowing down, and a small round end instead of a point, as the
-        // pins of common map apps. The curves meet the end's circle on its sides, going straight down, so the outline
-        // has no corner anywhere.
-        final float sideX = (float) (r * Math.cos(Math.toRadians(30)));
-        final float sideY = (float) (r * Math.sin(Math.toRadians(30)));
-        final float end = dp(3.5f);
-        final float endY = tip - end;
-        final android.graphics.Path drop = new android.graphics.Path();
-        drop.moveTo(cx + sideX, cy + sideY);
-        drop.arcTo(new android.graphics.RectF(cx - r, cy - r, cx + r, cy + r), 30, -240, false);
-        drop.cubicTo(cx - r * 0.62f, cy + r * 0.92f, cx - end, endY - dp(5), cx - end, endY);
-        drop.arcTo(new android.graphics.RectF(cx - end, endY - end, cx + end, endY + end), 180, -180, false);
-        drop.cubicTo(cx + end, endY - dp(5), cx + r * 0.62f, cy + r * 0.92f, cx + sideX, cy + sideY);
-        drop.close();
+        final android.graphics.Path pin = hexagon(cx, cy, r, dp(4.5f));
+        // The point leaves the head's two lower sides and ends in a small curve, not a sharp corner.
+        final android.graphics.Path point = new android.graphics.Path();
+        point.moveTo(cx - dp(8), cy + r * 0.5f);
+        point.lineTo(cx - dp(1.6f), tip - dp(1.8f));
+        point.quadTo(cx, tip, cx + dp(1.6f), tip - dp(1.8f));
+        point.lineTo(cx + dp(8), cy + r * 0.5f);
+        point.close();
+        pin.op(point, android.graphics.Path.Op.UNION);
         final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
         paint.setColor(0xFFFFFFFF);
         paint.setShadowLayer(dp(2.5f), 0, dp(1), 0x40000000);
-        canvas.drawPath(drop, paint);
+        canvas.drawPath(pin, paint);
         paint.clearShadowLayer();
         paint.setColor(color(kind));
-        canvas.drawCircle(cx, cy, r - dp(3.5f), paint);
-        drawEmoji(canvas, emoji(kind), cx, cy, dp(19));
+        canvas.drawPath(hexagon(cx, cy, r - dp(3.5f), dp(3.5f)), paint);
+        drawEmoji(canvas, emoji(kind), cx, cy, dp(17));
         return bitmap;
     }
 
@@ -490,10 +511,11 @@ final class MapKinds {
         }
     }
 
-    /** A kind's emoji on its soft colored circle; it redraws itself once Telegram's emoji are loaded. */
+    /** A kind's emoji on its soft colored hexagon; it redraws itself once Telegram's emoji are loaded. */
     static final class IconView extends View {
 
         private final Paint circle = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private android.graphics.Path cell;
         private Drawable emoji;
         private int kind = -1;
 
@@ -511,10 +533,19 @@ final class MapKinds {
         }
 
         @Override
+        protected void onSizeChanged(int w, int h, int oldw, int oldh) {
+            super.onSizeChanged(w, h, oldw, oldh);
+            final float r = Math.min(w, h) / 2f;
+            cell = hexagon(w / 2f, h / 2f, r, r * 0.2f);
+        }
+
+        @Override
         protected void onDraw(Canvas canvas) {
             final float cx = getWidth() / 2f;
             final float cy = getHeight() / 2f;
-            canvas.drawCircle(cx, cy, Math.min(cx, cy), circle);
+            if (cell != null) {
+                canvas.drawPath(cell, circle);
+            }
             if (emoji != null) {
                 final int half = (int) (Math.min(getWidth(), getHeight()) * 0.27f);
                 emoji.setBounds((int) cx - half, (int) cy - half, (int) cx + half, (int) cy + half);
@@ -587,12 +618,12 @@ final class MapKinds {
             float endX, endY, angle;
             switch (type) {
                 case MapEngine.Maneuver.ARRIVE: {
-                    // A pin on its point.
+                    // The map's pin on its point: a hexagon head over a short point.
                     paint.setStyle(Paint.Style.FILL);
-                    canvas.drawCircle(cx, s * 0.38f, s * 0.22f, paint);
-                    path.moveTo(cx - s * 0.2f, s * 0.48f);
+                    canvas.drawPath(hexagon(cx, s * 0.36f, s * 0.25f, s * 0.05f), paint);
+                    path.moveTo(cx - s * 0.17f, s * 0.46f);
                     path.lineTo(cx, s * 0.88f);
-                    path.lineTo(cx + s * 0.2f, s * 0.48f);
+                    path.lineTo(cx + s * 0.17f, s * 0.46f);
                     path.close();
                     canvas.drawPath(path, paint);
                     canvas.restore();
