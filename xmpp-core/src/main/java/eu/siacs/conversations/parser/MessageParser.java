@@ -18,6 +18,7 @@ import eu.siacs.conversations.entities.Message;
 import eu.siacs.conversations.http.HttpConnectionManager;
 import eu.siacs.conversations.services.XmppConnectionService;
 import eu.siacs.conversations.utils.CryptoHelper;
+import eu.siacs.conversations.utils.MessageAttachments;
 import eu.siacs.conversations.xml.Element;
 import eu.siacs.conversations.xml.LocalizedContent;
 import eu.siacs.conversations.xml.Namespace;
@@ -706,6 +707,11 @@ public class MessageParser extends AbstractParser
             }
 
             mXmppConnectionService.databaseBackend.createMessage(message);
+            // Phogram: a text attached to an earlier message (XEP-0367), the caption of a photo or file.
+            final var attachTo = packet.findChild("attach-to", MessageAttachments.NAMESPACE);
+            if (attachTo != null && attachTo.getAttribute("id") != null) {
+                MessageAttachments.attached(message, attachTo.getAttribute("id"));
+            }
             final HttpConnectionManager manager =
                     this.mXmppConnectionService.getHttpConnectionManager();
             final var autoAcceptFileSize =

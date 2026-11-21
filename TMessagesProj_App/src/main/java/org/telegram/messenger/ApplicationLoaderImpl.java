@@ -33,6 +33,16 @@ public class ApplicationLoaderImpl extends ApplicationLoader {
     }
 
     @Override
+    public String xmppFallbackHost() {
+        return BuildConfig.XMPP_FALLBACK_HOST;
+    }
+
+    @Override
+    public int xmppFallbackPort() {
+        return BuildConfig.XMPP_FALLBACK_PORT;
+    }
+
+    @Override
     public BetaUpdate getUpdate() {
         return isCustomUpdate() ? PhogramUpdater.getInstance().getUpdate() : null;
     }

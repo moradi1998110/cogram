@@ -100,6 +100,12 @@ public class Message extends AbstractEntity
     public static final String ERROR_MESSAGE_CANCELLED = "eu.siacs.conversations.cancelled";
 
     public boolean markable = false;
+
+    /**
+     * Phogram: the id of the message this one is attached to (XEP-0367), set on a caption before it is sent; not
+     * stored, the app keeps the link.
+     */
+    public String attachTo;
     protected String conversationUuid;
     protected Jid counterpart;
     protected Jid trueCounterpart;

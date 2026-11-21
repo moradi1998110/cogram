@@ -40,6 +40,8 @@ public final class CogramSignIn {
     private Account account;
     private int waitedMs;
     private boolean cancelled;
+    private String host;
+    private int port = 5222;
 
     private final ServiceConnection connection = new ServiceConnection() {
         @Override
@@ -89,7 +91,17 @@ public final class CogramSignIn {
     }
 
     public static CogramSignIn start(int currentAccount, String address, String password, Callback callback) {
+        return start(currentAccount, address, password, null, 5222, callback);
+    }
+
+    /**
+     * With the server's address and port the user gave (advanced), tried before the domain's DNS and the app's
+     * built-in address; null for none.
+     */
+    public static CogramSignIn start(int currentAccount, String address, String password, String host, int port, Callback callback) {
         CogramSignIn signIn = new CogramSignIn(currentAccount, toJid(address), password, callback);
+        signIn.host = host;
+        signIn.port = port;
         Intent intent = new Intent(signIn.context, XmppConnectionService.class);
         try {
             signIn.context.startService(intent);
@@ -121,6 +133,10 @@ public final class CogramSignIn {
             }
         }
         account = new Account(address, password);
+        if (host != null && !host.trim().isEmpty()) {
+            account.setHostname(host.trim());
+            account.setPort(port);
+        }
         service.createAccount(account);
         waitedMs = 0;
         handler.postDelayed(this::checkAccount, POLL_MS);

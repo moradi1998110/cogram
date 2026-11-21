@@ -174,8 +174,8 @@ public interface GatewayBackend {
         return null;
     }
 
-    /** Sends a file Telegram uploaded, and returns the updates that tell Telegram it was sent. */
-    default TLObject sendFile(long userId, java.io.File file, String mime, List<TLRPC.DocumentAttribute> attributes, boolean photo, long randomId) {
+    /** Sends a file Telegram uploaded with its caption (or none), and returns the updates that tell Telegram it was sent. */
+    default TLObject sendFile(long userId, java.io.File file, String mime, List<TLRPC.DocumentAttribute> attributes, boolean photo, long randomId, String caption) {
         file.delete();
         return null;
     }

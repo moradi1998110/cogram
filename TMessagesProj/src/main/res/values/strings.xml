@@ -11737,6 +11737,9 @@
     <string name="PhogramNavNoRouteTitle">No route</string>
     <string name="PhogramNavArrivalLine">Arrive %1$s · %2$s</string>
     <string name="PhogramNavVia">Via %1$s</string>
+    <string name="PhogramLoginAdvanced">Advanced connection settings</string>
+    <string name="PhogramLoginServer">Server address</string>
+    <string name="PhogramLoginPort">Port</string>
     <string name="PhogramWeatherRain">Rain</string>
     <string name="PhogramWeatherHeavyRain">Heavy rain</string>
     <string name="PhogramWeatherStorm">Thunderstorm</string>

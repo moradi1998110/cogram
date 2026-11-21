@@ -137,6 +137,8 @@ jobs:
         env:
           GITLAB_API_URL: ${{ vars.GITLAB_API_URL || secrets.GITLAB_API_URL }}
           GITLAB_RELEASES_PROJECT: ${{ vars.GITLAB_RELEASES_PROJECT || secrets.GITLAB_RELEASES_PROJECT }}
+          PHOGRAM_XMPP_HOST: ${{ vars.PHOGRAM_XMPP_HOST || secrets.PHOGRAM_XMPP_HOST }}
+          PHOGRAM_XMPP_PORT: ${{ vars.PHOGRAM_XMPP_PORT || secrets.PHOGRAM_XMPP_PORT }}
         run: |
           chmod +x gradlew
           EXTRA=""
@@ -156,6 +158,10 @@ jobs:
           # Every build shows the weather on its routes, from the tiles beside the updates (weather.yml).
           if [ -n "$GITLAB_API_URL" ] && [ -n "$GITLAB_RELEASES_PROJECT" ]; then
             EXTRA="$EXTRA -PPHOGRAM_WEATHER_URL=${GITLAB_API_URL%/}/projects/$GITLAB_RELEASES_PROJECT/packages/generic/phogram-weather/latest/index.json"
+          fi
+          # Where the XMPP server is reached on networks without DNS for its domain (repository variables).
+          if [ -n "$PHOGRAM_XMPP_HOST" ]; then
+            EXTRA="$EXTRA -PPHOGRAM_XMPP_HOST=$PHOGRAM_XMPP_HOST -PPHOGRAM_XMPP_PORT=${PHOGRAM_XMPP_PORT:-5222}"
           fi
           echo "Build: $TASK $EXTRA"
           ./gradlew --no-daemon --stacktrace \

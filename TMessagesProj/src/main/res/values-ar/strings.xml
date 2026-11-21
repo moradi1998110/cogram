@@ -1350,6 +1350,9 @@
     <string name="PhogramNavNoRouteTitle">لا يوجد مسار</string>
     <string name="PhogramNavArrivalLine">الوصول %1$s · %2$s</string>
     <string name="PhogramNavVia">عبر %1$s</string>
+    <string name="PhogramLoginAdvanced">إعدادات الاتصال المتقدمة</string>
+    <string name="PhogramLoginServer">عنوان الخادم</string>
+    <string name="PhogramLoginPort">المنفذ</string>
     <string name="PhogramWeatherRain">أمطار</string>
     <string name="PhogramWeatherHeavyRain">أمطار غزيرة</string>
     <string name="PhogramWeatherStorm">عاصفة رعدية</string>

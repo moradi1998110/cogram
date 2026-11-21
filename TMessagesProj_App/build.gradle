@@ -220,6 +220,14 @@ android {
         // The weather on the routes: the index of the weather tiles beside the updates (.github/workflows/weather.yml),
         // given to every build of the workflows (-PPHOGRAM_WEATHER_URL=...); empty elsewhere, which shows no weather.
         buildConfigField "String", "WEATHER_URL", "\"" + (project.findProperty("PHOGRAM_WEATHER_URL") ?: "") + "\""
+        // Where the organization's XMPP server is reached on networks without DNS for its domain, after the DNS:
+        // a host name or IP and its port (-PPHOGRAM_XMPP_HOST=..., -PPHOGRAM_XMPP_PORT=...), from the workflows'
+        // variables; empty for none. The certificate must still be the domain's.
+        def xmppHost = (project.findProperty("PHOGRAM_XMPP_HOST") ?: "").toString().replaceAll('[^A-Za-z0-9.:\\[\\]-]', '')
+        def xmppPort = (project.findProperty("PHOGRAM_XMPP_PORT") ?: "5222").toString()
+        if (!xmppPort.isInteger()) xmppPort = "5222"
+        buildConfigField "String", "XMPP_FALLBACK_HOST", "\"" + xmppHost + "\""
+        buildConfigField "int", "XMPP_FALLBACK_PORT", xmppPort
         ndkVersion "27.2.12479018"
 
         multiDexEnabled true

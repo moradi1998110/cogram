@@ -284,6 +284,9 @@ public class ApplicationLoader extends Conversations {
     @Override
     public void onCreate() {
         applicationLoaderInstance = this;
+        // Phogram: where the organization's server is reached when its domain does not resolve on the network.
+        eu.siacs.conversations.utils.Resolver.fallbackHost = xmppFallbackHost();
+        eu.siacs.conversations.utils.Resolver.fallbackPort = xmppFallbackPort();
         try {
             applicationContext = getApplicationContext();
         } catch (Throwable ignore) {
@@ -715,6 +718,15 @@ public class ApplicationLoader extends Conversations {
 
     public boolean isCustomUpdate() {
         return false;
+    }
+
+    /** Phogram: the server's address (host name or IP) for networks without DNS for its domain; empty for none. */
+    public String xmppFallbackHost() {
+        return "";
+    }
+
+    public int xmppFallbackPort() {
+        return 5222;
     }
 
     /** Phogram: the address of the weather tiles' index on the organization's GitLab, or empty in builds without it. */

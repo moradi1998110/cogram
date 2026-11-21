@@ -83,6 +83,45 @@ public class Resolver {
         return Collections.singletonList(result);
     }
 
+    /**
+     * Phogram: where the server is reached when the domain does not resolve on the network the phone is on (some
+     * networks have no DNS for it), or where the user said at sign-in. Never trusted for the certificate: the
+     * server must still prove the account's domain, so a wrong or hostile address cannot pose as the server.
+     * An IP address or a host name, and its port.
+     */
+    public static List<Result> fromFallback(final String host, final int port) {
+        if (host == null || host.trim().isEmpty() || port <= 0 || port > 65535) {
+            return Collections.emptyList();
+        }
+        final String trimmed = host.trim();
+        final Result result = new Result();
+        if (InetAddresses.isUriInetAddress(trimmed) || InetAddresses.isInetAddress(trimmed)) {
+            try {
+                result.ip =
+                        InetAddresses.isInetAddress(trimmed)
+                                ? InetAddresses.forString(trimmed)
+                                : InetAddresses.forUriString(trimmed);
+            } catch (final IllegalArgumentException e) {
+                return Collections.emptyList();
+            }
+        } else {
+            try {
+                result.hostname = DnsName.from(trimmed);
+            } catch (final RuntimeException e) {
+                return Collections.emptyList();
+            }
+        }
+        result.port = port;
+        result.directTls = useDirectTls(port);
+        result.authenticated = false;
+        return Collections.singletonList(result);
+    }
+
+    /** Phogram: the fallback built into the app (empty when none), set once at start. */
+    public static volatile String fallbackHost = "";
+
+    public static volatile int fallbackPort = XMPP_PORT_STARTTLS;
+
     public static void checkDomain(final Jid jid) {
         DnsName.from(jid.getDomain());
     }

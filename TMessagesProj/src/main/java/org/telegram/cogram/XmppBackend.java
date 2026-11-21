@@ -251,6 +251,14 @@ final class XmppBackend implements GatewayBackend {
     }
 
     private void onServiceReady(XmppConnectionService connected) {
+        // Before the engine connects, so no caption that comes while it catches up is missed.
+        eu.siacs.conversations.utils.MessageAttachments.setListener((message, target) -> {
+            if (message.getType() != Message.TYPE_TEXT || TextUtils.isEmpty(message.getBody())) {
+                return;
+            }
+            rememberCaption(message, target, captionSender(message), message.getBody());
+            scheduleSync();
+        });
         try {
             connected.restoredFromDatabaseLatch.await();
         } catch (InterruptedException e) {
@@ -356,6 +364,9 @@ final class XmppBackend implements GatewayBackend {
         }
     }
 
+    /** The captions waiting for their file to be out, by the file's random id. */
+    private final Map<Long, Message> captionsAfter = new java.util.concurrent.ConcurrentHashMap<>();
+
     private PendingSend track(Message message, long randomId, Supplier<TLObject> response) {
         PendingSend send = new PendingSend(message, randomId, response);
         pendingSends.put(randomId, send);
@@ -381,9 +392,16 @@ final class XmppBackend implements GatewayBackend {
             }
             iterator.remove();
             ids.forgetSend(send.randomId);
+            Message caption = captionsAfter.remove(send.randomId);
             if (delivered) {
                 TLObject response = send.response.get();
                 finished.add(() -> send.reply.complete(response, null));
+                if (caption != null) {
+                    // The file is out; its caption follows, encrypted as the chat's text is.
+                    Conversation conversation = (Conversation) send.message.getConversation();
+                    whenEncryptionDecided(conversation, caption, () -> FileLog.e("cogram: caption not sent"),
+                            () -> service.sendMessage(caption));
+                }
                 continue;
             }
             if (rejected) {
@@ -421,7 +439,7 @@ final class XmppBackend implements GatewayBackend {
         TLRPC.MessageMedia media = storedMedia(id);
         boolean room = isRoom(message);
         PendingSend send = track(message, randomId, () -> room ? roomSent(message, userId, randomId)
-                : media != null ? mediaSent(userId, id, date, media, randomId) : textSent(id, date, shownText(message)));
+                : media != null ? mediaSent(userId, id, date, media, randomId, captionOf(message)) : textSent(id, date, shownText(message)));
         scheduleSync();
         return send;
     }
@@ -467,12 +485,15 @@ final class XmppBackend implements GatewayBackend {
         return sent;
     }
 
-    private TLRPC.Updates mediaSent(long userId, int id, int date, TLRPC.MessageMedia media, long randomId) {
+    private TLRPC.Updates mediaSent(long userId, int id, int date, TLRPC.MessageMedia media, long randomId, String caption) {
         TLRPC.TL_message tl = new TLRPC.TL_message();
         tl.id = id;
         tl.out = true;
         tl.date = date;
-        tl.message = "";
+        tl.message = caption == null ? "" : caption;
+        if (addLinkEntities(tl.message, tl.entities)) {
+            tl.flags |= TLObject.FLAG_7;
+        }
         tl.peer_id = peerUser(userId);
         tl.from_id = peerUser(selfId);
         tl.dialog_id = userId;
@@ -732,8 +753,13 @@ final class XmppBackend implements GatewayBackend {
     }
 
     /** The parts of a message an edit, a finished download or a reaction can change. */
-    private static String snapshot(Message message) {
+    private String snapshot(Message message) {
         StringBuilder snapshot = new StringBuilder(contentSnapshot(message));
+        if (isMedia(message)) {
+            // A caption that comes after its file is an edit of the file's message.
+            String caption = captionOf(message);
+            if (caption != null) snapshot.append('\u0001').append(caption);
+        }
         for (eu.siacs.conversations.entities.Reaction reaction : message.getReactions()) {
             snapshot.append('\u0000').append(reaction.normalizedReaction()).append(reaction.received);
         }
@@ -762,7 +788,7 @@ final class XmppBackend implements GatewayBackend {
         if (previous == null || previous.equals(snapshot)) {
             return null;
         }
-        if (!previous.split("\u0000", -1)[0].equals(contentSnapshot(message))) {
+        if (!previous.split("\u0000", -1)[0].equals(snapshot.split("\u0000", -1)[0])) {
             return editUpdate(toTl(message, peerId));
         }
         TL_update.TL_updateMessageReactions reactions = new TL_update.TL_updateMessageReactions();
@@ -1460,13 +1486,88 @@ final class XmppBackend implements GatewayBackend {
         ArrayList<Message> loaded = new ArrayList<>();
         conversation.populateWithMessages(loaded);
         Map<String, Message> calls = callEntries(loaded);
+        Set<String> captions = attachedCaptions(loaded);
         ArrayList<Message> shown = new ArrayList<>();
         for (Message message : loaded) {
+            if (captions.contains(message.getUuid())) {
+                continue;
+            }
             if (isShown(message) && (!isLoggedCall(message) || isShownCall(message, calls))) {
                 shown.add(message);
             }
         }
         return shown;
+    }
+
+    // Captions (XEP-0367): a caption is a text message of its own, attached to its file message. Telegram shows it
+    // as the file's text, and the caption's own message is not shown, once the file is there and is the same
+    // sender's; a caption whose file never came stays an ordinary message.
+
+    /** The uuids of the caption messages known, kept in memory since every sync asks. */
+    private final Set<String> captionUuids = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private volatile boolean captionsLoaded;
+
+    /** Who wrote a message, as captions record it: ourselves, a room member or the contact. */
+    private String captionSender(Message message) {
+        if (message.getStatus() != Message.STATUS_RECEIVED) {
+            return "self";
+        }
+        if (isRoom(message)) {
+            return message.getOccupantId() != null ? "o:" + message.getOccupantId() : "n:" + message.getCounterpart();
+        }
+        return "u:" + (message.getCounterpart() == null ? "" : message.getCounterpart().asBareJid());
+    }
+
+    /** The caption of a file message, or null. */
+    private String captionOf(Message media) {
+        if (captionUuids.isEmpty() && captionsLoaded) {
+            return null;
+        }
+        return ids.captionFor(captionSender(media), media.getUuid(), media.getRemoteMsgId());
+    }
+
+    /** The caption messages among these whose file is among them too, from the same sender. */
+    private Set<String> attachedCaptions(List<Message> messages) {
+        if (!captionsLoaded) {
+            captionUuids.addAll(ids.captionUuids());
+            captionsLoaded = true;
+        }
+        HashSet<String> attached = new HashSet<>();
+        if (captionUuids.isEmpty()) {
+            return attached;
+        }
+        HashMap<String, String> mediaSenders = new HashMap<>();
+        for (Message message : messages) {
+            if (isMedia(message)) {
+                String sender = captionSender(message);
+                mediaSenders.put(message.getUuid(), sender);
+                if (message.getRemoteMsgId() != null) mediaSenders.put(message.getRemoteMsgId(), sender);
+            }
+        }
+        for (Message message : messages) {
+            if (message.getType() != Message.TYPE_TEXT || !captionUuids.contains(message.getUuid())) {
+                continue;
+            }
+            String[] caption = ids.captionOf(message.getUuid());
+            if (caption != null && caption[1].equals(mediaSenders.get(caption[0]))) {
+                attached.add(message.getUuid());
+                // Shown on its own before its file came: Telegram drops that message now.
+                int shownId = ids.findMessage(message.getUuid());
+                if (shownId != 0 && hiddenCaptions.add(message.getUuid())) {
+                    pendingDeletes.add(shownId);
+                }
+            }
+        }
+        return attached;
+    }
+
+    /** Captions already taken off Telegram's list, so each is deleted there once. */
+    private final Set<String> hiddenCaptions = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /** Records a caption, ours as we send it or another's as it comes. */
+    private void rememberCaption(Message caption, String target, String sender, String text) {
+        ids.putCaption(caption.getUuid(), target, sender, text);
+        captionUuids.add(caption.getUuid());
     }
 
     /** The one entry kept for its call, once the call has settled. */
@@ -1605,7 +1706,8 @@ final class XmppBackend implements GatewayBackend {
         tl.media = new TLRPC.TL_messageMediaEmpty();
         tl.flags = TLObject.FLAG_8 | TLObject.FLAG_9;
         if (isMedia(message)) {
-            tl.message = "";
+            String caption = captionOf(message);
+            tl.message = caption != null ? caption : "";
             TLRPC.MessageMedia sent = out ? storedMedia(tl.id) : null;
             tl.media = sent != null ? sent : media(message, tl.id, tl.date);
         } else if (message.getType() == Message.TYPE_TEXT && message.isGeoUri()) {
@@ -2447,7 +2549,7 @@ final class XmppBackend implements GatewayBackend {
      * chat's text would be. Telegram gets the message at once, with the file it already holds.
      */
     @Override
-    public synchronized TLObject sendFile(long userId, File file, String mime, List<TLRPC.DocumentAttribute> attributes, boolean photo, long randomId) {
+    public synchronized TLObject sendFile(long userId, File file, String mime, List<TLRPC.DocumentAttribute> attributes, boolean photo, long randomId, String caption) {
         PendingSend resumed = resumeSend(userId, randomId);
         if (resumed != null) {
             file.delete();
@@ -2463,12 +2565,22 @@ final class XmppBackend implements GatewayBackend {
         message.setType(photo ? Message.TYPE_IMAGE : Message.TYPE_FILE);
         int id = ids.messageId(message.getUuid(), message.getTimeSent());
         int date = (int) (message.getTimeSent() / 1000);
+        // The caption goes out as its own text message attached to the file (XEP-0367) once the file is out, so it
+        // never comes before its file; it is the file's text here from the start.
+        String text = caption == null ? "" : caption.trim();
+        if (!text.isEmpty()) {
+            Message captionMessage = new Message(conversation, text, Message.ENCRYPTION_NONE);
+            captionMessage.setCounterpart(conversation.getNextCounterpart());
+            captionMessage.attachTo = message.getUuid();
+            rememberCaption(captionMessage, message.getUuid(), "self", text);
+            captionsAfter.put(randomId, captionMessage);
+        }
         // Read before the engine takes the file, since it deletes the upload once copied.
         TLRPC.MessageMedia media = sentMedia(id, date, file, mime, attributes, photo);
         storeSentMedia(id, media);
         snapshots.put(id, snapshot(message));
         boolean room = isRoom(conversation);
-        PendingSend send = track(message, randomId, () -> room ? roomSent(message, userId, randomId) : mediaSent(userId, id, date, media, randomId));
+        PendingSend send = track(message, randomId, () -> room ? roomSent(message, userId, randomId) : mediaSent(userId, id, date, media, randomId, text));
         whenEncryptionDecided(conversation, message, () -> {
             file.delete();
             failSend(send);
