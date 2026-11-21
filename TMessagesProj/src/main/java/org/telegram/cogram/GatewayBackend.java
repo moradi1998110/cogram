@@ -180,6 +180,18 @@ public interface GatewayBackend {
         return null;
     }
 
+    /** Sends again a file Telegram already has from a chat, which it names by its media id instead of uploading it. */
+    default TLObject resendMedia(long userId, long mediaId, long randomId) {
+        return null;
+    }
+
+    /**
+     * Sends the caption of files just sent, as a text message of its own after them. Telegram is not waiting for
+     * an answer, and the message reaches it like one sent from another device.
+     */
+    default void sendCaption(long userId, String caption) {
+    }
+
     /** XMPP rooms, each shown as a supergroup. */
     default List<TLRPC.Chat> roomChats() {
         return Collections.emptyList();

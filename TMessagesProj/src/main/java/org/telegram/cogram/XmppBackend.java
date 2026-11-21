@@ -2276,6 +2276,58 @@ final class XmppBackend implements GatewayBackend {
         return send.reply;
     }
 
+    /** A picture sent again goes out as a new copy of the file this device already holds, as a forward does. */
+    @Override
+    public synchronized TLObject resendMedia(long userId, long mediaId, long randomId) {
+        PendingSend resumed = resumeSend(userId, randomId);
+        if (resumed != null) {
+            return resumed.reply;
+        }
+        Message original = service == null ? null : engineMessage((int) mediaId);
+        if (original == null || !isMedia(original)) {
+            return null;
+        }
+        File source = service.getFileBackend().getFile(original);
+        if (!source.exists()) {
+            return null;
+        }
+        File copy = new File(context.getCacheDir(), "resend_" + original.getUuid() + "_" + Long.toHexString(randomId));
+        try {
+            copyFile(source, copy);
+        } catch (Exception e) {
+            FileLog.e(e);
+            copy.delete();
+            return null;
+        }
+        TLRPC.MessageMedia media = toTl(original, peerOf(original)).media;
+        boolean photo = media instanceof TLRPC.TL_messageMediaPhoto;
+        TLRPC.Document document = media instanceof TLRPC.TL_messageMediaDocument ? media.document : null;
+        String mime = original.getMimeType();
+        if (mime == null && document != null) {
+            mime = document.mime_type;
+        }
+        if (mime == null || mime.isEmpty()) {
+            mime = photo ? "image/jpeg" : "application/octet-stream";
+        }
+        List<TLRPC.DocumentAttribute> attributes = document != null ? document.attributes : new ArrayList<>();
+        return sendFile(userId, copy, mime, attributes, photo, randomId);
+    }
+
+    /**
+     * Sends a caption as the text message after its files. It is not tracked as a Telegram send, so the sync
+     * passes it on to Telegram as a message of ours it has not seen, the way it does one sent from another device.
+     */
+    @Override
+    public synchronized void sendCaption(long userId, String caption) {
+        Conversation conversation = conversation(userId);
+        if (conversation == null) {
+            return;
+        }
+        Message message = new Message(conversation, caption, Message.ENCRYPTION_NONE);
+        whenEncryptionDecided(conversation, message, () -> FileLog.e("cogram: could not encrypt a caption"),
+                () -> service.sendMessage(message));
+    }
+
     private static TLRPC.MessageMedia sentMedia(int messageId, int date, File file, String mime, List<TLRPC.DocumentAttribute> attributes, boolean photo) {
         long id = mediaId(messageId);
         TLRPC.MessageMedia media;

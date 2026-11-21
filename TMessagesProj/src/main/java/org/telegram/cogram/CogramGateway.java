@@ -24,7 +24,10 @@ import eu.siacs.conversations.AppSettings;
 import eu.siacs.conversations.services.ExternalCallUi;
 import java.io.File;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Answers TL requests inside the app, in place of Telegram's native network layer.
@@ -388,6 +391,10 @@ public final class CogramGateway {
             return result;
         } else if (request instanceof TLRPC.TL_messages_sendMedia) {
             return sendMedia((TLRPC.TL_messages_sendMedia) request);
+        } else if (request instanceof TLRPC.TL_messages_sendMultiMedia) {
+            return sendMultiMedia((TLRPC.TL_messages_sendMultiMedia) request);
+        } else if (request instanceof TLRPC.TL_messages_uploadMedia) {
+            return uploadMedia((TLRPC.TL_messages_uploadMedia) request);
         } else if (request instanceof TL_account.updateStatus) {
             // The engine keeps our presence itself, from whether the app is in the foreground.
             return new TLRPC.TL_boolTrue();
@@ -778,12 +785,144 @@ public final class CogramGateway {
 
     private TLObject sendMedia(TLRPC.TL_messages_sendMedia request) {
         TLRPC.InputMedia media = request.media;
+        long peer = peerId(request.peer);
         if (media instanceof TLRPC.TL_inputMediaGeoPoint || media instanceof TLRPC.TL_inputMediaVenue) {
             // A location goes out as Conversations sends one: the message's whole body is a geo URI. A reply would
             // put a quote before it and turn it into plain text, so a location is sent on its own.
             String uri = geoUri(media);
-            return uri == null ? null : backend.sendText(peerId(request.peer), uri, 0, request.random_id);
+            return uri == null ? null : backend.sendText(peer, uri, 0, request.random_id);
         }
+        TLObject sent = sendOneMedia(peer, media, request.random_id);
+        return sent == null ? null : withCaptions(sent, peer, Collections.singletonList(request.message));
+    }
+
+    /**
+     * An album: Telegram first uploads each file with messages.uploadMedia, or names a file it sent before, and
+     * then sends them together. The answer holds every file's updates, as Telegram's server gives it.
+     */
+    private TLObject sendMultiMedia(TLRPC.TL_messages_sendMultiMedia request) {
+        long peer = peerId(request.peer);
+        int count = request.multi_media.size();
+        if (count == 0) {
+            return null;
+        }
+        TLObject[] sent = new TLObject[count];
+        ArrayList<String> captions = new ArrayList<>();
+        for (int a = 0; a < count; a++) {
+            TLRPC.TL_inputSingleMedia item = request.multi_media.get(a);
+            sent[a] = sendOneMedia(peer, item.media, item.random_id);
+            if (sent[a] == null) {
+                // The files already going out still reach Telegram, with its next getDifference.
+                for (int b = a + 1; b < count; b++) {
+                    discard(request.multi_media.get(b).media);
+                }
+                return null;
+            }
+            captions.add(item.message);
+        }
+        DeferredReply album = new DeferredReply();
+        TLRPC.TL_updates joined = new TLRPC.TL_updates();
+        int[] left = {count};
+        TLRPC.TL_error[] failed = new TLRPC.TL_error[1];
+        for (TLObject item : sent) {
+            whenSent(item, (response, error) -> {
+                synchronized (joined) {
+                    if (error != null || !(response instanceof TLRPC.Updates)) {
+                        if (failed[0] == null) {
+                            failed[0] = error != null ? error : sendFailed();
+                        }
+                    } else {
+                        TLRPC.Updates updates = (TLRPC.Updates) response;
+                        joined.updates.addAll(updates.updates);
+                        joined.users.addAll(updates.users);
+                        joined.chats.addAll(updates.chats);
+                        joined.date = Math.max(joined.date, updates.date);
+                    }
+                    if (--left[0] > 0) {
+                        return;
+                    }
+                }
+                album.complete(failed[0] == null ? joined : null, failed[0]);
+            });
+        }
+        return withCaptions(album, peer, captions);
+    }
+
+    /** A file Telegram uploaded with messages.uploadMedia, held until the album it belongs to is sent. */
+    private static final class PreparedMedia {
+        final File file;
+        final String mime;
+        final List<TLRPC.DocumentAttribute> attributes;
+        final boolean photo;
+
+        PreparedMedia(File file, String mime, List<TLRPC.DocumentAttribute> attributes, boolean photo) {
+            this.file = file;
+            this.mime = mime;
+            this.attributes = attributes;
+            this.photo = photo;
+        }
+    }
+
+    private final Map<Long, PreparedMedia> preparedMedia = new ConcurrentHashMap<>();
+
+    /** Kept clear of the engine's media ids and of the reaction documents, so a held file is never taken for either. */
+    private static final long PREPARED_ID_MASK = (1L << 61) - 1;
+
+    private TLObject uploadMedia(TLRPC.TL_messages_uploadMedia request) {
+        PreparedMedia prepared = takeUpload(request.media);
+        if (prepared == null) {
+            return null;
+        }
+        long id;
+        do {
+            id = Utilities.random.nextLong() & PREPARED_ID_MASK;
+        } while (id == 0 || preparedMedia.containsKey(id));
+        preparedMedia.put(id, prepared);
+        if (prepared.photo) {
+            TLRPC.TL_photo photo = new TLRPC.TL_photo();
+            photo.id = id;
+            photo.access_hash = id;
+            photo.file_reference = new byte[0];
+            photo.date = now();
+            TLRPC.TL_messageMediaPhoto media = new TLRPC.TL_messageMediaPhoto();
+            media.photo = photo;
+            media.flags = TLObject.FLAG_0;
+            return media;
+        }
+        TLRPC.TL_document document = new TLRPC.TL_document();
+        document.id = id;
+        document.access_hash = id;
+        document.file_reference = new byte[0];
+        document.date = now();
+        document.mime_type = prepared.mime;
+        document.size = prepared.file.length();
+        document.attributes.addAll(prepared.attributes);
+        TLRPC.TL_messageMediaDocument media = new TLRPC.TL_messageMediaDocument();
+        media.document = document;
+        media.flags = TLObject.FLAG_0;
+        return media;
+    }
+
+    /**
+     * Sends one file: one Telegram just uploaded, one it uploaded for an album, or one it sent before and now
+     * names by id, which it does when the same picture is sent again.
+     */
+    private TLObject sendOneMedia(long peer, TLRPC.InputMedia media, long randomId) {
+        PreparedMedia prepared = takeUpload(media);
+        if (prepared == null) {
+            long id = mediaRef(media);
+            if (id == 0) {
+                return null;
+            }
+            prepared = preparedMedia.remove(id);
+            if (prepared == null) {
+                return XmppBackend.isMediaId(id) ? backend.resendMedia(peer, id, randomId) : null;
+            }
+        }
+        return backend.sendFile(peer, prepared.file, prepared.mime, prepared.attributes, prepared.photo, randomId);
+    }
+
+    private PreparedMedia takeUpload(TLRPC.InputMedia media) {
         boolean photo = media instanceof TLRPC.TL_inputMediaUploadedPhoto;
         if (!photo && !(media instanceof TLRPC.TL_inputMediaUploadedDocument) || media.file == null) {
             return null;
@@ -796,7 +935,70 @@ public final class CogramGateway {
         if (mime == null || mime.isEmpty()) {
             mime = "application/octet-stream";
         }
-        return backend.sendFile(peerId(request.peer), file, mime, photo ? new ArrayList<>() : media.attributes, photo, request.random_id);
+        return new PreparedMedia(file, mime, photo ? new ArrayList<>() : media.attributes, photo);
+    }
+
+    /** Lets go of an album's file that will not be sent. */
+    private void discard(TLRPC.InputMedia media) {
+        PreparedMedia prepared = preparedMedia.remove(mediaRef(media));
+        if (prepared != null) {
+            prepared.file.delete();
+        }
+    }
+
+    private static long mediaRef(TLRPC.InputMedia media) {
+        if (media instanceof TLRPC.TL_inputMediaPhoto && ((TLRPC.TL_inputMediaPhoto) media).id != null) {
+            return ((TLRPC.TL_inputMediaPhoto) media).id.id;
+        }
+        if (media instanceof TLRPC.TL_inputMediaDocument && ((TLRPC.TL_inputMediaDocument) media).id != null) {
+            return ((TLRPC.TL_inputMediaDocument) media).id.id;
+        }
+        return 0;
+    }
+
+    /**
+     * XMPP clients have no captions, so a caption follows its files as a text message once they have gone out,
+     * which every client shows right under them. Telegram is answered as soon as the files are sent.
+     */
+    private TLObject withCaptions(TLObject sent, long peer, List<String> captions) {
+        StringBuilder text = new StringBuilder();
+        for (String caption : captions) {
+            if (caption != null && !caption.trim().isEmpty()) {
+                if (text.length() > 0) {
+                    text.append('\n');
+                }
+                text.append(caption.trim());
+            }
+        }
+        if (text.length() == 0) {
+            return sent;
+        }
+        GatewayBackend target = backend;
+        String caption = text.toString();
+        DeferredReply reply = new DeferredReply();
+        whenSent(sent, (response, error) -> {
+            reply.complete(response, error);
+            if (error == null && response != null) {
+                target.sendCaption(peer, caption);
+            }
+        });
+        return reply;
+    }
+
+    /** Runs once a send has its answer, whether it came at once or comes when the engine has sent the message. */
+    private static void whenSent(TLObject sent, Reply done) {
+        if (sent instanceof DeferredReply) {
+            ((DeferredReply) sent).attach(done);
+        } else {
+            done.run(sent, null);
+        }
+    }
+
+    private static TLRPC.TL_error sendFailed() {
+        TLRPC.TL_error error = new TLRPC.TL_error();
+        error.code = 400;
+        error.text = "MEDIA_EMPTY";
+        return error;
     }
 
     /**
