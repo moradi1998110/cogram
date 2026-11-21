@@ -103,6 +103,7 @@ final class MapLibreMapEngine implements MapEngine {
         view = new MapView(context, options);
         view.onCreate(null);
         MapData.addListener(mapDataChanged);
+        org.telegram.messenger.NotificationCenter.getGlobalInstance().addObserver(themeChanged, org.telegram.messenger.NotificationCenter.didSetNewTheme);
         MapData.refreshCatalog();
         MapData.startPolling();
         prepareTiles(file -> {
@@ -176,6 +177,8 @@ final class MapLibreMapEngine implements MapEngine {
         if (org.telegram.messenger.BuildVars.DEBUG_VERSION) {
             map.setOnFpsChangedListener(fps -> android.util.Log.d("PhogramMapFps", String.format(java.util.Locale.US, "%.1f", fps)));
         }
+        styledDark = Theme.isCurrentThemeDark();
+        styledAccent = MapKinds.accent();
         map.setStyle(new Style.Builder().fromJson(styleJson(tiles)), loaded -> {
             if (destroyed) return;
             style = loaded;
@@ -220,23 +223,26 @@ final class MapLibreMapEngine implements MapEngine {
     private void activateLocation() {
         if (map == null || style == null || !hasLocationPermission()) return;
         final LocationComponent location = map.getLocationComponent();
+        // The user's position in Telegram's accent color, as the route and the road plates. While navigating the
+        // marker is the driver's arrow, a style image (gpsName) the tint leaves alone: tinting MapLibre's own arrow
+        // turned it into a flat disc.
+        final int accent = MapTheme.accent();
+        final org.maplibre.android.location.LocationComponentOptions dot =
+                org.maplibre.android.location.LocationComponentOptions.builder(context)
+                        .foregroundTintColor(accent)
+                        .bearingTintColor(accent)
+                        .accuracyColor(accent)
+                        .accuracyAlpha(0.15f)
+                        .gpsName(NAV_ARROW)
+                        .build();
         if (!location.isLocationComponentActivated()) {
-            // The user's position in Telegram's accent color, as the route and the road plates. While navigating the
-            // marker is the driver's arrow, a style image (gpsName) the tint leaves alone: tinting MapLibre's own
-            // arrow turned it into a flat disc.
-            final int accent = MapTheme.accent();
-            final org.maplibre.android.location.LocationComponentOptions dot =
-                    org.maplibre.android.location.LocationComponentOptions.builder(context)
-                            .foregroundTintColor(accent)
-                            .bearingTintColor(accent)
-                            .accuracyColor(accent)
-                            .accuracyAlpha(0.15f)
-                            .gpsName(NAV_ARROW)
-                            .build();
             location.activateLocationComponent(LocationComponentActivationOptions.builder(context, style)
                     .locationComponentOptions(dot)
                     .useDefaultLocationEngine(true).build());
+        } else if (locationRestyle) {
+            location.applyStyle(dot);
         }
+        locationRestyle = false;
         location.setLocationComponentEnabled(resumed);
         location.setRenderMode(RenderMode.NORMAL);
     }
@@ -389,19 +395,43 @@ final class MapLibreMapEngine implements MapEngine {
         final File installed = MapData.installedTiles();
         if (map != null && installed != null && !installed.equals(currentTiles)) {
             currentTiles = installed;
-            map.setStyle(new Style.Builder().fromJson(styleJson(installed)), loaded -> {
-                if (destroyed) return;
-                style = loaded;
-                addRoadImages(loaded);
-                activateLocation();
-                drawRoute();
-                drawRoadMarks();
-            });
+            reloadStyle();
         }
         if (downloadListener != null) {
             downloadListener.run();
         }
     };
+
+    /** The style again, from the current tiles and theme, with everything the app draws on it. */
+    private void reloadStyle() {
+        if (map == null || currentTiles == null) return;
+        styledDark = Theme.isCurrentThemeDark();
+        styledAccent = MapKinds.accent();
+        map.setStyle(new Style.Builder().fromJson(styleJson(currentTiles)), loaded -> {
+            if (destroyed) return;
+            style = loaded;
+            addRoadImages(loaded);
+            activateLocation();
+            drawRoute();
+            drawRoadMarks();
+        });
+    }
+
+    /** The theme the style was made for; a change of Telegram's theme or accent remakes it at once. */
+    private boolean styledDark;
+    private int styledAccent;
+    private final org.telegram.messenger.NotificationCenter.NotificationCenterDelegate themeChanged = (id, account, args) -> {
+        if (destroyed || map == null) return;
+        if (Theme.isCurrentThemeDark() != styledDark || MapKinds.accent() != styledAccent) {
+            // The accent colors the position marker, which takes its options when activated: activate afresh.
+            if (map.getLocationComponent().isLocationComponentActivated()) {
+                map.getLocationComponent().setLocationComponentEnabled(false);
+            }
+            locationRestyle = true;
+            reloadStyle();
+        }
+    };
+    private boolean locationRestyle;
 
     // Taps on the map: a named place opens its card; pressing and holding drops a pin there.
 
@@ -1636,6 +1666,7 @@ final class MapLibreMapEngine implements MapEngine {
             offline.destroy();
         }
         MapData.removeListener(mapDataChanged);
+        org.telegram.messenger.NotificationCenter.getGlobalInstance().removeObserver(themeChanged, org.telegram.messenger.NotificationCenter.didSetNewTheme);
         if (started) {
             view.onStop();
         }

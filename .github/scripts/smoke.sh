@@ -265,13 +265,13 @@ if tap_view 'content-desc="Where to?"' || adb shell input tap 160 532; then
   tap_view 'content-desc="My location"' || true
   send_fix
   sleep 3
-  adb shell input swipe 160 190 160 190 900 || true
+  adb shell input swipe 160 70 160 70 900 || true
   sleep 4
   dump_screen 7-maps-pin
-  # Directions by car, offline: how long the route takes is written to the log.
+  # Directions by car, offline: how long the route takes is written to the log. The button reads "Go · 1 min".
   adb logcat -c || true
   send_fix
-  tap_view 'text="Go"' || adb shell input tap 88 523
+  tap_view 'text="Go' || adb shell input tap 130 522
   for wait in $(seq 1 36); do
     sleep 5
     send_fix
@@ -289,8 +289,8 @@ if tap_view 'content-desc="Where to?"' || adb shell input tap 160 532; then
   done
   adb exec-out screencap -p > "$OUT/7-maps-navigation.png" || true
   # Driving a few steps up the road: the part of the route already driven disappears behind the arrow.
-  for step in 1 2 3 4 5; do
-    lat=$(awk -v s="$step" 'BEGIN { printf "%.6f", 30.5085 + s * 0.0004 }')
+  for step in 1 2 3; do
+    lat=$(awk -v s="$step" 'BEGIN { printf "%.6f", 30.5085 + s * 0.0003 }')
     adb shell cmd location providers set-test-provider-location gps --location "$lat,47.7804" --accuracy 5 || true
     adb emu geo fix 47.7804 "$lat" || true
     sleep 2
@@ -337,10 +337,10 @@ if tap_view 'content-desc="Where to?"' || adb shell input tap 160 532; then
   sleep 5
   send_fix
   adb exec-out screencap -p > "$OUT/7-maps-dark.png" || true
-  adb shell input swipe 160 190 160 190 900 || true
+  adb shell input swipe 160 70 160 70 900 || true
   sleep 4
   send_fix
-  if tap_view 'text="Go"'; then
+  if tap_view 'text="Go' || adb shell input tap 130 522; then
     for wait in $(seq 1 12); do
       sleep 3
       send_fix
