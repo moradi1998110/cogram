@@ -160,6 +160,14 @@ jobs:
                 EXTRA="$EXTRA -PPHOGRAM_UPDATE_URL=${GITLAB_API_URL%/}/projects/$GITLAB_RELEASES_PROJECT/packages/generic/phogram/latest/update.json"
               fi
               ;;
+            refs/tags/build*)
+              # A test build installs over the releases (same key, a higher code), keeping the app's data, and takes
+              # the next release as an update.
+              EXTRA="-PAPP_VERSION_CODE=$((8000 + GITHUB_RUN_NUMBER))"
+              if [ -n "$GITLAB_API_URL" ] && [ -n "$GITLAB_RELEASES_PROJECT" ]; then
+                EXTRA="$EXTRA -PPHOGRAM_UPDATE_URL=${GITLAB_API_URL%/}/projects/$GITLAB_RELEASES_PROJECT/packages/generic/phogram/latest/update.json"
+              fi
+              ;;
             refs/tags/prod*)
               TASK=":TMessagesProj_App:assembleAfatRelease"
               ;;
