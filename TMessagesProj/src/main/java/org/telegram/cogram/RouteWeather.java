@@ -146,7 +146,7 @@ final class RouteWeather {
             tiles.clear();
             index = null;
             indexFetched = 0;
-            deleteAll(false);
+            deleteAll(null);
         });
     }
 
@@ -215,7 +215,7 @@ final class RouteWeather {
         if (index == null || !fresh.optString("version").equals(index.optString("version"))) {
             // A newer run: the tiles kept from the older one go.
             tiles.clear();
-            deleteAll(true);
+            deleteAll(fresh.optString("version"));
         }
         index = fresh;
         indexUrl = url;
@@ -259,12 +259,12 @@ final class RouteWeather {
         }
     }
 
-    private void deleteAll(boolean olderRunsOnly) {
+    /** Deletes the kept tiles, all of them, or those of every run but the one given. */
+    private void deleteAll(String keepVersion) {
         final File[] files = dir.listFiles();
         if (files == null) return;
-        final String version = index != null ? index.optString("version") : "";
         for (File f : files) {
-            if (!olderRunsOnly || !f.getName().startsWith(version + "_")) f.delete();
+            if (keepVersion == null || !f.getName().startsWith(keepVersion + "_")) f.delete();
         }
     }
 
