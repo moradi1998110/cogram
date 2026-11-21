@@ -1,6 +1,7 @@
 package eu.siacs.conversations.generator;
 
 import eu.siacs.conversations.crypto.axolotl.AxolotlService;
+import eu.siacs.conversations.utils.MessageAttachments;
 import eu.siacs.conversations.crypto.axolotl.XmppAxolotlMessage;
 import eu.siacs.conversations.entities.Account;
 import eu.siacs.conversations.entities.Conversation;
@@ -59,6 +60,10 @@ public class MessageGenerator extends AbstractGenerator {
         }
         if (message.edited()) {
             packet.addExtension(new Replace(message.getMessageId()));
+        }
+        // Phogram: a caption names the file message it belongs to (XEP-0367); only the id, never the text.
+        if (message.attachTo != null) {
+            packet.addChild("attach-to", MessageAttachments.NAMESPACE).setAttribute("id", message.attachTo);
         }
         return packet;
     }

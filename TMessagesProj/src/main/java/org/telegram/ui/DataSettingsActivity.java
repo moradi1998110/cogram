@@ -100,6 +100,7 @@ public class DataSettingsActivity extends BaseFragment {
     private int proxySectionRow;
     @Keep
     private int proxyRow;
+    private int mapsServerRow = -1;
     private int proxySection2Row;
     @Keep
     private int clearDraftsRow;
@@ -139,7 +140,8 @@ public class DataSettingsActivity extends BaseFragment {
         dataUsageRow = rowCount++;
         storageNumRow = -1;
         storageDirs = AndroidUtilities.getRootDirs();
-        if (storageDirs.size() > 1) {
+        // Phogram keeps chats' files in its private storage only, never on a memory card.
+        if (!org.telegram.cogram.CogramGateway.ENABLED && storageDirs.size() > 1) {
             storageNumRow = rowCount++;
         }
         usageSection2Row = rowCount++;
@@ -196,6 +198,7 @@ public class DataSettingsActivity extends BaseFragment {
         callsSection2Row = rowCount++;
         proxySectionRow = rowCount++;
         proxyRow = rowCount++;
+        mapsServerRow = org.telegram.cogram.CogramGateway.ENABLED ? rowCount++ : -1;
         proxySection2Row = rowCount++;
         clearDraftsRow = rowCount++;
         clearDraftsSectionRow = rowCount++;
@@ -550,6 +553,12 @@ public class DataSettingsActivity extends BaseFragment {
                 showDialog(builder.create());
             } else if (position == proxyRow) {
                 presentFragment(new ProxyListActivity());
+            } else if (position == mapsServerRow) {
+                org.telegram.cogram.MapDataServerDialog.show(this, () -> {
+                    if (listAdapter != null) {
+                        listAdapter.notifyItemChanged(mapsServerRow);
+                    }
+                });
             } else if (position == enableStreamRow) {
                 SharedConfig.toggleStreamMedia();
                 TextCheckCell textCheckCell = (TextCheckCell) view;
@@ -714,7 +723,11 @@ public class DataSettingsActivity extends BaseFragment {
                         updateVoipUseLessData = false;
                     } else if (position == proxyRow) {
                         textCell.setIcon(0);
-                        textCell.setText(LocaleController.getString(R.string.ProxySettings), false);
+                        textCell.setText(LocaleController.getString(R.string.ProxySettings), mapsServerRow >= 0);
+                    } else if (position == mapsServerRow) {
+                        textCell.setIcon(0);
+                        textCell.setTextAndValue(LocaleController.getString(R.string.PhogramMapsServer),
+                                org.telegram.cogram.MapData.describeServer(), false);
                     } else if (position == resetDownloadRow) {
                         textCell.setIcon(0);
                         textCell.setCanDisable(true);
@@ -883,7 +896,7 @@ public class DataSettingsActivity extends BaseFragment {
         }
 
         public boolean isRowEnabled(int position) {
-            return position == mobileRow || position == roamingRow || position == wifiRow || position == storageUsageRow || position == useLessDataForCallsRow || position == dataUsageRow || position == proxyRow || position == clearDraftsRow ||
+            return position == mobileRow || position == roamingRow || position == wifiRow || position == storageUsageRow || position == useLessDataForCallsRow || position == dataUsageRow || position == proxyRow || position == mapsServerRow || position == clearDraftsRow ||
                     position == enableCacheStreamRow || position == enableStreamRow || position == enableAllStreamRow || position == enableMkvRow || position == quickRepliesRow || position == autoplayVideoRow || position == autoplayGifsRow ||
                     position == storageNumRow || position == saveToGalleryGroupsRow || position == saveToGalleryPeerRow || position == saveToGalleryChannelsRow || position == resetDownloadRow;
         }

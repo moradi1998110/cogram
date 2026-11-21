@@ -1838,8 +1838,20 @@ public class NotificationService {
             enabled = Iterables.size(Iterables.filter(accounts, Account::isEnabled));
             connected = Iterables.size(Iterables.filter(accounts, Account::isOnlineAndConnected));
         }
+        // Phogram signs in to one account only, so the notification says how that one connection is, not how many
+        // of the accounts are connected.
+        final boolean connecting =
+                accounts != null
+                        && Iterables.any(
+                                accounts,
+                                a -> a.isEnabled() && a.getStatus() == Account.State.CONNECTING);
         mBuilder.setContentText(
-                mXmppConnectionService.getString(R.string.connected_accounts, connected, enabled));
+                mXmppConnectionService.getString(
+                        connected > 0
+                                ? R.string.phogram_connected
+                                : connecting
+                                        ? R.string.phogram_connecting
+                                        : R.string.phogram_waiting_for_network));
         final PendingIntent openIntent = createOpenConversationsIntent();
         if (openIntent != null) {
             mBuilder.setContentIntent(openIntent);

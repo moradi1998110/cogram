@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="phogram_connected">متصل</string>
+    <string name="phogram_connecting">جارٍ الاتصال…</string>
+    <string name="phogram_waiting_for_network">غير متصل، يعيد المحاولة</string>
+</resources>

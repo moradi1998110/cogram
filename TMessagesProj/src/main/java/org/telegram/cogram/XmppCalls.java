@@ -39,7 +39,15 @@ final class XmppCalls implements XmppConnectionService.OnJingleRtpConnectionUpda
         String address(long peerId);
 
         void push(TLRPC.Updates updates, long peerId);
+
+        /** A call ended on this phone; the reason tells a declined call from a missed or cancelled one. */
+        void callEnded(String sessionId, String reason);
     }
+
+    static final String REASON_BUSY = "busy";
+    static final String REASON_MISSED = "missed";
+    static final String REASON_DISCONNECT = "disconnect";
+    static final String REASON_HANGUP = "hangup";
 
     private static final class Call {
         final long id;
@@ -182,7 +190,10 @@ final class XmppCalls implements XmppConnectionService.OnJingleRtpConnectionUpda
             // The call may have ended on the other side at the same moment.
             FileLog.e(e);
         }
-        return discarded(call, reason);
+        // Declined here, whichever reason Telegram's decline button gives; Telegram itself still gets its
+        // own reason back, as a busy one would play the busy tone to whoever declined.
+        boolean declined = !call.outgoing && !call.started && !(reason instanceof TLRPC.TL_phoneCallDiscardReasonDisconnect);
+        return discarded(call, reason, declined ? REASON_BUSY : reasonName(call, reason));
     }
 
     XmppCallInstance createInstance(long callId, VideoSink remoteSink) {
@@ -192,7 +203,8 @@ final class XmppCalls implements XmppConnectionService.OnJingleRtpConnectionUpda
             return null;
         }
         call.instance = new XmppCallInstance(connection, remoteSink);
-        if (connection.getEndUserState() == RtpEndUserState.CONNECTED) {
+        RtpEndUserState state = connection.getEndUserState();
+        if (state == RtpEndUserState.CONNECTED || state == RtpEndUserState.INCOMING_CONTENT_ADD) {
             call.instance.onConnected();
         }
         return call.instance;
@@ -268,6 +280,13 @@ final class XmppCalls implements XmppConnectionService.OnJingleRtpConnectionUpda
                     call.instance.onConnected();
                 }
                 return started;
+            case INCOMING_CONTENT_ADD:
+                // The other side turned its camera on in a voice call. Until the request is answered no
+                // video flows either way, and Telegram shows the other side's video without asking.
+                if (call.instance != null) {
+                    call.instance.onConnected();
+                }
+                return null;
             case RECONNECTING:
                 if (call.instance != null) {
                     call.instance.onReconnecting();
@@ -306,12 +325,36 @@ final class XmppCalls implements XmppConnectionService.OnJingleRtpConnectionUpda
     }
 
     private TL_phone.PhoneCall discarded(Call call, TLRPC.PhoneCallDiscardReason reason) {
+        return discarded(call, reason, reasonName(call, reason));
+    }
+
+    private TL_phone.PhoneCall discarded(Call call, TLRPC.PhoneCallDiscardReason reason, String recorded) {
         call.finished = true;
-        calls.remove(call.id);
+        if (calls.remove(call.id) != null && call.sessionId != null) {
+            peers.callEnded(call.sessionId, recorded);
+        }
         TL_phone.TL_phoneCallDiscarded phoneCall = new TL_phone.TL_phoneCallDiscarded();
         fill(call, phoneCall);
         phoneCall.reason = reason;
         return phoneCall;
+    }
+
+    /**
+     * What the call's entry in the chat says. An incoming call declined here reads "Declined call" and
+     * rings no notification; one the caller gave up on reads "Missed call"; our own call that nobody
+     * answered reads "Cancelled call".
+     */
+    private static String reasonName(Call call, TLRPC.PhoneCallDiscardReason reason) {
+        if (reason instanceof TLRPC.TL_phoneCallDiscardReasonBusy) {
+            return REASON_BUSY;
+        }
+        if (reason instanceof TLRPC.TL_phoneCallDiscardReasonDisconnect) {
+            return REASON_DISCONNECT;
+        }
+        if (reason instanceof TLRPC.TL_phoneCallDiscardReasonHangup && call.started) {
+            return REASON_HANGUP;
+        }
+        return REASON_MISSED;
     }
 
     private TL_phone.PhoneCall requested(Call call) {

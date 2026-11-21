@@ -13698,7 +13698,7 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
                 }
             });
         }
-        if (UserConfig.getActivatedAccountsCount() < UserConfig.MAX_ACCOUNT_DEFAULT_COUNT) {
+        if (UserConfig.canAddAccount() && UserConfig.getActivatedAccountsCount() < UserConfig.MAX_ACCOUNT_DEFAULT_COUNT) {
             io.add(R.drawable.msg_addbot, getString(R.string.AddAccount), () -> {
                 for (int a = UserConfig.MAX_ACCOUNT_COUNT - 1; a >= 0; a--) {
                     if (!UserConfig.getInstance(a).isClientActivated()) {

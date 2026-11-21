@@ -64,7 +64,7 @@ public abstract class AbstractParser extends XmppConnection.Delegate {
     }
 
     public static long parseTimestamp(Element element) {
-        return parseTimestamp(element, System.currentTimeMillis());
+        return parseTimestamp(element, eu.siacs.conversations.utils.ServerClock.now());
     }
 
     public static long parseTimestamp(String timestamp) throws ParseException {
@@ -84,7 +84,10 @@ public abstract class AbstractParser extends XmppConnection.Delegate {
         }
         timestamp = timestamp.substring(0, 19) + timestamp.substring(timestamp.length() - 5);
         dateFormat = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssZ", Locale.US);
-        return Math.min(dateFormat.parse(timestamp).getTime() + ms, System.currentTimeMillis());
+        // No stamp lies in the future, on the server's clock: the phone's own may be far behind it.
+        return Math.min(
+                dateFormat.parse(timestamp).getTime() + ms,
+                eu.siacs.conversations.utils.ServerClock.now());
     }
 
     public static long getTimestamp(final String input) throws ParseException {

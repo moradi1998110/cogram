@@ -405,10 +405,18 @@ public class XmppConnection implements Runnable {
                 final String domain = account.getServer();
                 final List<Resolver.Result> results = new ArrayList<>();
                 final boolean hardcoded = extended && !hostname.isEmpty();
-                if (hardcoded) {
-                    results.addAll(Resolver.fromHardCoded(hostname, account.getPort()));
-                } else {
-                    results.addAll(Resolver.resolve(domain));
+                // Phogram: the address the user gave at sign-in first, then the domain's DNS, then the address
+                // built into the app, for the networks where the domain does not resolve. None of the given
+                // addresses is trusted for the certificate, which must still be the domain's.
+                if (!hostname.isEmpty()) {
+                    results.addAll(Resolver.fromFallback(hostname, account.getPort()));
+                }
+                results.addAll(Resolver.resolve(domain));
+                for (final Resolver.Result fallback :
+                        Resolver.fromFallback(Resolver.fallbackHost, Resolver.fallbackPort)) {
+                    if (!results.contains(fallback)) {
+                        results.add(fallback);
+                    }
                 }
                 if (Thread.currentThread().isInterrupted()) {
                     Log.d(Config.LOGTAG, account.getJid().asBareJid() + ": Thread was interrupted");
@@ -2389,10 +2397,19 @@ public class XmppConnection implements Runnable {
             discoManager.fetchServerCommands();
         }
 
+        // The archive's stamps are on the server's clock, so it is read before catching up; whether
+        // the server answers or not, catching up follows (after at most the reading's timeout).
         final var messageArchiveManager = getManager(MessageArchiveManager.class);
-        if (messageArchiveManager.hasFeature()) {
-            messageArchiveManager.catchup();
-        }
+        final var clockReading =
+                getManager(eu.siacs.conversations.xmpp.manager.EntityTimeManager.class)
+                        .measureServerClock();
+        clockReading.addListener(
+                () -> {
+                    if (messageArchiveManager.hasFeature()) {
+                        messageArchiveManager.catchup();
+                    }
+                },
+                MoreExecutors.directExecutor());
     }
 
     private void processStreamError(final StreamError streamError) throws IOException {

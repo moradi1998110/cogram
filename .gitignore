@@ -21,3 +21,4 @@ TMessagesProj/jni/ffmpeg/build_android
 
 # Vulnerability database downloaded by the security scans (gradle/security.gradle).
 /.dependency-check-data/
+TMessagesProj/src/osmand/assets/osmand_phrases/

@@ -184,6 +184,15 @@ final class XmppBackend implements GatewayBackend {
         }
 
         @Override
+        public void callEnded(String sessionId, String reason) {
+            preferences.edit().putString(CALL_REASON_PREFIX + sessionId, reason).apply();
+            endedCalls.add(sessionId);
+            // The engine writes the call's entry as the call ends, so it is shown right after.
+            scheduleSync();
+            settleLater(1_000);
+        }
+
+        @Override
         public void push(TLRPC.Updates updates, long peerId) {
             UpdatesListener target;
             synchronized (XmppBackend.this) {
@@ -242,6 +251,14 @@ final class XmppBackend implements GatewayBackend {
     }
 
     private void onServiceReady(XmppConnectionService connected) {
+        // Before the engine connects, so no caption that comes while it catches up is missed.
+        eu.siacs.conversations.utils.MessageAttachments.setListener((message, target) -> {
+            if (message.getType() != Message.TYPE_TEXT || TextUtils.isEmpty(message.getBody())) {
+                return;
+            }
+            rememberCaption(message, target, captionSender(message), message.getBody());
+            scheduleSync();
+        });
         try {
             connected.restoredFromDatabaseLatch.await();
         } catch (InterruptedException e) {
@@ -263,8 +280,10 @@ final class XmppBackend implements GatewayBackend {
             account = account();
         }
         if (account != null) {
+            disableExtraAccounts(connected, account);
             calls = new XmppCalls(connected, account, selfId, callPeers);
         }
+        events.execute(this::moveToPrivateStorage);
         if (BuildVars.LOGS_ENABLED) {
             FileLog.d("cogram: engine ready, releasing " + ready.size() + " waiting requests");
         }
@@ -345,6 +364,9 @@ final class XmppBackend implements GatewayBackend {
         }
     }
 
+    /** The captions waiting for their file to be out, by the file's random id. */
+    private final Map<Long, Message> captionsAfter = new java.util.concurrent.ConcurrentHashMap<>();
+
     private PendingSend track(Message message, long randomId, Supplier<TLObject> response) {
         PendingSend send = new PendingSend(message, randomId, response);
         pendingSends.put(randomId, send);
@@ -370,9 +392,16 @@ final class XmppBackend implements GatewayBackend {
             }
             iterator.remove();
             ids.forgetSend(send.randomId);
+            Message caption = captionsAfter.remove(send.randomId);
             if (delivered) {
                 TLObject response = send.response.get();
                 finished.add(() -> send.reply.complete(response, null));
+                if (caption != null) {
+                    // The file is out; its caption follows, encrypted as the chat's text is.
+                    Conversation conversation = (Conversation) send.message.getConversation();
+                    whenEncryptionDecided(conversation, caption, () -> FileLog.e("cogram: caption not sent"),
+                            () -> service.sendMessage(caption));
+                }
                 continue;
             }
             if (rejected) {
@@ -410,7 +439,7 @@ final class XmppBackend implements GatewayBackend {
         TLRPC.MessageMedia media = storedMedia(id);
         boolean room = isRoom(message);
         PendingSend send = track(message, randomId, () -> room ? roomSent(message, userId, randomId)
-                : media != null ? mediaSent(userId, id, date, media, randomId) : textSent(id, date, shownText(message)));
+                : media != null ? mediaSent(userId, id, date, media, randomId, captionOf(message)) : textSent(id, date, shownText(message)));
         scheduleSync();
         return send;
     }
@@ -456,12 +485,15 @@ final class XmppBackend implements GatewayBackend {
         return sent;
     }
 
-    private TLRPC.Updates mediaSent(long userId, int id, int date, TLRPC.MessageMedia media, long randomId) {
+    private TLRPC.Updates mediaSent(long userId, int id, int date, TLRPC.MessageMedia media, long randomId, String caption) {
         TLRPC.TL_message tl = new TLRPC.TL_message();
         tl.id = id;
         tl.out = true;
         tl.date = date;
-        tl.message = "";
+        tl.message = caption == null ? "" : caption;
+        if (addLinkEntities(tl.message, tl.entities)) {
+            tl.flags |= TLObject.FLAG_7;
+        }
         tl.peer_id = peerUser(userId);
         tl.from_id = peerUser(selfId);
         tl.dialog_id = userId;
@@ -557,8 +589,8 @@ final class XmppBackend implements GatewayBackend {
         if (engine == null || jid == null) {
             return false;
         }
-        List<Account> accounts = engine.getAccounts();
-        Conversation room = accounts.isEmpty() ? null : engine.find(accounts.get(0), Jid.of(jid));
+        Account account = account();
+        Conversation room = account == null ? null : engine.find(account, Jid.of(jid));
         return room != null && isRoom(room) && !room.getMucOptions().isPrivateAndNonAnonymous();
     }
 
@@ -607,7 +639,7 @@ final class XmppBackend implements GatewayBackend {
                 }
                 for (Message message : loadedMessages(conversation)) {
                     int known = ids.findMessage(message.getUuid());
-                    if (known == 0 && !(isMedia(message) && isDownloading(message)) && !callUnsettled(message)) {
+                    if (known == 0 && !(isMedia(message) && isDownloading(message))) {
                         updates.add(createNewMessageUpdate(message, peerId));
                         snapshots.put(ids.findMessage(message.getUuid()), snapshot(message));
                     } else if (known != 0) {
@@ -721,8 +753,13 @@ final class XmppBackend implements GatewayBackend {
     }
 
     /** The parts of a message an edit, a finished download or a reaction can change. */
-    private static String snapshot(Message message) {
+    private String snapshot(Message message) {
         StringBuilder snapshot = new StringBuilder(contentSnapshot(message));
+        if (isMedia(message)) {
+            // A caption that comes after its file is an edit of the file's message.
+            String caption = captionOf(message);
+            if (caption != null) snapshot.append('\u0001').append(caption);
+        }
         for (eu.siacs.conversations.entities.Reaction reaction : message.getReactions()) {
             snapshot.append('\u0000').append(reaction.normalizedReaction()).append(reaction.received);
         }
@@ -751,7 +788,7 @@ final class XmppBackend implements GatewayBackend {
         if (previous == null || previous.equals(snapshot)) {
             return null;
         }
-        if (!previous.split("\u0000", -1)[0].equals(contentSnapshot(message))) {
+        if (!previous.split("\u0000", -1)[0].equals(snapshot.split("\u0000", -1)[0])) {
             return editUpdate(toTl(message, peerId));
         }
         TL_update.TL_updateMessageReactions reactions = new TL_update.TL_updateMessageReactions();
@@ -982,15 +1019,129 @@ final class XmppBackend implements GatewayBackend {
         preferences.edit().putInt("pts", pts).apply();
     }
 
+    /** The one account Phogram carries: the first one that is turned on, see disableExtraAccounts. */
     private Account account() {
         List<Account> accounts = service.getAccounts();
+        for (Account account : accounts) {
+            if (account.isEnabled()) {
+                return account;
+            }
+        }
         return accounts.isEmpty() ? null : accounts.get(0);
+    }
+
+    /**
+     * Phogram carries one account. A phone that signed in to more through Telegram's old "Add account"
+     * keeps their chats in the engine, but the extra accounts no longer connect, ring or notify.
+     */
+    private static void disableExtraAccounts(XmppConnectionService engine, Account kept) {
+        for (Account other : new ArrayList<>(engine.getAccounts())) {
+            if (other != kept && other.isEnabled()) {
+                FileLog.d("cogram: turning off extra engine account " + other.getJid().asBareJid());
+                other.setOption(Account.OPTION_DISABLED, true);
+                engine.updateAccount(other);
+            }
+        }
+    }
+
+    private static final String KEY_PRIVATE_STORAGE = "private_storage_v1";
+    /** How many of a chat's newest messages are pointed at their engine files when moving to private storage. */
+    private static final int PRIVATE_STORAGE_SCAN = 5000;
+
+    /**
+     * Once, after updating: Telegram's copies of chats' files lived in Android/data and Android/media,
+     * where other apps (Android 10 and older) and a computer on USB could read them. They are deleted,
+     * as they only repeated the engine's private copies, and Telegram is pointed at the engine's files.
+     * The folders Telegram may share with the real Telegram app on old phones are left alone.
+     */
+    private void moveToPrivateStorage() {
+        if (preferences.getBoolean(KEY_PRIVATE_STORAGE, false)) {
+            return;
+        }
+        File external = context.getExternalFilesDir(null);
+        if (external != null) {
+            deleteTree(new File(external, "Telegram"));
+            deleteTree(new File(external, "logs"));
+        }
+        try {
+            for (File media : context.getExternalMediaDirs()) {
+                if (media != null) {
+                    deleteTree(new File(media, "Telegram"));
+                }
+            }
+        } catch (RuntimeException e) {
+            FileLog.e(e);
+        }
+        File externalCache = context.getExternalCacheDir();
+        if (externalCache != null) {
+            File[] children = externalCache.listFiles();
+            if (children != null) {
+                for (File child : children) {
+                    deleteTree(child);
+                }
+            }
+        }
+        // Telegram's table of where each file is still names the deleted copies; it starts over, filled
+        // with the engine's files below and with any file Telegram fetches from now on.
+        org.telegram.messenger.FileLoader.getInstance(org.telegram.messenger.UserConfig.selectedAccount).getFileDatabase().clear();
+        shownEngineFiles.clear();
+        int shown = 0;
+        for (Conversation conversation : chatsWhenReady()) {
+            synchronized (this) {
+                long peerId = peerId(conversation);
+                for (Message message : service.databaseBackend.getMessages(conversation, PRIVATE_STORAGE_SCAN, -1)) {
+                    int id = ids.findMessage(message.getUuid());
+                    // Only messages Telegram has; numbering others here would keep them from arriving as new.
+                    if (id == 0 || !isMedia(message) || isDownloading(message)) {
+                        continue;
+                    }
+                    try {
+                        media(message, id, (int) (message.getTimeSent() / 1000));
+                        shown++;
+                    } catch (RuntimeException e) {
+                        FileLog.e(e);
+                    }
+                }
+                if (BuildVars.LOGS_ENABLED) {
+                    FileLog.d("cogram: private storage, chat " + peerId + " done");
+                }
+            }
+        }
+        preferences.edit().putBoolean(KEY_PRIVATE_STORAGE, true).apply();
+        FileLog.d("cogram: moved to private storage, " + shown + " files shown from the engine");
+    }
+
+    private synchronized List<Conversation> chatsWhenReady() {
+        return service == null ? new ArrayList<>() : chats();
+    }
+
+    private static void deleteTree(File file) {
+        if (file == null || !file.exists()) {
+            return;
+        }
+        File[] children = file.isDirectory() ? file.listFiles() : null;
+        if (children != null) {
+            for (File child : children) {
+                deleteTree(child);
+            }
+        }
+        if (!file.delete()) {
+            FileLog.e("cogram: could not delete " + file);
+        }
     }
 
     private List<Conversation> chats() {
         ArrayList<Conversation> all = new ArrayList<>();
         service.populateWithOrderedConversations(all);
-        return all;
+        // Only the one account's chats; another account's would mix in as if they were its own.
+        Account account = account();
+        ArrayList<Conversation> own = new ArrayList<>(all.size());
+        for (Conversation conversation : all) {
+            if (conversation.getAccount() == account) {
+                own.add(conversation);
+            }
+        }
+        return own;
     }
 
     private static boolean isRoom(Conversation conversation) {
@@ -1335,13 +1486,93 @@ final class XmppBackend implements GatewayBackend {
         ArrayList<Message> loaded = new ArrayList<>();
         conversation.populateWithMessages(loaded);
         Map<String, Message> calls = callEntries(loaded);
+        Set<String> captions = attachedCaptions(loaded);
         ArrayList<Message> shown = new ArrayList<>();
         for (Message message : loaded) {
-            if (isShown(message) && (!isLoggedCall(message) || calls.get(message.getRemoteMsgId()) == message)) {
+            if (captions.contains(message.getUuid())) {
+                continue;
+            }
+            if (isShown(message) && (!isLoggedCall(message) || isShownCall(message, calls))) {
                 shown.add(message);
             }
         }
         return shown;
+    }
+
+    // Captions (XEP-0367): a caption is a text message of its own, attached to its file message. Telegram shows it
+    // as the file's text, and the caption's own message is not shown, once the file is there and is the same
+    // sender's; a caption whose file never came stays an ordinary message.
+
+    /** The uuids of the caption messages known, kept in memory since every sync asks. */
+    private final Set<String> captionUuids = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private volatile boolean captionsLoaded;
+
+    /** Who wrote a message, as captions record it: ourselves, a room member or the contact. */
+    private String captionSender(Message message) {
+        if (message.getStatus() != Message.STATUS_RECEIVED) {
+            return "self";
+        }
+        if (isRoom(message)) {
+            return message.getOccupantId() != null ? "o:" + message.getOccupantId() : "n:" + message.getCounterpart();
+        }
+        return "u:" + (message.getCounterpart() == null ? "" : message.getCounterpart().asBareJid());
+    }
+
+    /** The caption of a file message, or null. */
+    private String captionOf(Message media) {
+        if (captionUuids.isEmpty() && captionsLoaded) {
+            return null;
+        }
+        return ids.captionFor(captionSender(media), media.getUuid(), media.getRemoteMsgId());
+    }
+
+    /** The caption messages among these whose file is among them too, from the same sender. */
+    private Set<String> attachedCaptions(List<Message> messages) {
+        if (!captionsLoaded) {
+            captionUuids.addAll(ids.captionUuids());
+            captionsLoaded = true;
+        }
+        HashSet<String> attached = new HashSet<>();
+        if (captionUuids.isEmpty()) {
+            return attached;
+        }
+        HashMap<String, String> mediaSenders = new HashMap<>();
+        for (Message message : messages) {
+            if (isMedia(message)) {
+                String sender = captionSender(message);
+                mediaSenders.put(message.getUuid(), sender);
+                if (message.getRemoteMsgId() != null) mediaSenders.put(message.getRemoteMsgId(), sender);
+            }
+        }
+        for (Message message : messages) {
+            if (message.getType() != Message.TYPE_TEXT || !captionUuids.contains(message.getUuid())) {
+                continue;
+            }
+            String[] caption = ids.captionOf(message.getUuid());
+            if (caption != null && caption[1].equals(mediaSenders.get(caption[0]))) {
+                attached.add(message.getUuid());
+                // Shown on its own before its file came: Telegram drops that message now.
+                int shownId = ids.findMessage(message.getUuid());
+                if (shownId != 0 && hiddenCaptions.add(message.getUuid())) {
+                    pendingDeletes.add(shownId);
+                }
+            }
+        }
+        return attached;
+    }
+
+    /** Captions already taken off Telegram's list, so each is deleted there once. */
+    private final Set<String> hiddenCaptions = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /** Records a caption, ours as we send it or another's as it comes. */
+    private void rememberCaption(Message caption, String target, String sender, String text) {
+        ids.putCaption(caption.getUuid(), target, sender, text);
+        captionUuids.add(caption.getUuid());
+    }
+
+    /** The one entry kept for its call, once the call has settled. */
+    private boolean isShownCall(Message message, Map<String, Message> calls) {
+        return calls.get(message.getRemoteMsgId()) == message && !callUnsettled(message);
     }
 
     private static boolean isLoggedCall(Message message) {
@@ -1375,27 +1606,67 @@ final class XmppBackend implements GatewayBackend {
     /**
      * Whether a call entry that says "not answered" may still be answered. Telegram's server only logs a
      * call once it ended, and Telegram shows a "missed call" notification for every unanswered entry, so
-     * such an entry waits while its call is going on and for a while after it was proposed.
+     * such an entry waits while its call is going on and, unless this phone saw the call end, for a while
+     * after it was proposed. It stays out of every answer meanwhile, chat lists and histories included: an
+     * entry Telegram got there counts as known and would never come to it as a new message.
      */
     private boolean callUnsettled(Message message) {
         if (!isLoggedCall(message) || RtpSessionStatus.of(message.getBody()).successful) {
             return false;
         }
+        String session = message.getRemoteMsgId();
         Account account = account();
         if (account != null) {
             eu.siacs.conversations.xmpp.jingle.JingleRtpConnection ongoing = account.getXmppConnection()
                     .getManager(eu.siacs.conversations.xmpp.manager.JingleManager.class).getOngoingRtpConnection();
-            if (ongoing != null && message.getRemoteMsgId().equals(ongoing.getId().sessionId)) {
-                settleTimer.schedule(this::scheduleSync, 5, java.util.concurrent.TimeUnit.SECONDS);
+            if (ongoing != null && session.equals(ongoing.getId().sessionId)) {
+                settleLater(5_000);
                 return true;
             }
         }
-        long left = message.getTimeSent() + CALL_SETTLE_MS - System.currentTimeMillis();
+        if (endedCalls.contains(session)) {
+            return false;
+        }
+        // Entries are stamped on the server's clock.
+        long left = message.getTimeSent() + CALL_SETTLE_MS - eu.siacs.conversations.utils.ServerClock.now();
         if (left > 0) {
-            settleTimer.schedule(this::scheduleSync, left + 500, java.util.concurrent.TimeUnit.MILLISECONDS);
+            settleLater(left + 500);
             return true;
         }
         return false;
+    }
+
+    /** Calls this phone saw end, whose entries need not wait. */
+    private final Set<String> endedCalls = Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>());
+    private final java.util.concurrent.atomic.AtomicLong settleAt = new java.util.concurrent.atomic.AtomicLong();
+
+    /** One timer, for the earliest entry to settle, since every answer asks again. */
+    private void settleLater(long delayMs) {
+        long now = System.currentTimeMillis();
+        long at = now + delayMs;
+        long pending = settleAt.get();
+        if (pending > now && pending <= at) {
+            return;
+        }
+        settleAt.set(at);
+        settleTimer.schedule(() -> {
+            settleAt.compareAndSet(at, 0);
+            scheduleSync();
+        }, delayMs, java.util.concurrent.TimeUnit.MILLISECONDS);
+    }
+
+    private static final String CALL_REASON_PREFIX = "call_reason_";
+
+    /** How an unanswered call ended, which tells Telegram's entry apart: missed, declined or cancelled. */
+    private TLRPC.PhoneCallDiscardReason callReason(String session) {
+        String reason = session == null ? null : preferences.getString(CALL_REASON_PREFIX + session, null);
+        if (XmppCalls.REASON_BUSY.equals(reason)) {
+            return new TLRPC.TL_phoneCallDiscardReasonBusy();
+        }
+        if (XmppCalls.REASON_DISCONNECT.equals(reason)) {
+            return new TLRPC.TL_phoneCallDiscardReasonDisconnect();
+        }
+        return new TLRPC.TL_phoneCallDiscardReasonMissed();
     }
 
     private static boolean isShown(Message message) {
@@ -1435,7 +1706,8 @@ final class XmppBackend implements GatewayBackend {
         tl.media = new TLRPC.TL_messageMediaEmpty();
         tl.flags = TLObject.FLAG_8 | TLObject.FLAG_9;
         if (isMedia(message)) {
-            tl.message = "";
+            String caption = captionOf(message);
+            tl.message = caption != null ? caption : "";
             TLRPC.MessageMedia sent = out ? storedMedia(tl.id) : null;
             tl.media = sent != null ? sent : media(message, tl.id, tl.date);
         } else if (message.getType() == Message.TYPE_TEXT && message.isGeoUri()) {
@@ -1655,7 +1927,37 @@ final class XmppBackend implements GatewayBackend {
         }
         // Telegram's parser fills in the file locations its loaders use.
         SerializedData data = serialize(media);
-        return TLRPC.MessageMedia.TLdeserialize(data, data.readInt32(false), false);
+        TLRPC.MessageMedia parsed = TLRPC.MessageMedia.TLdeserialize(data, data.readInt32(false), false);
+        if (local) {
+            showEngineFile(id, parsed, file);
+        }
+        return parsed;
+    }
+
+    /** Media ids whose engine file Telegram already points at in this run, with that file's path. */
+    private final Map<Long, String> shownEngineFiles = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * Points Telegram at the engine's own copy of a chat's file, which Telegram then shows and plays as
+     * a file it has, instead of fetching it through the gateway into a second copy. Both copies used to
+     * stay on the phone, Telegram's in a folder other apps and a computer on USB could read.
+     */
+    private void showEngineFile(long mediaId, TLRPC.MessageMedia media, File file) {
+        String path = file.getAbsolutePath();
+        if (path.equals(shownEngineFiles.get(mediaId))) {
+            return;
+        }
+        TLObject attach = null;
+        if (media instanceof TLRPC.TL_messageMediaDocument && media.document != null) {
+            attach = media.document;
+        } else if (media instanceof TLRPC.TL_messageMediaPhoto && media.photo != null && !media.photo.sizes.isEmpty()) {
+            attach = media.photo.sizes.get(0);
+        }
+        if (attach == null) {
+            return;
+        }
+        org.telegram.messenger.FileLoader.getInstance(org.telegram.messenger.UserConfig.selectedAccount).setLocalPathTo(attach, path);
+        shownEngineFiles.put(mediaId, path);
     }
 
     /** The name as sent comes first, since Telegram finds its copy of a file by the name's extension. */
@@ -1712,7 +2014,7 @@ final class XmppBackend implements GatewayBackend {
             action.duration = (int) (status.duration / 1000);
             action.flags |= TLObject.FLAG_1;
         } else {
-            action.reason = new TLRPC.TL_phoneCallDiscardReasonMissed();
+            action.reason = callReason(message.getRemoteMsgId());
             action.flags |= TLObject.FLAG_0;
         }
         TLRPC.TL_messageService tl = new TLRPC.TL_messageService();
@@ -2247,7 +2549,7 @@ final class XmppBackend implements GatewayBackend {
      * chat's text would be. Telegram gets the message at once, with the file it already holds.
      */
     @Override
-    public synchronized TLObject sendFile(long userId, File file, String mime, List<TLRPC.DocumentAttribute> attributes, boolean photo, long randomId) {
+    public synchronized TLObject sendFile(long userId, File file, String mime, List<TLRPC.DocumentAttribute> attributes, boolean photo, long randomId, String caption) {
         PendingSend resumed = resumeSend(userId, randomId);
         if (resumed != null) {
             file.delete();
@@ -2263,17 +2565,67 @@ final class XmppBackend implements GatewayBackend {
         message.setType(photo ? Message.TYPE_IMAGE : Message.TYPE_FILE);
         int id = ids.messageId(message.getUuid(), message.getTimeSent());
         int date = (int) (message.getTimeSent() / 1000);
+        // The caption goes out as its own text message attached to the file (XEP-0367) once the file is out, so it
+        // never comes before its file; it is the file's text here from the start.
+        String text = caption == null ? "" : caption.trim();
+        if (!text.isEmpty()) {
+            Message captionMessage = new Message(conversation, text, Message.ENCRYPTION_NONE);
+            captionMessage.setCounterpart(conversation.getNextCounterpart());
+            captionMessage.attachTo = message.getUuid();
+            rememberCaption(captionMessage, message.getUuid(), "self", text);
+            captionsAfter.put(randomId, captionMessage);
+        }
         // Read before the engine takes the file, since it deletes the upload once copied.
         TLRPC.MessageMedia media = sentMedia(id, date, file, mime, attributes, photo);
         storeSentMedia(id, media);
         snapshots.put(id, snapshot(message));
         boolean room = isRoom(conversation);
-        PendingSend send = track(message, randomId, () -> room ? roomSent(message, userId, randomId) : mediaSent(userId, id, date, media, randomId));
+        PendingSend send = track(message, randomId, () -> room ? roomSent(message, userId, randomId) : mediaSent(userId, id, date, media, randomId, text));
         whenEncryptionDecided(conversation, message, () -> {
             file.delete();
             failSend(send);
         }, () -> service.attachFile(message, Uri.fromFile(file), mime, file::delete, () -> failSend(send)));
         return send.reply;
+    }
+
+    /**
+     * Telegram sends a picture it sent before by naming it instead of uploading it again; it goes out as a new copy
+     * of the file this device already holds, as a forward does.
+     */
+    @Override
+    public synchronized TLObject resendMedia(long userId, long mediaId, long randomId, String caption) {
+        PendingSend resumed = resumeSend(userId, randomId);
+        if (resumed != null) {
+            return resumed.reply;
+        }
+        Message original = service == null ? null : engineMessage((int) mediaId);
+        if (original == null || !isMedia(original)) {
+            return null;
+        }
+        File source = service.getFileBackend().getFile(original);
+        if (!source.exists()) {
+            return null;
+        }
+        File copy = new File(context.getCacheDir(), "resend_" + original.getUuid() + "_" + Long.toHexString(randomId));
+        try {
+            copyFile(source, copy);
+        } catch (Exception e) {
+            FileLog.e(e);
+            copy.delete();
+            return null;
+        }
+        TLRPC.MessageMedia media = toTl(original, peerOf(original)).media;
+        boolean photo = media instanceof TLRPC.TL_messageMediaPhoto;
+        TLRPC.Document document = media instanceof TLRPC.TL_messageMediaDocument ? media.document : null;
+        String mime = original.getMimeType();
+        if (mime == null && document != null) {
+            mime = document.mime_type;
+        }
+        if (mime == null || mime.isEmpty()) {
+            mime = photo ? "image/jpeg" : "application/octet-stream";
+        }
+        List<TLRPC.DocumentAttribute> attributes = document != null ? document.attributes : new ArrayList<>();
+        return sendFile(userId, copy, mime, attributes, photo, randomId, caption);
     }
 
     private static TLRPC.MessageMedia sentMedia(int messageId, int date, File file, String mime, List<TLRPC.DocumentAttribute> attributes, boolean photo) {
@@ -2353,8 +2705,10 @@ final class XmppBackend implements GatewayBackend {
         }
         for (Conversation conversation : chats()) {
             long peerId = peerId(conversation);
-            for (Message message : service.databaseBackend.getMessages(conversation, CALL_HISTORY_SCAN, -1)) {
-                if (message.getType() == Message.TYPE_RTP_SESSION) {
+            List<Message> scanned = service.databaseBackend.getMessages(conversation, CALL_HISTORY_SCAN, -1);
+            Map<String, Message> calls = callEntries(scanned);
+            for (Message message : scanned) {
+                if (message.getType() == Message.TYPE_RTP_SESSION && (!isLoggedCall(message) || isShownCall(message, calls))) {
                     TLRPC.Message call = toTl(message, peerId);
                     if (offsetId == 0 || call.id < offsetId) {
                         history.add(call);
@@ -2569,11 +2923,17 @@ final class XmppBackend implements GatewayBackend {
         int scan = aroundOffset ? HISTORY_AROUND_LIMIT : limit * HISTORY_SCAN_FACTOR;
         ArrayList<TLRPC.Message> newestFirst = ids.inTransaction(() -> {
             ArrayList<TLRPC.Message> converted = new ArrayList<>();
-            for (Message message : service.databaseBackend.getMessages(conversation, scan, before)) {
-                if (isShown(message)) {
+            List<Message> scanned = service.databaseBackend.getMessages(conversation, scan, before);
+            Map<String, Message> calls = callEntries(scanned);
+            for (Message message : scanned) {
+                if (isShown(message) && (!isLoggedCall(message) || isShownCall(message, calls))) {
                     converted.add(toTl(message, userId));
                 }
             }
+            // Telegram pages through a history by id. The engine reads it by time, and an id taken
+            // when a message was first seen can disagree with a time corrected later; ordering by id
+            // keeps the pages free of gaps and repeats.
+            Collections.sort(converted, (a, b) -> Integer.compare(b.id, a.id));
             return converted;
         });
         if (newestFirst.isEmpty() && isRoom(conversation)) {

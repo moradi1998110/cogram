@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The white cell under the location marker: a rounded hexagon, as the cells of Phogram's mark. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="28dp"
+    android:height="28dp"
+    android:viewportWidth="28"
+    android:viewportHeight="28">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M11.229,2.1Q14,0.5 16.771,2.1L22.92,5.65Q25.691,7.25 25.691,10.45L25.691,17.55Q25.691,20.75 22.92,22.35L16.771,25.9Q14,27.5 11.229,25.9L5.08,22.35Q2.309,20.75 2.309,17.55L2.309,10.45Q2.309,7.25 5.08,5.65Z" />
+</vector>

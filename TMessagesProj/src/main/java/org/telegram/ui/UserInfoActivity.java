@@ -419,7 +419,7 @@ public class UserInfoActivity extends UniversalFragment implements NotificationC
             items.add(SettingsActivity.SettingCell.Factory.of(BUTTON_AI, IconBackgroundColors.PURPLE.top, IconBackgroundColors.PURPLE.bottom, R.drawable.premium_ai_editor, applyNewSpan(getString(R.string.EditProfileChatAutomation))));
         }
         items.add(UItem.asShadow(-3, getString(R.string.EditProfileChatAutomationInfo)));
-        final boolean hasAddAccount = UserConfig.getActivatedAccountsCount() < UserConfig.MAX_ACCOUNT_COUNT;
+        final boolean hasAddAccount = UserConfig.canAddAccount() && UserConfig.getActivatedAccountsCount() < UserConfig.MAX_ACCOUNT_COUNT;
         if (hasAddAccount) {
             addAccountRow = items.size();
             items.add(InfoCell.Factory.of(BUTTON_ADD_ACCOUNT, R.drawable.outline_add_account, getString(R.string.AddAccount), null, 0).accent());

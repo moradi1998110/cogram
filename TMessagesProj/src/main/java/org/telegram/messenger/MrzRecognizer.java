@@ -18,6 +18,8 @@ import java.util.HashMap;
 public class MrzRecognizer {
 
 	public static Result recognize(Bitmap bitmap, boolean tryDriverLicenseFirst) {
+		// Phogram ships without Telegram Passport's native document reader (secureid_ocr).
+		if (org.telegram.cogram.CogramGateway.ENABLED) return null;
 		Result res;
 		if (tryDriverLicenseFirst) {
 			res = recognizeBarcode(bitmap);
@@ -296,6 +298,7 @@ public class MrzRecognizer {
 	}
 
 	public static Result recognize(byte[] yuvData, int width, int height, int rotation) {
+		if (org.telegram.cogram.CogramGateway.ENABLED) return null;
 		Bitmap bmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
 		setYuvBitmapPixels(bmp, yuvData);
 		Matrix m = new Matrix();

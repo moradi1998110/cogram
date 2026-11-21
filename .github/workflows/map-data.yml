@@ -1,0 +1,102 @@
+name: Map data
+
+# Builds the files Phogram's MapLibre maps draw from, once, outside every app build: a region's vector tiles
+# (PMTiles) generated from OpenStreetMap with Protomaps' Planetiler profile, Protomaps' light and dark styles
+# with Arabic labels, and the glyphs and icons they use. Every tool and asset is pinned to a commit or version.
+on:
+  workflow_dispatch:
+    inputs:
+      area:
+        description: Geofabrik area name
+        default: iraq
+  push:
+    tags:
+      - 'mapdata*'
+
+permissions:
+  contents: read
+
+env:
+  # Protomaps basemaps (BSD-3-Clause): the tile profile (Planetiler 0.10.2) and the style generator (5.7.2).
+  BASEMAPS_COMMIT: 42ffaaa4a85a41bfcb23e43cc0f5b492a5eca123
+  # Protomaps basemaps-assets: glyphs (SIL OFL) with Arabic, and sprites.
+  ASSETS_COMMIT: 028c18f713baecad011301ff7a69acc39bcc2ae7
+  AREA: ${{ github.event.inputs.area || 'iraq' }}
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Fetch Protomaps sources at pinned commits
+        run: |
+          git init -q basemaps && git -C basemaps fetch -q --depth 1 https://github.com/protomaps/basemaps.git "$BASEMAPS_COMMIT" && git -C basemaps checkout -q FETCH_HEAD
+          git init -q assets && git -C assets fetch -q --depth 1 https://github.com/protomaps/basemaps-assets.git "$ASSETS_COMMIT" && git -C assets checkout -q FETCH_HEAD
+
+      - name: Build the tile generator
+        working-directory: basemaps/tiles
+        run: mvn -q -B clean package -DskipTests
+
+      # The profile's sources, fetched here: Planetiler's own downloader asks Geofabrik's index, which refuses some
+      # runners, and then resolves every source even when it is already on disk.
+      - name: Download the sources
+        working-directory: basemaps/tiles
+        run: |
+          mkdir -p data/sources
+          get() { curl -sSfL --retry 5 --retry-delay 20 --retry-all-errors -o "data/sources/$1" "$2"; }
+          get "$AREA.osm.pbf" "https://download.geofabrik.de/asia/$AREA-latest.osm.pbf"
+          get water-polygons-split-3857.zip https://osmdata.openstreetmap.de/download/water-polygons-split-3857.zip
+          get land-polygons-split-3857.zip https://osmdata.openstreetmap.de/download/land-polygons-split-3857.zip
+          get natural_earth_vector.gpkg.zip https://naciscdn.org/naturalearth/packages/natural_earth_vector.gpkg.zip
+          get daylight-landcover.gpkg https://r2-public.protomaps.com/datasets/daylight-landcover.gpkg
+          get qrank.csv.gz https://qrank.toolforge.org/download/qrank.csv.gz
+          get pgf-encoding.zip https://wipfli.github.io/pgf-encoding/pgf-encoding.zip
+          ls -l data/sources
+
+      - name: Generate the tiles
+        working-directory: basemaps/tiles
+        run: |
+          java -Xmx6g -jar target/*-with-deps.jar --force --area="$AREA" --output="$GITHUB_WORKSPACE/out/$AREA.pmtiles"
+          ls -l "$GITHUB_WORKSPACE/out"
+
+      # The app swaps PHOGRAM_TILES for the tiles file on the phone; glyphs and sprites ship in the app's assets.
+      - name: Generate the light and dark styles with Arabic labels
+        working-directory: basemaps/styles
+        run: |
+          npm ci --no-audit --no-fund
+          for flavor in light dark; do
+            npx tsx src/cli.ts "$GITHUB_WORKSPACE/out/style-$flavor.json" "pmtiles://PHOGRAM_TILES" "$flavor" ar \
+              "asset://phogram_map/sprites/$flavor" "asset://phogram_map/fonts/{fontstack}/{range}.pbf"
+          done
+
+      # Only the glyph ranges for Latin, Arabic, punctuation and symbols, which Iraq's map names use.
+      - name: Collect glyphs and sprites
+        run: |
+          mkdir -p out/phogram_map/sprites
+          for font in "Noto Sans Regular" "Noto Sans Medium" "Noto Sans Italic"; do
+            mkdir -p "out/phogram_map/fonts/$font"
+            for range in 0-255 256-511 512-767 768-1023 1536-1791 1792-2047 2048-2303 8192-8447 8448-8703 64256-64511 65024-65279 65280-65535; do
+              cp "assets/fonts/$font/$range.pbf" "out/phogram_map/fonts/$font/" || true
+            done
+          done
+          cp assets/fonts/OFL.txt out/phogram_map/fonts/
+          for flavor in light dark; do
+            cp assets/sprites/v4/$flavor.json assets/sprites/v4/$flavor.png assets/sprites/v4/$flavor@2x.json assets/sprites/v4/$flavor@2x.png out/phogram_map/sprites/
+          done
+          cp basemaps/LICENSE.md out/phogram_map/PROTOMAPS-LICENSE.md
+          du -sh out/* out/phogram_map/*
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: map-data
+          path: out/
+          compression-level: 0

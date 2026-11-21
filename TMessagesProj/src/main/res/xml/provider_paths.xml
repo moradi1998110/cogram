@@ -1,7 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  Folders another app may be handed one file from, and only when the user opens or shares that file:
+  the provider is not exported, and each file goes out with a one-time read grant.
+  Phogram keeps chats' files in its private storage (Telegram/ and the engine's attachments/, the cache),
+  so opening a file in another app or taking a picture with the camera app needs these entries.
+-->
 <paths>
     <external-path name="media" path="."/>
     <files-path name="logs" path="/logs/"/>
     <files-path name="cache" path="/cache/"/>
+    <files-path name="telegram_files" path="Telegram/"/>
+    <files-path name="chat_files" path="attachments/"/>
+    <cache-path name="private_cache" path="."/>
     <root-path name="external_files" path="/storage/" />
 </paths>

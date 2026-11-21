@@ -637,7 +637,7 @@ public class MainTabsActivity extends ViewPagerActivity implements NotificationC
         });
 
         ItemOptions o = ItemOptions.makeOptions(this, button);
-        if (UserConfig.getActivatedAccountsCount() < UserConfig.MAX_ACCOUNT_COUNT) {
+        if (UserConfig.canAddAccount() && UserConfig.getActivatedAccountsCount() < UserConfig.MAX_ACCOUNT_COUNT) {
             o.add(R.drawable.msg_addbot, getString(R.string.AddAccount), () -> {
                 int freeAccounts = 0;
                 Integer availableAccount = null;

@@ -26,7 +26,7 @@ final class XmppIdMap extends SQLiteOpenHelper {
     private final Map<String, Integer> messageIds = new HashMap<>();
 
     XmppIdMap(Context context) {
-        super(context, DATABASE, null, 6);
+        super(context, DATABASE, null, 7);
     }
 
     /** Forgets every id, so the next account starts with fresh message ids and pts. */
@@ -44,6 +44,7 @@ final class XmppIdMap extends SQLiteOpenHelper {
         createReads(db);
         createSendTables(db);
         createRoomReads(db);
+        createCaptions(db);
     }
 
     @Override
@@ -62,6 +63,55 @@ final class XmppIdMap extends SQLiteOpenHelper {
         }
         if (oldVersion < 6) {
             createRoomReads(db);
+        }
+        if (oldVersion < 7) {
+            createCaptions(db);
+        }
+    }
+
+    /**
+     * The captions of photos and files: the caption's own message (its uuid), the id of the file message it is
+     * attached to (our uuid for ours, the sender's stanza id for theirs), who wrote it, and its text, so the file
+     * shows its caption even before the caption's own message is out.
+     */
+    private static void createCaptions(SQLiteDatabase db) {
+        db.execSQL("CREATE TABLE captions (uuid TEXT PRIMARY KEY, target TEXT NOT NULL, sender TEXT NOT NULL, text TEXT NOT NULL)");
+        db.execSQL("CREATE INDEX captions_target ON captions (target)");
+    }
+
+    synchronized void putCaption(String uuid, String target, String sender, String text) {
+        ContentValues values = new ContentValues();
+        values.put("uuid", uuid);
+        values.put("target", target);
+        values.put("sender", sender);
+        values.put("text", text);
+        getWritableDatabase().insertWithOnConflict("captions", null, values, SQLiteDatabase.CONFLICT_REPLACE);
+    }
+
+    /** The caption a sender attached to this message, by any of its ids; null when none. */
+    synchronized String captionFor(String sender, String... targets) {
+        for (String target : targets) {
+            if (target == null) continue;
+            try (Cursor cursor = getReadableDatabase().rawQuery("SELECT text FROM captions WHERE target = ? AND sender = ? ORDER BY rowid DESC LIMIT 1",
+                    new String[]{target, sender})) {
+                if (cursor.moveToFirst()) return cursor.getString(0);
+            }
+        }
+        return null;
+    }
+
+    synchronized java.util.Set<String> captionUuids() {
+        java.util.HashSet<String> uuids = new java.util.HashSet<>();
+        try (Cursor cursor = getReadableDatabase().rawQuery("SELECT uuid FROM captions", null)) {
+            while (cursor.moveToNext()) uuids.add(cursor.getString(0));
+        }
+        return uuids;
+    }
+
+    /** {target, sender} of a caption message, or null when the message is no caption. */
+    synchronized String[] captionOf(String uuid) {
+        try (Cursor cursor = getReadableDatabase().rawQuery("SELECT target, sender FROM captions WHERE uuid = ?", new String[]{uuid})) {
+            return cursor.moveToFirst() ? new String[]{cursor.getString(0), cursor.getString(1)} : null;
         }
     }
 

@@ -1576,6 +1576,7 @@ public class BottomSheet extends Dialog implements BaseFragment.AttachedSheet {
     @Override
     public void show() {
         if (!AndroidUtilities.isSafeToShow(getContext())) return;
+        if (org.telegram.cogram.CogramGateway.isPaidSurface(this)) return;
         if (attachedFragment != null) {
             onCreateInternal();
         } else {

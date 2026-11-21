@@ -6,6 +6,11 @@ on:
     tags:
       - 'v*'
       - 'smoke*'
+      - 'psmoke*'
+      - 'usmoke*'
+
+permissions:
+  contents: read
 
 jobs:
   emulator:
@@ -73,13 +78,37 @@ jobs:
           key: ccache-x86_64-${{ env.NDK_VERSION }}-${{ github.run_id }}
           restore-keys: ccache-x86_64-${{ env.NDK_VERSION }}-
 
-      - name: Build x86_64 debug APK
+      # Releases (v*) and psmoke* tags check the production build type, the one the phones get (its logging calls
+      # are removed, so the route timings are missing from steps.txt); the other tags check the debug build.
+      # usmoke* tags check the updater: the test build is given the real update address, and its version code is
+      # below the latest release's, so the update sheet must open when the app starts.
+      - name: Build x86_64 APK
+        env:
+          GITLAB_API_URL: ${{ vars.GITLAB_API_URL || secrets.GITLAB_API_URL }}
+          GITLAB_RELEASES_PROJECT: ${{ vars.GITLAB_RELEASES_PROJECT || secrets.GITLAB_RELEASES_PROJECT }}
+          PHOGRAM_XMPP_HOST: ${{ vars.PHOGRAM_XMPP_HOST || secrets.PHOGRAM_XMPP_HOST }}
+          PHOGRAM_XMPP_PORT: ${{ vars.PHOGRAM_XMPP_PORT || secrets.PHOGRAM_XMPP_PORT }}
         run: |
           chmod +x gradlew
+          TASK=:TMessagesProj_App:assembleAfatDebug
+          EXTRA=""
+          case "$GITHUB_REF" in
+            refs/tags/v*|refs/tags/psmoke*) TASK=:TMessagesProj_App:assembleAfatRelease;;
+            refs/tags/usmoke*) EXTRA="-PPHOGRAM_UPDATE_URL=${GITLAB_API_URL%/}/projects/$GITLAB_RELEASES_PROJECT/packages/generic/phogram/latest/update.json";;
+          esac
+          # The weather on the routes, from the tiles beside the updates (weather.yml), so the trip checks it too.
+          if [ -n "$GITLAB_API_URL" ] && [ -n "$GITLAB_RELEASES_PROJECT" ]; then
+            EXTRA="$EXTRA -PPHOGRAM_WEATHER_URL=${GITLAB_API_URL%/}/projects/$GITLAB_RELEASES_PROJECT/packages/generic/phogram-weather/latest/index.json"
+          fi
+          if [ -n "$PHOGRAM_XMPP_HOST" ]; then
+            EXTRA="$EXTRA -PPHOGRAM_XMPP_HOST=$PHOGRAM_XMPP_HOST -PPHOGRAM_XMPP_PORT=${PHOGRAM_XMPP_PORT:-5222}"
+          fi
+          echo "Build: $TASK $EXTRA"
           ./gradlew --no-daemon --stacktrace \
             -Pandroid.injected.build.abi=x86_64 \
             -Pandroid.injected.testOnly=false \
-            :TMessagesProj_App:assembleAfatDebug
+            $EXTRA \
+            $TASK
 
       - name: Show cache statistics
         if: always()

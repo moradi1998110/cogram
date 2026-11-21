@@ -83,6 +83,35 @@ public class Resolver {
         return Collections.singletonList(result);
     }
 
+    /** Phogram: the app's own address for the server, tried after the DNS; empty for none. */
+    public static volatile String fallbackHost = "";
+
+    public static volatile int fallbackPort = XMPP_PORT_STARTTLS;
+
+    /**
+     * Phogram: a host name or IP address to try, for networks without DNS for the domain. Unlike {@link
+     * #fromHardCoded} it is not authenticated, so the certificate must still be the domain's.
+     */
+    public static List<Result> fromFallback(final String host, final int port) {
+        if (host == null || host.trim().isEmpty() || port < 1 || port > 65535) {
+            return Collections.emptyList();
+        }
+        try {
+            final String value = host.trim();
+            final Result result = new Result();
+            if (InetAddresses.isUriInetAddress(value)) {
+                result.ip = InetAddresses.forUriString(value);
+            } else {
+                result.hostname = DnsName.from(value);
+            }
+            result.port = port;
+            result.directTls = useDirectTls(port);
+            return Collections.singletonList(result);
+        } catch (final RuntimeException e) {
+            return Collections.emptyList();
+        }
+    }
+
     public static void checkDomain(final Jid jid) {
         DnsName.from(jid.getDomain());
     }

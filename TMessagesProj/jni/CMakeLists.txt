@@ -141,30 +141,7 @@ add_library(tlottie STATIC IMPORTED)
 set_target_properties(tlottie PROPERTIES
         IMPORTED_LOCATION ${CMAKE_HOME_DIRECTORY}/prebuild/lib/${ANDROID_ABI}/libtlottie.a)
 
-# Wallet Engine: matching Rust archive and generated UniFFI C++20 wrapper.
-set(WALLET_ENGINE_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/prebuild/include/wallet-engine)
-add_library(wallet_engine STATIC IMPORTED)
-set_target_properties(wallet_engine PROPERTIES
-        IMPORTED_LOCATION ${CMAKE_CURRENT_SOURCE_DIR}/prebuild/lib/${ANDROID_ABI}/libwallet_engine.a)
-
-add_library(wallet_engine_cpp STATIC
-        ${WALLET_ENGINE_INCLUDE_DIR}/wallet_engine.cpp
-        ${WALLET_ENGINE_INCLUDE_DIR}/gram_wallet.cpp)
-# Keep C++20 local: existing JNI sources include Breakpad's C++17-only headers.
-# Any new source that includes wallet_engine.hpp must also opt into C++20.
-target_compile_features(wallet_engine_cpp PRIVATE cxx_std_20)
-# Keep unused bindings discardable even when voip resets CMAKE_CXX_FLAGS below.
-target_compile_options(wallet_engine_cpp PRIVATE -ffunction-sections -fdata-sections)
-target_include_directories(wallet_engine_cpp PUBLIC ${WALLET_ENGINE_INCLUDE_DIR})
-target_link_libraries(wallet_engine_cpp PUBLIC wallet_engine dl m)
-
-# Compile the JNI bridge as C++20 without changing the legacy JNI sources.
-# An object library keeps its JNI entry points in the existing tmessages .so.
-add_library(wallet_engine_jni OBJECT wallet/WalletEngineBridge.cpp wallet/GramWalletAdapter.cpp)
-target_compile_features(wallet_engine_jni PRIVATE cxx_std_20)
-set_target_properties(wallet_engine_jni PROPERTIES POSITION_INDEPENDENT_CODE ON)
-target_link_libraries(wallet_engine_jni PRIVATE wallet_engine_cpp)
-
+# Phogram ships without Telegram's wallet engine (TON): its Rust archive, UniFFI wrapper and JNI bridge are not built.
 #sqlite
 add_library(sqlite STATIC
         sqlite/sqlite3.c)
@@ -175,37 +152,7 @@ set_target_properties(sqlite PROPERTIES
 target_compile_definitions(sqlite PUBLIC
         NULL=0 SOCKLEN_T=socklen_t LOCALE_NOT_USED ANDROID_NDK DISABLE_IMPORTGL AVOID_TABLES ANDROID_TILE_BASED_DECODE HAVE_STRCHRNUL=0 ANDROID_ARMV6_IDCT)
 
-#breakpad
-add_library(breakpad STATIC
-        third_party/breakpad/src/client/linux/crash_generation/crash_generation_client.cc
-        third_party/breakpad/src/client/linux/handler/exception_handler.cc
-        third_party/breakpad/src/client/linux/handler/minidump_descriptor.cc
-        third_party/breakpad/src/client/linux/log/log.cc
-        third_party/breakpad/src/client/linux/dump_writer_common/thread_info.cc
-        third_party/breakpad/src/client/linux/dump_writer_common/seccomp_unwinder.cc
-        third_party/breakpad/src/client/linux/dump_writer_common/ucontext_reader.cc
-        third_party/breakpad/src/client/linux/microdump_writer/microdump_writer.cc
-        third_party/breakpad/src/client/linux/minidump_writer/linux_dumper.cc
-        third_party/breakpad/src/client/linux/minidump_writer/linux_ptrace_dumper.cc
-        third_party/breakpad/src/client/linux/minidump_writer/minidump_writer.cc
-        third_party/breakpad/src/client/minidump_file_writer.cc
-        third_party/breakpad/src/common/android/breakpad_getcontext.S
-        third_party/breakpad/src/common/convert_UTF.c
-        third_party/breakpad/src/common/md5.cc
-        third_party/breakpad/src/common/string_conversion.cc
-        third_party/breakpad/src/common/linux/elfutils.cc
-        third_party/breakpad/src/common/linux/file_id.cc
-        third_party/breakpad/src/common/linux/guid_creator.cc
-        third_party/breakpad/src/common/linux/linux_libc_support.cc
-        third_party/breakpad/src/common/linux/memory_mapped_file.cc
-        third_party/breakpad/src/common/linux/safe_readlink.cc)
-set_target_properties(breakpad PROPERTIES ANDROID_ARM_MODE arm)
-set_property(SOURCE third_party/breakpad/src/common/android/breakpad_getcontext.S PROPERTY LANGUAGE C)
-target_include_directories(breakpad PUBLIC
-        third_party/breakpad/src/common/android/include
-        third_party/breakpad/src)
-
-
+# Phogram sends no native crash dumps, so Breakpad is not built.
 #voip
 include(${CMAKE_HOME_DIRECTORY}/voip/CMakeLists.txt)
 
@@ -226,7 +173,6 @@ add_library(${NATIVE_LIB} SHARED
         ffmpeg_jni.cc
         fast-edge.cpp
         genann.c
-        secureid_ocr.cpp
         tde2e/bridge.cpp
         tests.cpp
 )
@@ -298,8 +244,6 @@ target_link_libraries(${NATIVE_LIB}
         tgnet
         prisma
         tlottie
-        wallet_engine_jni
-        wallet_engine_cpp
         sqlite
         swscale
         avformat
@@ -322,7 +266,7 @@ target_link_libraries(${NATIVE_LIB}
         android
         OpenSLES
         cpufeatures
-        breakpad)
+        )
 
 #if (${ANDROID_ABI} STREQUAL "x86" OR ${ANDROID_ABI} STREQUAL "x86_64")
 #    target_link_libraries(${NATIVE_LIB}

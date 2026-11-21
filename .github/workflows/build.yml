@@ -1,11 +1,23 @@
 name: Build APK
 
+# A release is made on GitHub's Releases page ("Draft a new release", a new tag v..., the notes, Publish), which
+# builds it and sends it to the organization's GitLab; a v tag pushed with git still works the same way. A release
+# published for a tag pushed with git is built once (see concurrency). build* tags are test builds.
 on:
   workflow_dispatch:
+  release:
+    types: [published]
   push:
     tags:
       - 'v*'
       - 'build*'
+      - 'prod*'
+
+# One build per release: making a release on GitHub also creates its tag, and both start this workflow; the later
+# one replaces the earlier, so a release is built and sent to GitLab once.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: write
@@ -114,13 +126,58 @@ jobs:
             echo "PHOGRAM_KEY_ALIAS=$ALIAS"
           } >> "$GITHUB_ENV"
 
-      - name: Build arm64 debug APK
+      # Two kinds of build:
+      #  - production (tags v*, which go to the organization's phones, and prod* to try one first): the release
+      #    build type, not debuggable, without Telegram's debug flags and with the logging calls removed;
+      #  - test (build*): the debug build with its logs, for the emulator check and diagnosis, kept on GitHub.
+      # A release (v*) also gets a version code above every earlier one, as Android installs only higher codes over
+      # an installed app, its version name, and the address of update.json on the organization's GitLab. Other
+      # builds have no update address, so they never look for updates.
+      - name: Build arm64 APK
+        env:
+          GITLAB_API_URL: ${{ vars.GITLAB_API_URL || secrets.GITLAB_API_URL }}
+          GITLAB_RELEASES_PROJECT: ${{ vars.GITLAB_RELEASES_PROJECT || secrets.GITLAB_RELEASES_PROJECT }}
+          PHOGRAM_XMPP_HOST: ${{ vars.PHOGRAM_XMPP_HOST || secrets.PHOGRAM_XMPP_HOST }}
+          PHOGRAM_XMPP_PORT: ${{ vars.PHOGRAM_XMPP_PORT || secrets.PHOGRAM_XMPP_PORT }}
         run: |
           chmod +x gradlew
+          EXTRA=""
+          TASK=":TMessagesProj_App:assembleAfatDebug"
+          case "$GITHUB_REF" in
+            refs/tags/v*)
+              TASK=":TMessagesProj_App:assembleAfatRelease"
+              EXTRA="-PAPP_VERSION_CODE=$((8000 + GITHUB_RUN_NUMBER)) -PPHOGRAM_VERSION_NAME=${GITHUB_REF_NAME#v}"
+              if [ -n "$GITLAB_API_URL" ] && [ -n "$GITLAB_RELEASES_PROJECT" ]; then
+                EXTRA="$EXTRA -PPHOGRAM_UPDATE_URL=${GITLAB_API_URL%/}/projects/$GITLAB_RELEASES_PROJECT/packages/generic/phogram/latest/update.json"
+              fi
+              ;;
+            refs/tags/prod-v*)
+              # A release to try on one's own phones first (prod-v0.0.33-test1): installs over the latest release
+              # with its data, and later takes the real release as an update; it is never sent to GitLab.
+              TASK=":TMessagesProj_App:assembleAfatRelease"
+              EXTRA="-PAPP_VERSION_CODE=$((8000 + GITHUB_RUN_NUMBER)) -PPHOGRAM_VERSION_NAME=${GITHUB_REF_NAME#prod-v}"
+              if [ -n "$GITLAB_API_URL" ] && [ -n "$GITLAB_RELEASES_PROJECT" ]; then
+                EXTRA="$EXTRA -PPHOGRAM_UPDATE_URL=${GITLAB_API_URL%/}/projects/$GITLAB_RELEASES_PROJECT/packages/generic/phogram/latest/update.json"
+              fi
+              ;;
+            refs/tags/prod*)
+              TASK=":TMessagesProj_App:assembleAfatRelease"
+              ;;
+          esac
+          # Every build shows the weather on its routes, from the tiles beside the updates (weather.yml).
+          if [ -n "$GITLAB_API_URL" ] && [ -n "$GITLAB_RELEASES_PROJECT" ]; then
+            EXTRA="$EXTRA -PPHOGRAM_WEATHER_URL=${GITLAB_API_URL%/}/projects/$GITLAB_RELEASES_PROJECT/packages/generic/phogram-weather/latest/index.json"
+          fi
+          # Where the XMPP server is reached on networks without DNS for its domain (repository variables).
+          if [ -n "$PHOGRAM_XMPP_HOST" ]; then
+            EXTRA="$EXTRA -PPHOGRAM_XMPP_HOST=$PHOGRAM_XMPP_HOST -PPHOGRAM_XMPP_PORT=${PHOGRAM_XMPP_PORT:-5222}"
+          fi
+          echo "Build: $TASK $EXTRA"
           ./gradlew --no-daemon --stacktrace \
             -Pandroid.injected.build.abi=arm64-v8a \
             -Pandroid.injected.testOnly=false \
-            :TMessagesProj_App:assembleAfatDebug
+            $EXTRA \
+            $TASK
 
       - name: Show cache statistics
         if: always()
@@ -133,31 +190,134 @@ jobs:
           find TMessagesProj_App/build -type f -name '*.apk' -print
           APK=$(find TMessagesProj_App/build -type f -name '*.apk' | head -1)
           test -n "$APK"
-          cp "$APK" dist/cogram-arm64-debug.apk
+          cp "$APK" dist/phogram-arm64.apk
 
       # Package installers reject a testOnly APK as invalid, and the injected ABI option turns that flag on by default.
       - name: Check the APK can be installed
         run: |
           TOOLS="$ANDROID_HOME/build-tools/36.0.0"
-          "$TOOLS/apksigner" verify --verbose --print-certs dist/cogram-arm64-debug.apk | grep -v "Signer #1 public key"
-          "$TOOLS/aapt2" dump badging dist/cogram-arm64-debug.apk | head -3
-          if "$TOOLS/aapt2" dump xmltree --file AndroidManifest.xml dist/cogram-arm64-debug.apk | grep -E 'android:testOnly.*=(true|-1|0xffffffff)'; then
+          "$TOOLS/apksigner" verify --verbose --print-certs dist/phogram-arm64.apk | grep -v "Signer #1 public key"
+          "$TOOLS/aapt2" dump badging dist/phogram-arm64.apk | head -3
+          if "$TOOLS/aapt2" dump xmltree --file AndroidManifest.xml dist/phogram-arm64.apk | grep -E 'android:testOnly.*=(true|-1|0xffffffff)'; then
             echo "APK is marked testOnly"
             exit 1
           fi
+          # A production build must never be debuggable: anyone with a cable could then read the app's data.
+          case "$GITHUB_REF" in
+            refs/tags/v*|refs/tags/prod*)
+              if "$TOOLS/aapt2" dump xmltree --file AndroidManifest.xml dist/phogram-arm64.apk | grep -E 'android:debuggable.*=(true|-1|0xffffffff)'; then
+                echo "Production APK is debuggable"
+                exit 1
+              fi
+              echo "Production APK: not debuggable"
+              ;;
+          esac
+
+      # Native libraries are run from inside the APK, so on phones with 16 KB memory pages (some Android 15 and
+      # later) they must sit on 16 KB boundaries in the APK and be built with 16 KB segments; otherwise the app
+      # cannot load them there. The APK's own alignment is ours and fails the build; a library's segments come
+      # from its build and are reported for each library.
+      - name: Check 16 KB page alignment
+        run: |
+          TOOLS="$ANDROID_HOME/build-tools/36.0.0"
+          "$TOOLS/zipalign" -c -P 16 -v 4 dist/phogram-arm64.apk | grep -E "\.so|Verification" || true
+          "$TOOLS/zipalign" -c -P 16 4 dist/phogram-arm64.apk
+          READELF=$(ls "$ANDROID_HOME"/ndk/*/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf 2>/dev/null | head -1)
+          if [ -z "$READELF" ]; then
+            echo "::warning::llvm-readelf not found; the libraries' segment alignment was not checked"
+            exit 0
+          fi
+          rm -rf /tmp/apklibs && mkdir -p /tmp/apklibs && unzip -q -o dist/phogram-arm64.apk 'lib/*' -d /tmp/apklibs
+          for so in /tmp/apklibs/lib/*/*.so; do
+            ALIGN=$("$READELF" -lW "$so" | awk '$1=="LOAD" {print $NF}' | sort -u | tr '\n' ' ')
+            echo "$(basename "$so"): LOAD alignment $ALIGN"
+            for a in $ALIGN; do
+              if [ $((a)) -lt 16384 ]; then
+                echo "::warning::$(basename "$so") has $a segment alignment; phones with 16 KB pages cannot load it"
+              fi
+            done
+          done
+
+      # A production build's R8 mapping, kept on GitHub only, turns the shortened names of a crash report back.
+      - uses: actions/upload-artifact@v4
+        if: startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/prod')
+        with:
+          name: phogram-mapping
+          path: TMessagesProj_App/build/outputs/mapping/
+          retention-days: 90
+          if-no-files-found: warn
 
       - uses: actions/upload-artifact@v4
         with:
-          name: cogram-arm64-debug
-          path: dist/cogram-arm64-debug.apk
+          name: phogram-arm64
+          path: dist/phogram-arm64.apk
           retention-days: 14
           if-no-files-found: error
 
-      - name: Attach APK to a draft release
+      # A release made on GitHub's Releases page already exists: the APK is added to it. A tag pushed with git gets
+      # a draft release of its own.
+      - name: Attach APK to the release
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cp dist/cogram-arm64-debug.apk "phogram-${GITHUB_REF_NAME}-arm64-debug.apk"
-          gh release create "$GITHUB_REF_NAME" "phogram-${GITHUB_REF_NAME}-arm64-debug.apk" \
-            --draft --prerelease --title "$GITHUB_REF_NAME" --notes "Automated build of $GITHUB_SHA"
+          cp dist/phogram-arm64.apk "phogram-${GITHUB_REF_NAME}-arm64.apk"
+          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "phogram-${GITHUB_REF_NAME}-arm64.apk" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "phogram-${GITHUB_REF_NAME}-arm64.apk" \
+              --draft --prerelease --title "$GITHUB_REF_NAME" --notes "Automated build of $GITHUB_SHA"
+          fi
+
+      # The release goes to the releases project on the organization's GitLab, where the app finds it: the APK as a
+      # generic package of its version, then update.json (version, code, SHA-256, what is new) as the "latest" one.
+      # What is new is the tag's message; a line "[required]" in it makes every older version update before going on.
+      - name: Publish the release to GitLab
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GITLAB_API_URL: ${{ vars.GITLAB_API_URL || secrets.GITLAB_API_URL }}
+          GITLAB_RELEASES_PROJECT: ${{ vars.GITLAB_RELEASES_PROJECT || secrets.GITLAB_RELEASES_PROJECT }}
+          GITLAB_RELEASES_TOKEN: ${{ secrets.GITLAB_RELEASES_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -z "$GITLAB_API_URL" ] || [ -z "$GITLAB_RELEASES_PROJECT" ] || [ -z "$GITLAB_RELEASES_TOKEN" ]; then
+            echo "The GitLab releases project is not set up; the release stays on GitHub only."
+            exit 0
+          fi
+          API="${GITLAB_API_URL%/}/projects/$GITLAB_RELEASES_PROJECT/packages/generic/phogram"
+          VERSION="${GITHUB_REF_NAME#v}"
+          APK="phogram-$VERSION.apk"
+          cp dist/phogram-arm64.apk "$APK"
+          CODE=$("$ANDROID_HOME/build-tools/36.0.0/aapt2" dump badging "$APK" | sed -n "s/.*versionCode='\([0-9]*\)'.*/\1/p" | head -1)
+          SHA=$(sha256sum "$APK" | cut -d' ' -f1)
+          # What is new, for the people updating: the text of the release written on GitHub's Releases page, else its
+          # title (when it is not just the version), else the message of a tag made with git (-a). Never a commit
+          # message: a tag made on the Releases page has none of its own, and git would answer with the commit's.
+          NOTES=$(gh release view "$GITHUB_REF_NAME" --json body --jq .body 2>/dev/null | tr -d '\r' || true)
+          case "$NOTES" in "Automated build of"*) NOTES="";; esac
+          if [ -z "$NOTES" ]; then
+            TITLE=$(gh release view "$GITHUB_REF_NAME" --json name --jq .name 2>/dev/null || true)
+            case "$TITLE" in ""|"$GITHUB_REF_NAME"|"${GITHUB_REF_NAME#v}") ;; *) NOTES="$TITLE";; esac
+          fi
+          if [ -z "$NOTES" ]; then
+            git fetch -q --depth=1 origin "+refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME" || true
+            if [ "$(git cat-file -t "refs/tags/$GITHUB_REF_NAME" 2>/dev/null)" = "tag" ]; then
+              NOTES=$(git tag -l --format='%(contents)' "$GITHUB_REF_NAME" | sed '/^-----BEGIN PGP/,$d')
+            fi
+          fi
+          MIN=0
+          if printf '%s' "$NOTES" | grep -q '^\[required\]'; then MIN=$CODE; fi
+          NOTES=$(printf '%s\n' "$NOTES" | grep -v '^\[required\]')
+          echo "Version $VERSION, code $CODE, SHA-256 $SHA, minimum $MIN"
+          curl --fail-with-body -sS -H "PRIVATE-TOKEN: $GITLAB_RELEASES_TOKEN" --upload-file "$APK" "$API/$VERSION/$APK"
+          # The APK keeps its code and libraries uncompressed, so phones store them once; gzipped it is about half
+          # the download. Versions that know file_gz_url fetch it and check the unpacked APK's SHA-256; older
+          # versions keep fetching file_url.
+          gzip -9 -n -c "$APK" > "$APK.gz"
+          ls -l "$APK" "$APK.gz"
+          curl --fail-with-body -sS -H "PRIVATE-TOKEN: $GITLAB_RELEASES_TOKEN" --upload-file "$APK.gz" "$API/$VERSION/$APK.gz"
+          jq -n --arg version "$VERSION" --argjson code "$CODE" --arg file "$API/$VERSION/$APK" --arg gz "$API/$VERSION/$APK.gz" \
+            --arg sha "$SHA" --argjson min "$MIN" --arg notes "$NOTES" \
+            '{version: $version, version_code: $code, file_url: $file, file_gz_url: $gz, sha256: $sha, min_version_code: $min, changelog: $notes}' > update.json
+          cat update.json
+          curl --fail-with-body -sS -H "PRIVATE-TOKEN: $GITLAB_RELEASES_TOKEN" --upload-file update.json "$API/latest/update.json"

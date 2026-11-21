@@ -1,0 +1,63 @@
+name: Voice prompts
+
+# Generates the navigation guidance phrases (.github/voice/phrases.json) with Piper, the open-source text-to-speech
+# (GPL-3.0, run here only, never shipped), in Piper's voices for Jordanian Arabic (kareem), Persian (amir, CC0) and
+# English (joe, CC0), and leaves them as Ogg Opus files in an artifact, which are then added to the app's assets.
+# Started by pushing a tag that starts with "voice".
+on:
+  push:
+    tags:
+      - 'voice*'
+
+permissions:
+  contents: read
+
+jobs:
+  phrases:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Piper and ffmpeg
+        run: |
+          python -m pip install --quiet piper-tts==1.8.0
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg > /dev/null
+
+      - name: Speak every phrase in every voice
+        run: |
+          python - <<'EOF'
+          import json, os, subprocess, urllib.request, wave
+          from piper import PiperVoice
+
+          base = 'https://huggingface.co/rhasspy/piper-voices/resolve/main/'
+          spec = json.load(open('.github/voice/phrases.json', encoding='utf-8'))
+          os.makedirs('voices', exist_ok=True)
+          for lang, path in spec['voices'].items():
+              model = f'voices/{lang}.onnx'
+              for suffix in ('.onnx', '.onnx.json'):
+                  urllib.request.urlretrieve(base + path + suffix, f'voices/{lang}{suffix}')
+              voice = PiperVoice.load(model)
+              out = f'phogram_voice/{lang}'
+              os.makedirs(out, exist_ok=True)
+              for key, texts in spec['phrases'].items():
+                  wav = f'/tmp/{lang}-{key}.wav'
+                  with wave.open(wav, 'wb') as file:
+                      voice.synthesize_wav(texts[lang], file)
+                  # Mono Opus at 32 kbit/s: clear speech in a few kilobytes; loudness evened out across phrases.
+                  subprocess.run(['ffmpeg', '-loglevel', 'error', '-y', '-i', wav,
+                                  '-af', 'loudnorm=I=-16:TP=-1.5:LRA=11,silenceremove=start_periods=1:start_threshold=-50dB',
+                                  '-ac', '1', '-c:a', 'libopus', '-b:a', '32k', f'{out}/{key}.ogg'], check=True)
+              print(lang, len(os.listdir(out)), 'phrases')
+          EOF
+          du -sh phogram_voice/*
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: phogram-voice
+          path: phogram_voice

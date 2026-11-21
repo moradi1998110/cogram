@@ -938,7 +938,8 @@ public class AndroidUtilities {
 
     public static File getLogsDir() {
         try {
-            if (Environment.MEDIA_MOUNTED.equals(Environment.getExternalStorageState())) {
+            // Logs can name chats and people, so Phogram keeps them in its private storage.
+            if (!org.telegram.cogram.CogramGateway.ENABLED && Environment.MEDIA_MOUNTED.equals(Environment.getExternalStorageState())) {
                 File path = ApplicationLoader.applicationContext.getExternalFilesDir(null);
                 File dir = new File(path.getAbsolutePath() + "/logs");
                 dir.mkdirs();
@@ -2617,6 +2618,13 @@ public class AndroidUtilities {
     }
 
     public static File getCacheDir() {
+        if (org.telegram.cogram.CogramGateway.ENABLED) {
+            // Phogram's cache holds chats' pictures and pieces of videos being played, so it stays in
+            // the app's private storage rather than Android/data or a memory card.
+            File internal = ApplicationLoader.applicationContext.getCacheDir();
+            internal.mkdirs();
+            return internal;
+        }
         String state = null;
         try {
             state = Environment.getExternalStorageState();
@@ -3650,6 +3658,8 @@ public class AndroidUtilities {
 
     private static File getAlbumDir(boolean secretChat) {
         if (
+            // Phogram never puts what the camera takes in a public folder; saving to the gallery is the user's choice.
+            org.telegram.cogram.CogramGateway.ENABLED ||
             secretChat ||
             !BuildVars.NO_SCOPED_STORAGE ||
             (

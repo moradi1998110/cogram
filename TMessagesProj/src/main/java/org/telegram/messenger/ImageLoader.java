@@ -2414,7 +2414,38 @@ public class ImageLoader {
         }
     }
 
+    /**
+     * Phogram keeps Telegram's media in the app's private storage, never in Android/data, Android/media
+     * or on a memory card: there other apps (Android 10 and older), a computer on USB or anyone holding
+     * the card could read it. No folder is public either, so nothing reaches the gallery by itself.
+     */
+    private SparseArray<File> createPrivateMediaPaths() {
+        SparseArray<File> mediaDirs = new SparseArray<>();
+        File cachePath = AndroidUtilities.getCacheDir();
+        cachePath.mkdirs();
+        AndroidUtilities.createEmptyFile(new File(cachePath, ".nomedia"));
+        mediaDirs.put(FileLoader.MEDIA_DIR_CACHE, cachePath);
+        File telegramPath = new File(ApplicationLoader.applicationContext.getFilesDir(), "Telegram");
+        int[] types = {FileLoader.MEDIA_DIR_IMAGE, FileLoader.MEDIA_DIR_VIDEO, FileLoader.MEDIA_DIR_AUDIO,
+                FileLoader.MEDIA_DIR_DOCUMENT, FileLoader.MEDIA_DIR_FILES, FileLoader.MEDIA_DIR_STORIES};
+        String[] names = {"Telegram Images", "Telegram Video", "Telegram Audio",
+                "Telegram Documents", "Telegram Files", "Telegram Stories"};
+        for (int i = 0; i < types.length; i++) {
+            File dir = new File(telegramPath, names[i]);
+            if (dir.isDirectory() || dir.mkdirs()) {
+                mediaDirs.put(types[i], dir);
+            }
+        }
+        if (BuildVars.LOGS_ENABLED) {
+            FileLog.d("cogram: private media paths under " + telegramPath + ", cache " + cachePath);
+        }
+        return mediaDirs;
+    }
+
     public SparseArray<File> createMediaPaths() {
+        if (org.telegram.cogram.CogramGateway.ENABLED) {
+            return createPrivateMediaPaths();
+        }
         SparseArray<File> mediaDirs = new SparseArray<>();
         File cachePath = AndroidUtilities.getCacheDir();
         if (!cachePath.isDirectory()) {

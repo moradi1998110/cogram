@@ -100,6 +100,12 @@ public class Message extends AbstractEntity
     public static final String ERROR_MESSAGE_CANCELLED = "eu.siacs.conversations.cancelled";
 
     public boolean markable = false;
+
+    /**
+     * Phogram: the id of the message this one is attached to (XEP-0367), set on a caption before it is sent; not
+     * stored, the app keeps the link.
+     */
+    public String attachTo;
     protected String conversationUuid;
     protected Jid counterpart;
     protected Jid trueCounterpart;
@@ -154,7 +160,7 @@ public class Message extends AbstractEntity
                 conversation.getAddress() == null ? null : conversation.getAddress().asBareJid(),
                 null,
                 body,
-                System.currentTimeMillis(),
+                eu.siacs.conversations.utils.ServerClock.now(),
                 encryption,
                 status,
                 TYPE_TEXT,
@@ -187,7 +193,7 @@ public class Message extends AbstractEntity
                 conversation.getAddress() == null ? null : conversation.getAddress().asBareJid(),
                 null,
                 null,
-                System.currentTimeMillis(),
+                eu.siacs.conversations.utils.ServerClock.now(),
                 Message.ENCRYPTION_NONE,
                 status,
                 type,

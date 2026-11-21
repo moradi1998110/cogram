@@ -3823,7 +3823,7 @@ public class XmppConnectionService extends Service {
 
     public void resendFailedMessages(final Message message, final boolean forceP2P) {
         this.mNotificationService.clearFailedDelivery(message);
-        message.setTime(System.currentTimeMillis());
+        message.setTime(eu.siacs.conversations.utils.ServerClock.now());
         markMessage(message, Message.STATUS_WAITING);
         this.sendMessage(message, true, false, forceP2P);
         if (message.getConversation() instanceof Conversation c) {

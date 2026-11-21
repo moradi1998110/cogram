@@ -1,0 +1,74 @@
+name: Check the GitLab releases project
+
+# Checks, without making a release, that the release workflow can publish to the GitLab releases project and that
+# phones can then read from it without signing in: uploads a small file as the generic package "phogram/check",
+# downloads it back with no token, then deletes that package. Started by pushing a tag that starts with "updcheck".
+on:
+  push:
+    tags:
+      - 'updcheck*'
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      GITLAB_API_URL: ${{ vars.GITLAB_API_URL || secrets.GITLAB_API_URL }}
+      GITLAB_RELEASES_PROJECT: ${{ vars.GITLAB_RELEASES_PROJECT || secrets.GITLAB_RELEASES_PROJECT }}
+      GITLAB_RELEASES_TOKEN: ${{ secrets.GITLAB_RELEASES_TOKEN }}
+    steps:
+      - name: Settings present
+        run: |
+          missing=0
+          for name in GITLAB_API_URL GITLAB_RELEASES_PROJECT GITLAB_RELEASES_TOKEN; do
+            if [ -z "${!name}" ]; then echo "MISSING: $name"; missing=1; else echo "set: $name"; fi
+          done
+          exit $missing
+
+      - name: Server and TLS
+        run: |
+          HOST=$(printf '%s' "$GITLAB_API_URL" | sed -E 's#^https://([^/]+).*#\1#')
+          for v in tls1_2 tls1_3; do
+            # Phones before Android 10 speak TLS 1.2 at most, so a server refusing it cannot serve them.
+            echo | timeout 20 openssl s_client -connect "$HOST:443" -servername "$HOST" -$v > /tmp/tls.txt 2>&1 || true
+            if grep -q "Cipher is (NONE)" /tmp/tls.txt || ! grep -q "Cipher is" /tmp/tls.txt; then
+              echo "$v: refused"
+            else
+              echo "$v: accepted ($(grep -m1 'Cipher is' /tmp/tls.txt))"
+            fi
+          done
+          echo | openssl s_client -connect "$HOST:443" -servername "$HOST" -showcerts 2>/dev/null | grep -E "^ *[0-9] s:|^ *i:" || true
+
+      - name: Upload with the token
+        run: |
+          API="${GITLAB_API_URL%/}/projects/$GITLAB_RELEASES_PROJECT"
+          echo "phogram update check $(date -u +%FT%TZ)" > check.txt
+          code=$(curl -sS -o upload.txt -w '%{http_code}' -H "PRIVATE-TOKEN: $GITLAB_RELEASES_TOKEN" \
+            --upload-file check.txt "$API/packages/generic/phogram/check/check.txt")
+          echo "upload: HTTP $code"; cat upload.txt; echo
+          case "$code" in 2*) ;; *) exit 1;; esac
+
+      - name: Download without a token, as a phone does
+        run: |
+          API="${GITLAB_API_URL%/}/projects/$GITLAB_RELEASES_PROJECT"
+          code=$(curl -sS -o got.txt -w '%{http_code}' "$API/packages/generic/phogram/check/check.txt")
+          echo "anonymous download: HTTP $code"
+          head -c 200 got.txt; echo
+          case "$code" in
+            200) echo "OK: phones can read the releases without signing in." ;;
+            *) echo "FAILED: the package registry does not allow anonymous downloads (check 'Allow anyone to pull from Package Registry')."; echo "ANON_FAILED=1" >> "$GITHUB_ENV" ;;
+          esac
+
+      - name: Remove the check package
+        if: always()
+        run: |
+          API="${GITLAB_API_URL%/}/projects/$GITLAB_RELEASES_PROJECT"
+          ids=$(curl -sS -H "PRIVATE-TOKEN: $GITLAB_RELEASES_TOKEN" "$API/packages?package_type=generic&package_name=phogram&per_page=100" \
+            | jq -r '.[] | select(.version == "check") | .id' 2>/dev/null || true)
+          for id in $ids; do
+            curl -sS -o /dev/null -w "delete $id: HTTP %{http_code}\n" -X DELETE -H "PRIVATE-TOKEN: $GITLAB_RELEASES_TOKEN" "$API/packages/$id"
+          done
+          [ -z "${ANON_FAILED:-}" ]

@@ -2,6 +2,8 @@
 buildscript {
     repositories {
         mavenCentral()
+        // The official mirror of Maven Central, for when Maven Central answers 404 to GitHub's runners.
+        maven { url 'https://maven-central.storage-download.googleapis.com/maven2/' }
         google()
         maven { url 'https://developer.huawei.com/repo/' }
         // The scan plugins below are published on the Gradle Plugin Portal only.
@@ -14,8 +16,8 @@ buildscript {
         classpath 'com.google.gms:google-services:4.3.15'
         classpath 'com.huawei.agconnect:agcp:1.9.1.301'
         classpath 'com.google.firebase:firebase-crashlytics-gradle:2.9.0'
-        // OsmAnd's engine (phase 0 of the Maps tab) needs its own Kotlin and plugins; see settings.gradle.
-        if (file('osmand/android/OsmAnd').exists()) {
+        // OsmAnd's core library (the Maps tab's search and routing) needs its own Kotlin and plugins; see settings.gradle.
+        if (file('osmand/android/OsmAnd-java').exists()) {
             classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:2.1.20"
             classpath "org.jetbrains.kotlin:compose-compiler-gradle-plugin:2.1.20"
             classpath "org.jetbrains.kotlin:kotlin-serialization:2.1.20"
@@ -40,35 +42,20 @@ if (gradle.ext.has('osmand')) {
     // OsmAnd's scripts use the Download task type this plugin publishes from the root project.
     apply plugin: 'de.undercouch.download'
 
-    // OsmAnd's libraries come from its own binary store and from JitPack.
+    // OsmAnd's core library and its shared module take their libraries from Google's and Maven Central's stores.
     allprojects {
         repositories {
-            ivy {
-                name = "OsmAndBinariesIvy"
-                url = "https://builder.osmand.net"
-                patternLayout {
-                    artifact "ivy/[organisation]/[module]/[revision]/[artifact]-[revision].[ext]"
-                }
-                metadataSources { artifact() }
-            }
             google()
             mavenCentral()
-            maven { url "https://jitpack.io" }
+            maven { url 'https://maven-central.storage-download.googleapis.com/maven2/' }
         }
     }
 
-    // One OsmAnd variant per build: its legacy (non-OpenGL) renderer, for the ABI the build is for.
-    def injectedAbi = (findProperty('android.injected.build.abi') ?: '').toString()
-    def osmandAbi = injectedAbi.contains('arm64') ? 'arm64' : injectedAbi.contains('x86') ? 'x86' : 'fat'
-    def osmandProjects = [':OsmAnd', ':OsmAnd-java', ':OsmAnd-api', ':OsmAnd-shared']
+    def osmandProjects = [':OsmAnd-java', ':OsmAnd-shared']
     subprojects { p ->
         if (osmandProjects.contains(p.path)) return
         ['com.android.application', 'com.android.library'].each { id ->
             p.plugins.withId(id) {
-                p.android.defaultConfig {
-                    missingDimensionStrategy 'coreversion', 'legacy'
-                    missingDimensionStrategy 'abi', osmandAbi
-                }
                 // OsmAnd supports Android 7 and newer; this wins over the minSdkVersion the module sets later.
                 p.androidComponents.beforeVariants(p.androidComponents.selector().all()) { v -> v.minSdk = 24 }
             }
@@ -81,38 +68,6 @@ if (gradle.ext.has('osmand')) {
             // The app takes a copy of OsmAnd's XML parser without the XmlPull interfaces Android already has
             // (see fetch-osmand.sh and the app module).
             exclude group: 'net.sf.kxml', module: 'kxml2'
-        }
-    }
-
-    // OsmAnd's native renderer is built for the device's ABI only, not for all four.
-    project(':OsmAnd') {
-        // OsmAnd's app build names the app per flavor; its library build leaves the name to the host app.
-        plugins.withId('com.android.library') {
-            android.defaultConfig.resValue 'string', 'app_name', 'Phogram'
-        }
-        // OsmAnd compiles its Java for 17 and leaves Kotlin on the JDK's own level, which on Phogram's CI is 21.
-        tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinJvmCompile).configureEach {
-            compilerOptions.jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
-        }
-        tasks.configureEach { t ->
-            // OsmAnd's script (written for Android plugin 8.10) orders its icon copy before the resource tasks
-            // it knows; newer resource tasks, such as navigation resources, read those icons too.
-            if (t.name != 'copyIcons' && t.name.endsWith('Resources') && !t.name.startsWith('collect')) {
-                t.dependsOn('copyIcons')
-            }
-            // OsmAnd's native renderer is built into the folder its native libraries are collected from, so the
-            // collection has to wait for it; otherwise the APK ships without it and OsmAnd falls back to Java.
-            if (t.name.startsWith('merge') && t.name.endsWith('JniLibFolders')) {
-                t.dependsOn('cleanupDuplicatesInCore')
-            }
-            // Phogram does not ship OsmAnd's world map (see fetch-osmand.sh); the Maps tab downloads it.
-            if (t.name == 'downloadWorldMiniBasemap') {
-                t.enabled = false
-            }
-            if (t.name == 'buildOsmAndCore') {
-                if (injectedAbi.contains('arm64')) t.environment('ARM64_ONLY', '1')
-                else if (injectedAbi.contains('x86_64')) t.environment('X86_64_ONLY', '1')
-            }
         }
     }
 }

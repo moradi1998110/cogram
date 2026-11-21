@@ -63,6 +63,65 @@ public final class CogramGateway {
         return preferences().getBoolean(KEY_DEMO, false);
     }
 
+    /** Packages whose pages and sheets are about Premium, Stars, Gram (TON), gifts, boosts or Business. */
+    private static final String[] PAID_PACKAGES = {
+            "org.telegram.ui.Stars.",
+            "org.telegram.ui.TON.",
+            "org.telegram.ui.Gifts.",
+            "org.telegram.ui.Wallet.",
+            "org.telegram.ui.Business.",
+            "org.telegram.ui.Components.Premium.",
+    };
+    private static final String[] PAID_CLASSES = {
+            "org.telegram.ui.PremiumPreviewFragment",
+            "org.telegram.ui.BoostsActivity",
+            "org.telegram.ui.RevenueSharingAdsInfoBottomSheet",
+    };
+    /** Kept: it also tells about limits that have nothing to do with Premium, such as too many channels. */
+    private static final String LIMIT_SHEET = "org.telegram.ui.Components.Premium.LimitReachedBottomSheet";
+
+    /**
+     * Whether a page or sheet about Premium, Stars, Gram (TON), gifts, boosts or Business is about to
+     * open. Phogram has no Telegram servers to pay or be paid through, so none of them opens, from
+     * whichever button or link asked; its own class and the classes it extends are checked, as callers
+     * often open such a sheet as an anonymous subclass.
+     */
+    public static boolean isPaidSurface(Object surface) {
+        if (!ENABLED || surface == null) {
+            return false;
+        }
+        for (Class<?> type = surface.getClass(); type != null && type != Object.class; type = type.getSuperclass()) {
+            String name = type.getName();
+            if (name.startsWith(LIMIT_SHEET)) {
+                return false;
+            }
+            for (String paid : PAID_CLASSES) {
+                if (name.equals(paid) || name.startsWith(paid + "$")) {
+                    return true;
+                }
+            }
+            for (String paid : PAID_PACKAGES) {
+                if (name.startsWith(paid)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The XMPP engine keeps every chat's file in the app's private storage (files/attachments), out of
+     * reach of other apps, a computer on USB and backups. Telegram shows that copy itself instead of
+     * keeping a second one, so only the engine may delete it.
+     */
+    public static boolean isEngineFile(java.io.File file) {
+        if (!ENABLED || file == null) {
+            return false;
+        }
+        String engineDir = new java.io.File(ApplicationLoader.applicationContext.getFilesDir(), "attachments").getAbsolutePath() + java.io.File.separator;
+        return file.getAbsolutePath().startsWith(engineDir);
+    }
+
     public static boolean needsLogin() {
         return ENABLED && !isDemoSelected() && !XmppBackend.hasAccount(ApplicationLoader.applicationContext);
     }
@@ -388,6 +447,10 @@ public final class CogramGateway {
             return result;
         } else if (request instanceof TLRPC.TL_messages_sendMedia) {
             return sendMedia((TLRPC.TL_messages_sendMedia) request);
+        } else if (request instanceof TLRPC.TL_messages_uploadMedia) {
+            return uploadMedia((TLRPC.TL_messages_uploadMedia) request);
+        } else if (request instanceof TLRPC.TL_messages_sendMultiMedia) {
+            return sendMultiMedia((TLRPC.TL_messages_sendMultiMedia) request);
         } else if (request instanceof TL_account.updateStatus) {
             // The engine keeps our presence itself, from whether the app is in the foreground.
             return new TLRPC.TL_boolTrue();
@@ -784,6 +847,11 @@ public final class CogramGateway {
             String uri = geoUri(media);
             return uri == null ? null : backend.sendText(peerId(request.peer), uri, 0, request.random_id);
         }
+        long sentBefore = mediaRef(media);
+        if (sentBefore != 0) {
+            // A picture sent before, which Telegram names instead of uploading it again.
+            return XmppBackend.isMediaId(sentBefore) ? backend.resendMedia(peerId(request.peer), sentBefore, request.random_id, request.message) : null;
+        }
         boolean photo = media instanceof TLRPC.TL_inputMediaUploadedPhoto;
         if (!photo && !(media instanceof TLRPC.TL_inputMediaUploadedDocument) || media.file == null) {
             return null;
@@ -796,7 +864,158 @@ public final class CogramGateway {
         if (mime == null || mime.isEmpty()) {
             mime = "application/octet-stream";
         }
-        return backend.sendFile(peerId(request.peer), file, mime, photo ? new ArrayList<>() : media.attributes, photo, request.random_id);
+        return backend.sendFile(peerId(request.peer), file, mime, photo ? new ArrayList<>() : media.attributes, photo, request.random_id, request.message);
+    }
+
+    /** The id of a photo or file Telegram names instead of uploading, or 0. */
+    private static long mediaRef(TLRPC.InputMedia media) {
+        if (media instanceof TLRPC.TL_inputMediaPhoto && ((TLRPC.TL_inputMediaPhoto) media).id != null) {
+            return ((TLRPC.TL_inputMediaPhoto) media).id.id;
+        }
+        if (media instanceof TLRPC.TL_inputMediaDocument && ((TLRPC.TL_inputMediaDocument) media).id != null) {
+            return ((TLRPC.TL_inputMediaDocument) media).id.id;
+        }
+        return 0;
+    }
+
+    // Albums: Telegram first uploads each photo or file of the album (messages.uploadMedia), then sends them together
+    // (messages.sendMultiMedia). An uploaded one waits here under an id of its own until the album is sent; each then
+    // goes out as a file message of its own, as Conversations sends several files, with its caption.
+
+    private static final class AlbumItem {
+        final File file;
+        final String mime;
+        final ArrayList<TLRPC.DocumentAttribute> attributes;
+        final boolean photo;
+
+        AlbumItem(File file, String mime, ArrayList<TLRPC.DocumentAttribute> attributes, boolean photo) {
+            this.file = file;
+            this.mime = mime;
+            this.attributes = attributes;
+            this.photo = photo;
+        }
+    }
+
+    private final java.util.Map<Long, AlbumItem> albumItems = new java.util.concurrent.ConcurrentHashMap<>();
+
+    private TLObject uploadMedia(TLRPC.TL_messages_uploadMedia request) {
+        TLRPC.InputMedia media = request.media;
+        boolean photo = media instanceof TLRPC.TL_inputMediaUploadedPhoto;
+        if (!photo && !(media instanceof TLRPC.TL_inputMediaUploadedDocument) || media.file == null) {
+            return null;
+        }
+        File file = uploads.takeFile(media.file.id);
+        if (file == null) {
+            return null;
+        }
+        String mime = photo ? "image/jpeg" : media.mime_type;
+        if (mime == null || mime.isEmpty()) {
+            mime = "application/octet-stream";
+        }
+        // Kept clear of the engine's media ids and of the reaction documents, so it is never taken for either.
+        long id = Utilities.random.nextLong() & ((1L << 61) - 1);
+        ArrayList<TLRPC.DocumentAttribute> attributes = new ArrayList<>();
+        if (!photo && media.attributes != null) attributes.addAll(media.attributes);
+        albumItems.put(id, new AlbumItem(file, mime, attributes, photo));
+        // Telegram reads only the id from this answer, to name the item in the album it sends next.
+        if (photo) {
+            TLRPC.TL_photo tlPhoto = new TLRPC.TL_photo();
+            tlPhoto.id = id;
+            tlPhoto.access_hash = id;
+            tlPhoto.file_reference = new byte[0];
+            tlPhoto.date = now();
+            TLRPC.TL_messageMediaPhoto result = new TLRPC.TL_messageMediaPhoto();
+            result.photo = tlPhoto;
+            result.flags = TLObject.FLAG_0;
+            return result;
+        }
+        TLRPC.TL_document document = new TLRPC.TL_document();
+        document.id = id;
+        document.access_hash = id;
+        document.file_reference = new byte[0];
+        document.date = now();
+        document.mime_type = mime;
+        document.size = file.length();
+        document.attributes.addAll(attributes);
+        TLRPC.TL_messageMediaDocument result = new TLRPC.TL_messageMediaDocument();
+        result.document = document;
+        result.flags = TLObject.FLAG_0;
+        return result;
+    }
+
+    /** The sent album stays one album in the chat, as Telegram drew it while it was going out. */
+    private static void groupAlbum(TLRPC.TL_updates updates) {
+        long group = Utilities.random.nextLong() & Long.MAX_VALUE;
+        for (TLRPC.Update update : updates.updates) {
+            TLRPC.Message message = update instanceof TL_update.TL_updateNewMessage ? ((TL_update.TL_updateNewMessage) update).message
+                    : update instanceof TL_update.TL_updateNewChannelMessage ? ((TL_update.TL_updateNewChannelMessage) update).message : null;
+            if (message != null) {
+                message.grouped_id = group;
+                message.flags |= 131072;
+            }
+        }
+    }
+
+    private TLObject sendMultiMedia(TLRPC.TL_messages_sendMultiMedia request) {
+        long peer = peerId(request.peer);
+        TLRPC.TL_updates all = new TLRPC.TL_updates();
+        all.date = now();
+        ArrayList<DeferredReply> waiting = new ArrayList<>();
+        for (TLRPC.TL_inputSingleMedia single : request.multi_media) {
+            long id = mediaRef(single.media);
+            AlbumItem item = albumItems.remove(id);
+            TLObject sent;
+            if (item != null) {
+                sent = backend.sendFile(peer, item.file, item.mime, item.attributes, item.photo, single.random_id, single.message);
+            } else if (XmppBackend.isMediaId(id)) {
+                // A picture of the album sent before, which Telegram names instead of uploading it again.
+                sent = backend.resendMedia(peer, id, single.random_id, single.message);
+            } else {
+                return null;
+            }
+            if (sent instanceof DeferredReply) {
+                waiting.add((DeferredReply) sent);
+            } else if (sent instanceof TLRPC.TL_updates) {
+                all.updates.addAll(((TLRPC.TL_updates) sent).updates);
+            } else {
+                return null;
+            }
+        }
+        if (waiting.isEmpty()) {
+            groupAlbum(all);
+            return all;
+        }
+        // One answer for the album once every item is out, with all their updates, as Telegram's server gives it.
+        DeferredReply album = new DeferredReply();
+        java.util.concurrent.atomic.AtomicInteger left = new java.util.concurrent.atomic.AtomicInteger(waiting.size());
+        java.util.concurrent.atomic.AtomicBoolean failed = new java.util.concurrent.atomic.AtomicBoolean();
+        for (DeferredReply item : waiting) {
+            item.attach((response, error) -> {
+                synchronized (all) {
+                    if (response instanceof TLRPC.TL_updates) {
+                        all.updates.addAll(((TLRPC.TL_updates) response).updates);
+                        all.users.addAll(((TLRPC.TL_updates) response).users);
+                        all.chats.addAll(((TLRPC.TL_updates) response).chats);
+                    } else if (response instanceof TLRPC.Updates && !(response instanceof TLRPC.TL_updates)) {
+                        failed.set(true);
+                    } else if (error != null) {
+                        failed.set(true);
+                    }
+                }
+                if (left.decrementAndGet() == 0) {
+                    groupAlbum(all);
+                    if (failed.get() && all.updates.isEmpty()) {
+                        TLRPC.TL_error fail = new TLRPC.TL_error();
+                        fail.code = 400;
+                        fail.text = error != null ? error.text : "MEDIA_EMPTY";
+                        album.complete(null, fail);
+                    } else {
+                        album.complete(all, null);
+                    }
+                }
+            });
+        }
+        return album;
     }
 
     /**

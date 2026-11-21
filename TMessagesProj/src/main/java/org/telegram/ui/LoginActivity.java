@@ -5266,6 +5266,9 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
         private String phoneCode;
         // Set when the page asks for an XMPP account's password instead of Telegram's two-step password.
         private String xmppAddress;
+        /** The server's address and port given at sign-in (advanced), or null for the DNS and the app's own. */
+        private String xmppHost;
+        private int xmppPort = 5222;
         private CogramSignIn xmppSignIn;
 
         private OutlineTextContainerView outlineCodeField;
@@ -5452,7 +5455,7 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
             }
             nextPressed = true;
             needShowProgress(0);
-            xmppSignIn = CogramSignIn.start(currentAccount, xmppAddress, password, new CogramSignIn.Callback() {
+            xmppSignIn = CogramSignIn.start(currentAccount, xmppAddress, password, xmppHost, xmppPort, new CogramSignIn.Callback() {
                 @Override
                 public void onSignedIn(TLRPC.TL_auth_authorization authorization) {
                     xmppSignIn = null;
@@ -5507,6 +5510,8 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
             phoneHash = params.getString("phoneHash");
             phoneCode = params.getString("code");
             xmppAddress = params.getString("xmppAddress");
+            xmppHost = params.getString("xmppHost");
+            xmppPort = params.getInt("xmppPort", 5222);
             confirmTextView.setText(xmppAddress != null ? formatString(R.string.PhogramPasswordText, xmppAddress) : getString(R.string.LoginPasswordTextShort));
 
             if (currentPassword != null && !TextUtils.isEmpty(currentPassword.hint)) {
@@ -5676,6 +5681,32 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
         private final OutlineTextContainerView outlineAddressField;
         private final EditTextBoldCursor addressField;
         private final TextView phoneLoginView;
+        private final TextView advancedView;
+        private final LinearLayout serverRow;
+        private final OutlineTextContainerView outlineHostField;
+        private final EditTextBoldCursor hostField;
+        private final OutlineTextContainerView outlinePortField;
+        private final EditTextBoldCursor portField;
+
+        private EditTextBoldCursor loginField(Context context, OutlineTextContainerView outline, int inputType) {
+            EditTextBoldCursor field = new EditTextBoldCursor(context);
+            field.setCursorSize(dp(20));
+            field.setCursorWidth(1.5f);
+            field.setBackground(null);
+            field.setImeOptions(EditorInfo.IME_ACTION_NEXT | EditorInfo.IME_FLAG_NO_EXTRACT_UI);
+            field.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 16);
+            field.setMaxLines(1);
+            field.setSingleLine(true);
+            field.setPadding(dp(14), dp(14), dp(14), dp(14));
+            field.setInputType(inputType);
+            field.setTypeface(Typeface.DEFAULT);
+            field.setTextDirection(TEXT_DIRECTION_LTR);
+            field.setGravity(Gravity.LEFT);
+            field.setOnFocusChangeListener((v, hasFocus) -> outline.animateSelection(hasFocus ? 1f : 0f));
+            outline.attachEditText(field);
+            outline.addView(field, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.TOP));
+            return field;
+        }
 
         public LoginActivityUsernameView(Context context) {
             super(context);
@@ -5725,6 +5756,42 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
             });
             addView(outlineAddressField, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.CENTER_HORIZONTAL, 16, 32, 16, 0));
 
+            // Advanced: the server's address and port, for a network where the domain does not resolve. Hidden
+            // until asked for; the app already tries its built-in address after the DNS.
+            advancedView = new TextView(context);
+            advancedView.setText(getString(R.string.PhogramLoginAdvanced));
+            advancedView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 14);
+            advancedView.setGravity(Gravity.CENTER);
+            advancedView.setPadding(dp(16), dp(10), dp(16), dp(4));
+            addView(advancedView, LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, Gravity.CENTER_HORIZONTAL, 16, 8, 16, 0));
+
+            serverRow = new LinearLayout(context);
+            serverRow.setOrientation(HORIZONTAL);
+            serverRow.setVisibility(GONE);
+            outlineHostField = new OutlineTextContainerView(context);
+            outlineHostField.setText(getString(R.string.PhogramLoginServer));
+            hostField = loginField(context, outlineHostField, InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
+            outlinePortField = new OutlineTextContainerView(context);
+            outlinePortField.setText(getString(R.string.PhogramLoginPort));
+            portField = loginField(context, outlinePortField, InputType.TYPE_CLASS_NUMBER);
+            portField.setHint("5222");
+            portField.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(5)});
+            // Left to right as an address reads: the server, then its port.
+            serverRow.setLayoutDirection(LAYOUT_DIRECTION_LTR);
+            serverRow.addView(outlineHostField, LayoutHelper.createLinear(0, LayoutHelper.WRAP_CONTENT, 1f, 0, 0, 8, 0));
+            serverRow.addView(outlinePortField, LayoutHelper.createLinear(100, LayoutHelper.WRAP_CONTENT));
+            addView(serverRow, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.CENTER_HORIZONTAL, 16, 12, 16, 0));
+            final LinearLayout row = serverRow;
+            final EditTextBoldCursor host = hostField;
+            advancedView.setOnClickListener(v -> {
+                boolean show = row.getVisibility() != VISIBLE;
+                row.setVisibility(show ? VISIBLE : GONE);
+                if (show) {
+                    host.requestFocus();
+                    showKeyboard(host);
+                }
+            });
+
             phoneLoginView = new TextView(context);
             phoneLoginView.setText(getString(R.string.PhogramLoginByPhone));
             phoneLoginView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 15);
@@ -5744,6 +5811,14 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
             addressField.setHintTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteHintText));
             phoneLoginView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlueText4));
             outlineAddressField.updateColor();
+            advancedView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText6));
+            for (EditTextBoldCursor field : new EditTextBoldCursor[]{hostField, portField}) {
+                field.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText));
+                field.setCursorColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText));
+                field.setHintTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteHintText));
+            }
+            outlineHostField.updateColor();
+            outlinePortField.updateColor();
         }
 
         @Override
@@ -5770,6 +5845,29 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
             }
             Bundle params = new Bundle();
             params.putString("xmppAddress", address);
+            String host = hostField.getText().toString().trim();
+            String portText = portField.getText().toString().trim();
+            if (!host.isEmpty()) {
+                // A host name or an IP address, nothing else; the certificate is still checked for the domain.
+                if (!host.matches("[A-Za-z0-9.\\-:\\[\\]]{1,253}")) {
+                    onFieldError(outlineHostField, true);
+                    return;
+                }
+                int port = 5222;
+                if (!portText.isEmpty()) {
+                    try {
+                        port = Integer.parseInt(portText);
+                    } catch (NumberFormatException e) {
+                        port = -1;
+                    }
+                    if (port < 1 || port > 65535) {
+                        onFieldError(outlinePortField, true);
+                        return;
+                    }
+                }
+                params.putString("xmppHost", host);
+                params.putInt("xmppPort", port);
+            }
             setPage(VIEW_PASSWORD, true, params, false);
         }
 
@@ -5789,6 +5887,10 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
             if (address.length() != 0) {
                 bundle.putString("usernameview_address", address);
             }
+            if (hostField.length() != 0) {
+                bundle.putString("usernameview_host", hostField.getText().toString());
+                bundle.putString("usernameview_port", portField.getText().toString());
+            }
         }
 
         @Override
@@ -5796,6 +5898,12 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
             String address = bundle.getString("usernameview_address");
             if (address != null) {
                 addressField.setText(address);
+            }
+            String host = bundle.getString("usernameview_host");
+            if (host != null) {
+                hostField.setText(host);
+                portField.setText(bundle.getString("usernameview_port", ""));
+                serverRow.setVisibility(VISIBLE);
             }
         }
     }

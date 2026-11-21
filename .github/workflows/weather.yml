@@ -1,0 +1,98 @@
+name: Weather tiles
+# The weather on Phogram's routes: ECMWF's open IFS forecast (CC BY 4.0, (c) ECMWF) over Iraq, cut into one-degree
+# tiles and published on the organization's GitLab beside the app's updates (.github/weather). A phone starting a
+# trip fetches only the tiles its route crosses and deletes them at the end of the trip.
+#
+# ECMWF runs its forecast four times a day; each run reaches its open data some hours later. Every three hours this
+# looks for a newer run and publishes it; a run already published is skipped. A schedule runs only from the default
+# branch; a tag weather* runs it from any branch, for a first try.
+on:
+  schedule:
+    - cron: '20 */3 * * *'
+  workflow_dispatch:
+  push:
+    tags:
+      - 'weather*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: weather
+  cancel-in-progress: false
+
+env:
+  # ECMWF's client and GRIB reader (both Apache-2.0, by ECMWF; no OSV advisory for either); they run here only,
+  # nothing of them ships in the app.
+  ECMWF_OPENDATA_VERSION: 0.3.35
+  ECCODES_VERSION: 2.50.1
+  WEATHER_RESOL: 0p1
+  # Two days ahead covers any trip in Iraq, and every run reaches it (the 06 and 18 UTC runs stop at 90 h).
+  WEATHER_MAX_STEP: '48'
+  WEATHER_SOURCES: ecmwf,aws
+  WEATHER_SOURCE_MINUTES: '15'
+
+jobs:
+  tiles:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: ECMWF's client and GRIB reader
+        run: pip install --no-cache-dir "ecmwf-opendata==$ECMWF_OPENDATA_VERSION" "eccodes==$ECCODES_VERSION" numpy
+
+      - name: The latest forecast's fields
+        id: fetch
+        env:
+          GITLAB_API_URL: ${{ vars.GITLAB_API_URL || secrets.GITLAB_API_URL }}
+          GITLAB_RELEASES_PROJECT: ${{ vars.GITLAB_RELEASES_PROJECT || secrets.GITLAB_RELEASES_PROJECT }}
+          WEATHER_FORCE: ${{ startsWith(github.ref, 'refs/tags/weather') && '1' || '' }}
+        run: |
+          INDEX=""
+          if [ -n "$GITLAB_API_URL" ] && [ -n "$GITLAB_RELEASES_PROJECT" ]; then
+            INDEX="${GITLAB_API_URL%/}/projects/$GITLAB_RELEASES_PROJECT/packages/generic/phogram-weather/latest/index.json"
+          fi
+          RUN=$(python .github/weather/fetch-weather.py /tmp/ifs.grib2 "$INDEX" | tail -1)
+          echo "run=$RUN" >> "$GITHUB_OUTPUT"
+          echo "Run: $RUN"
+
+      - name: Iraq's tiles
+        if: steps.fetch.outputs.run != 'SKIP'
+        run: |
+          RES=0.1
+          [ "$WEATHER_RESOL" = "0p25" ] && RES=0.25
+          python .github/weather/build-weather.py /tmp/ifs.grib2 "${{ steps.fetch.outputs.run }}" "$RES" /tmp/weather
+          ls -l /tmp/weather | head -5
+          python -c "import json; i = json.load(open('/tmp/weather/index.json')); print(i['run'], len(i['tiles']), 'tiles')"
+
+      - name: A sample tile, for the check
+        if: steps.fetch.outputs.run != 'SKIP'
+        uses: actions/upload-artifact@v4
+        with:
+          name: weather-sample
+          path: |
+            /tmp/weather/index.json
+            /tmp/weather/w_33_44.json.gz
+          retention-days: 3
+
+      - name: Publish on GitLab
+        if: steps.fetch.outputs.run != 'SKIP'
+        env:
+          GITLAB_API_URL: ${{ vars.GITLAB_API_URL || secrets.GITLAB_API_URL }}
+          GITLAB_RELEASES_PROJECT: ${{ vars.GITLAB_RELEASES_PROJECT || secrets.GITLAB_RELEASES_PROJECT }}
+          GITLAB_TOKEN: ${{ secrets.GITLAB_RELEASES_TOKEN }}
+        run: |
+          if [ -z "$GITLAB_API_URL" ] || [ -z "$GITLAB_RELEASES_PROJECT" ] || [ -z "$GITLAB_TOKEN" ]; then
+            echo "The GitLab releases project is not set up; the tiles are not published."
+            exit 0
+          fi
+          export GITLAB_PROJECT_API="${GITLAB_API_URL%/}/projects/$GITLAB_RELEASES_PROJECT"
+          export GITLAB_API="$GITLAB_PROJECT_API/packages/generic"
+          python .github/weather/publish-weather.py /tmp/weather

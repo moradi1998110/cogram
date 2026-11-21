@@ -61,6 +61,41 @@ public class EntityTimeManager extends AbstractManager {
         super(service.getApplicationContext(), connection);
         this.appSettings = new AppSettings(context.getApplicationContext());
         this.service = service;
+        eu.siacs.conversations.utils.ServerClock.load(context);
+    }
+
+    /**
+     * Reads the server's clock (XEP-0202), so the times the app stores agree with the times the
+     * server stamped on the messages it kept. A server that does not answer leaves the last reading.
+     */
+    public ListenableFuture<Void> measureServerClock() {
+        final long sentAt = System.currentTimeMillis();
+        final long sentElapsed = android.os.SystemClock.elapsedRealtime();
+        final var iqFuture =
+                this.connection.sendIqPacket(
+                        new Iq(Iq.Type.GET, getAccount().getDomain(), new Time()));
+        return Futures.transform(
+                Futures.withTimeout(iqFuture, Duration.ofSeconds(5L), FUTURE_TIMEOUT_EXECUTOR),
+                iq -> {
+                    final var time = Objects.requireNonNull(iq).getOnlyExtension(Time.class);
+                    final var zonedDateTime = time == null ? null : time.asZonedDateTime();
+                    if (zonedDateTime == null) {
+                        throw new IllegalArgumentException("No valid time in the server's answer");
+                    }
+                    final long roundTrip = android.os.SystemClock.elapsedRealtime() - sentElapsed;
+                    eu.siacs.conversations.utils.ServerClock.measured(
+                            context, zonedDateTime.toInstant().toEpochMilli(), sentAt, roundTrip);
+                    Log.d(
+                            Config.LOGTAG,
+                            getAccount().getJid().asBareJid()
+                                    + ": server clock offset "
+                                    + eu.siacs.conversations.utils.ServerClock.offset()
+                                    + " ms, round trip "
+                                    + roundTrip
+                                    + " ms");
+                    return null;
+                },
+                MoreExecutors.directExecutor());
     }
 
     public void request(final Iq request) {

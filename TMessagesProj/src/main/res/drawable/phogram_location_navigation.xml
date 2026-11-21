@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The driver while navigating: the blue cell with a white arrow pointing the way; the map turns it with the heading. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="28dp"
+    android:height="28dp"
+    android:viewportWidth="28"
+    android:viewportHeight="28">
+    <path
+        android:fillColor="#FF3A8EE6"
+        android:pathData="M11.922,4.7Q14,3.5 16.078,4.7L21.015,7.55Q23.093,8.75 23.093,11.15L23.093,16.85Q23.093,19.25 21.015,20.45L16.078,23.3Q14,24.5 11.922,23.3L6.985,20.45Q4.907,19.25 4.907,16.85L4.907,11.15Q4.907,8.75 6.985,7.55Z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M14,8.2L18.4,18.6Q18.6,19.2 18,18.9L14,16.8L10,18.9Q9.4,19.2 9.6,18.6Z" />
+</vector>
