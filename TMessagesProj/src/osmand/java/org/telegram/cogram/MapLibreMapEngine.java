@@ -13,6 +13,7 @@ import org.maplibre.android.camera.CameraUpdateFactory;
 import org.maplibre.android.geometry.LatLng;
 import org.maplibre.android.location.LocationComponent;
 import org.maplibre.android.location.LocationComponentActivationOptions;
+import org.maplibre.android.location.LocationComponentOptions;
 import org.maplibre.android.location.modes.CameraMode;
 import org.maplibre.android.location.modes.RenderMode;
 import org.maplibre.android.maps.MapLibreMap;
@@ -218,7 +219,11 @@ final class MapLibreMapEngine implements MapEngine {
                 || context.checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED;
     }
 
-    /** The blue dot, from Android's own location service (Phogram ships no Google location). */
+    /**
+     * Your place on the map, from Android's own location service (Phogram ships no Google location): a cell of
+     * Phogram's hexagon mark in Telegram's location blue on a white cell, grey when the fix is old, and the same cell
+     * with an arrow while navigating.
+     */
     @SuppressWarnings("MissingPermission")
     private void activateLocation() {
         if (map == null || style == null || !hasLocationPermission()) return;
@@ -257,6 +262,11 @@ final class MapLibreMapEngine implements MapEngine {
         final int accent = MapTheme.accent();
         final org.maplibre.android.location.LocationComponentOptions.Builder options =
                 org.maplibre.android.location.LocationComponentOptions.builder(context)
+                        // A cell of Phogram's hexagon mark on a white cell, tinted with the accent; grey when old.
+                        .backgroundDrawable(R.drawable.phogram_location_background)
+                        .backgroundDrawableStale(R.drawable.phogram_location_background)
+                        .foregroundDrawable(R.drawable.phogram_location_foreground)
+                        .foregroundDrawableStale(R.drawable.phogram_location_foreground_stale)
                         .foregroundTintColor(accent)
                         .bearingTintColor(accent)
                         .accuracyColor(accent)
