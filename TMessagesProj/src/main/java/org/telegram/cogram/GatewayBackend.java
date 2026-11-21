@@ -180,6 +180,11 @@ public interface GatewayBackend {
         return null;
     }
 
+    /** Sends again a file Telegram already has from a chat, which it names by its media id instead of uploading it. */
+    default TLObject resendMedia(long userId, long mediaId, long randomId, String caption) {
+        return null;
+    }
+
     /** XMPP rooms, each shown as a supergroup. */
     default List<TLRPC.Chat> roomChats() {
         return Collections.emptyList();

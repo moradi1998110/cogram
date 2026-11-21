@@ -847,6 +847,11 @@ public final class CogramGateway {
             String uri = geoUri(media);
             return uri == null ? null : backend.sendText(peerId(request.peer), uri, 0, request.random_id);
         }
+        long sentBefore = mediaRef(media);
+        if (sentBefore != 0) {
+            // A picture sent before, which Telegram names instead of uploading it again.
+            return XmppBackend.isMediaId(sentBefore) ? backend.resendMedia(peerId(request.peer), sentBefore, request.random_id, request.message) : null;
+        }
         boolean photo = media instanceof TLRPC.TL_inputMediaUploadedPhoto;
         if (!photo && !(media instanceof TLRPC.TL_inputMediaUploadedDocument) || media.file == null) {
             return null;
@@ -860,6 +865,17 @@ public final class CogramGateway {
             mime = "application/octet-stream";
         }
         return backend.sendFile(peerId(request.peer), file, mime, photo ? new ArrayList<>() : media.attributes, photo, request.random_id, request.message);
+    }
+
+    /** The id of a photo or file Telegram names instead of uploading, or 0. */
+    private static long mediaRef(TLRPC.InputMedia media) {
+        if (media instanceof TLRPC.TL_inputMediaPhoto && ((TLRPC.TL_inputMediaPhoto) media).id != null) {
+            return ((TLRPC.TL_inputMediaPhoto) media).id.id;
+        }
+        if (media instanceof TLRPC.TL_inputMediaDocument && ((TLRPC.TL_inputMediaDocument) media).id != null) {
+            return ((TLRPC.TL_inputMediaDocument) media).id.id;
+        }
+        return 0;
     }
 
     // Albums: Telegram first uploads each photo or file of the album (messages.uploadMedia), then sends them together
@@ -896,7 +912,8 @@ public final class CogramGateway {
         if (mime == null || mime.isEmpty()) {
             mime = "application/octet-stream";
         }
-        long id = Utilities.random.nextLong() & Long.MAX_VALUE;
+        // Kept clear of the engine's media ids and of the reaction documents, so it is never taken for either.
+        long id = Utilities.random.nextLong() & ((1L << 61) - 1);
         ArrayList<TLRPC.DocumentAttribute> attributes = new ArrayList<>();
         if (!photo && media.attributes != null) attributes.addAll(media.attributes);
         albumItems.put(id, new AlbumItem(file, mime, attributes, photo));
@@ -945,17 +962,17 @@ public final class CogramGateway {
         all.date = now();
         ArrayList<DeferredReply> waiting = new ArrayList<>();
         for (TLRPC.TL_inputSingleMedia single : request.multi_media) {
-            long id = 0;
-            if (single.media instanceof TLRPC.TL_inputMediaPhoto && ((TLRPC.TL_inputMediaPhoto) single.media).id != null) {
-                id = ((TLRPC.TL_inputMediaPhoto) single.media).id.id;
-            } else if (single.media instanceof TLRPC.TL_inputMediaDocument && ((TLRPC.TL_inputMediaDocument) single.media).id != null) {
-                id = ((TLRPC.TL_inputMediaDocument) single.media).id.id;
-            }
+            long id = mediaRef(single.media);
             AlbumItem item = albumItems.remove(id);
-            if (item == null) {
+            TLObject sent;
+            if (item != null) {
+                sent = backend.sendFile(peer, item.file, item.mime, item.attributes, item.photo, single.random_id, single.message);
+            } else if (XmppBackend.isMediaId(id)) {
+                // A picture of the album sent before, which Telegram names instead of uploading it again.
+                sent = backend.resendMedia(peer, id, single.random_id, single.message);
+            } else {
                 return null;
             }
-            TLObject sent = backend.sendFile(peer, item.file, item.mime, item.attributes, item.photo, single.random_id, single.message);
             if (sent instanceof DeferredReply) {
                 waiting.add((DeferredReply) sent);
             } else if (sent instanceof TLRPC.TL_updates) {

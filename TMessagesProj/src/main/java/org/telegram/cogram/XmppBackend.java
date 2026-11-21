@@ -2588,6 +2588,46 @@ final class XmppBackend implements GatewayBackend {
         return send.reply;
     }
 
+    /**
+     * Telegram sends a picture it sent before by naming it instead of uploading it again; it goes out as a new copy
+     * of the file this device already holds, as a forward does.
+     */
+    @Override
+    public synchronized TLObject resendMedia(long userId, long mediaId, long randomId, String caption) {
+        PendingSend resumed = resumeSend(userId, randomId);
+        if (resumed != null) {
+            return resumed.reply;
+        }
+        Message original = service == null ? null : engineMessage((int) mediaId);
+        if (original == null || !isMedia(original)) {
+            return null;
+        }
+        File source = service.getFileBackend().getFile(original);
+        if (!source.exists()) {
+            return null;
+        }
+        File copy = new File(context.getCacheDir(), "resend_" + original.getUuid() + "_" + Long.toHexString(randomId));
+        try {
+            copyFile(source, copy);
+        } catch (Exception e) {
+            FileLog.e(e);
+            copy.delete();
+            return null;
+        }
+        TLRPC.MessageMedia media = toTl(original, peerOf(original)).media;
+        boolean photo = media instanceof TLRPC.TL_messageMediaPhoto;
+        TLRPC.Document document = media instanceof TLRPC.TL_messageMediaDocument ? media.document : null;
+        String mime = original.getMimeType();
+        if (mime == null && document != null) {
+            mime = document.mime_type;
+        }
+        if (mime == null || mime.isEmpty()) {
+            mime = photo ? "image/jpeg" : "application/octet-stream";
+        }
+        List<TLRPC.DocumentAttribute> attributes = document != null ? document.attributes : new ArrayList<>();
+        return sendFile(userId, copy, mime, attributes, photo, randomId, caption);
+    }
+
     private static TLRPC.MessageMedia sentMedia(int messageId, int date, File file, String mime, List<TLRPC.DocumentAttribute> attributes, boolean photo) {
         long id = mediaId(messageId);
         TLRPC.MessageMedia media;
