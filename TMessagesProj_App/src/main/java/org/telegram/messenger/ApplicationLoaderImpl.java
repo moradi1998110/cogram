@@ -28,6 +28,11 @@ public class ApplicationLoaderImpl extends ApplicationLoader {
     }
 
     @Override
+    public String weatherUrl() {
+        return BuildConfig.WEATHER_URL;
+    }
+
+    @Override
     public BetaUpdate getUpdate() {
         return isCustomUpdate() ? PhogramUpdater.getInstance().getUpdate() : null;
     }

@@ -153,6 +153,10 @@ jobs:
               TASK=":TMessagesProj_App:assembleAfatRelease"
               ;;
           esac
+          # Every build shows the weather on its routes, from the tiles beside the updates (weather.yml).
+          if [ -n "$GITLAB_API_URL" ] && [ -n "$GITLAB_RELEASES_PROJECT" ]; then
+            EXTRA="$EXTRA -PPHOGRAM_WEATHER_URL=${GITLAB_API_URL%/}/projects/$GITLAB_RELEASES_PROJECT/packages/generic/phogram-weather/latest/index.json"
+          fi
           echo "Build: $TASK $EXTRA"
           ./gradlew --no-daemon --stacktrace \
             -Pandroid.injected.build.abi=arm64-v8a \

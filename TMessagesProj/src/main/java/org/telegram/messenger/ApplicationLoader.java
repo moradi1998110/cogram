@@ -716,6 +716,11 @@ public class ApplicationLoader extends Conversations {
     public boolean isCustomUpdate() {
         return false;
     }
+
+    /** Phogram: the address of the weather tiles' index on the organization's GitLab, or empty in builds without it. */
+    public String weatherUrl() {
+        return "";
+    }
     public void downloadUpdate() {}
     public void cancelDownloadingUpdate() {}
     public boolean isDownloadingUpdate() {

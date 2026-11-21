@@ -1111,6 +1111,54 @@ final class MapLibreMapEngine implements MapEngine {
         }
         setSource(WARNINGS_SOURCE, FeatureCollection.fromFeatures(warnings));
         drawAlong();
+        drawWeather();
+    }
+
+    // The weather on the route: bubbles the page makes (RouteWeather), each an image of its own, the most serious
+    // placed first and the rest where they fit.
+
+    private static final String WEATHER_SOURCE = "phogram-weather";
+    private static final String WEATHER_LAYER = "phogram-weather-layer";
+    private final List<WeatherMark> weatherMarks = new ArrayList<>();
+    private int weatherImages;
+
+    @Override
+    public void showWeather(List<WeatherMark> marks) {
+        weatherMarks.clear();
+        if (marks != null) weatherMarks.addAll(marks);
+        drawWeather();
+    }
+
+    private void drawWeather() {
+        if (style == null || style.getLayer(ROUTE_LINE) == null) return;
+        if (style.getSource(WEATHER_SOURCE) == null) {
+            style.addSource(new GeoJsonSource(WEATHER_SOURCE, FeatureCollection.fromFeatures(new Feature[0])));
+            final SymbolLayer layer = new SymbolLayer(WEATHER_LAYER, WEATHER_SOURCE).withProperties(
+                    PropertyFactory.iconImage(Expression.get("icon")),
+                    // The tail at the point, as the road names' bubbles.
+                    PropertyFactory.iconAnchor(Property.ICON_ANCHOR_BOTTOM_LEFT),
+                    PropertyFactory.iconAllowOverlap(false),
+                    PropertyFactory.symbolSortKey(Expression.get("order")));
+            if (style.getLayer(NAMES_LAYER) != null) {
+                style.addLayerBelow(layer, NAMES_LAYER);
+            } else {
+                style.addLayer(layer);
+            }
+        }
+        for (int i = 0; i < weatherImages; i++) {
+            style.removeImage("phogram-wx-" + i);
+        }
+        weatherImages = weatherMarks.size();
+        final List<Feature> features = new ArrayList<>();
+        for (int i = 0; i < weatherMarks.size(); i++) {
+            final WeatherMark mark = weatherMarks.get(i);
+            style.addImage("phogram-wx-" + i, mark.image);
+            final Feature feature = Feature.fromGeometry(Point.fromLngLat(mark.longitude, mark.latitude));
+            feature.addStringProperty("icon", "phogram-wx-" + i);
+            feature.addNumberProperty("order", mark.order);
+            features.add(feature);
+        }
+        setSource(WEATHER_SOURCE, FeatureCollection.fromFeatures(features));
     }
 
     private void setSource(String id, FeatureCollection features) {

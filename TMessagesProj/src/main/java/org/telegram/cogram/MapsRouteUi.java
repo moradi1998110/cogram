@@ -93,6 +93,8 @@ final class MapsRouteUi {
     private final TextView timeText;
     private final TextView statusText;
     private final TextView viaText;
+    private final TextView weatherText;
+    private final TextView weatherNote;
     private final RadialProgressView progress;
     private final LinearLayout alternatives;
     private final TextView stepsButton;
@@ -166,6 +168,14 @@ final class MapsRouteUi {
         sheet.addView(statusText, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0, 2, 0, 0));
         viaText = text(context, 14, rtl);
         sheet.addView(viaText, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0, 2, 0, 0));
+        // The weather the trip will meet, and at the destination, with its source (ECMWF's licence asks for it).
+        weatherText = text(context, 14, rtl);
+        weatherText.setTypeface(AndroidUtilities.bold());
+        weatherText.setVisibility(View.GONE);
+        sheet.addView(weatherText, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0, 6, 0, 0));
+        weatherNote = text(context, 12, rtl);
+        weatherNote.setVisibility(View.GONE);
+        sheet.addView(weatherNote, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0, 1, 0, 0));
         alternatives = new LinearLayout(context);
         alternatives.setOrientation(LinearLayout.HORIZONTAL);
         // Right to left in Arabic, Kurdish and Persian: the fastest route on the right.
@@ -899,6 +909,8 @@ final class MapsRouteUi {
         timeText.setText("");
         statusText.setText(text);
         viaText.setVisibility(View.GONE);
+        weatherText.setVisibility(View.GONE);
+        weatherNote.setVisibility(View.GONE);
         alternatives.setVisibility(View.GONE);
         startButton.setEnabled(false);
         startButton.setAlpha(0.5f);
@@ -915,6 +927,104 @@ final class MapsRouteUi {
             viaText.setText(LocaleController.formatString(R.string.PhogramNavVia, route.via));
             viaText.setVisibility(View.VISIBLE);
         }
+        weatherText.setVisibility(View.GONE);
+        weatherNote.setVisibility(View.GONE);
+        requestWeather(route, 0);
+    }
+
+    // The weather on the trip (RouteWeather): asked for the chosen route in the preview, again when driving starts,
+    // every ten minutes and after a new route; its tiles are deleted when the trip ends.
+
+    private RouteWeather weather;
+    private MapEngine.Route weatherRoute;
+    private long weatherAsked;
+    private RouteWeather.Forecast shownForecast;
+    /** The hazards already announced on this trip, so each is told once. */
+    private final java.util.Set<String> weatherAlerts = new java.util.HashSet<>();
+    private static final long WEATHER_REFRESH_MS = 10 * 60 * 1000L;
+    /** How far ahead a hazard is announced while driving. */
+    private static final float WEATHER_ALERT_METERS = 30000;
+
+    private void requestWeather(MapEngine.Route route, float fromAlong) {
+        if (!RouteWeather.isAvailable() || route == null) return;
+        if (weather == null) weather = new RouteWeather();
+        weatherRoute = route;
+        weatherAsked = System.currentTimeMillis();
+        weather.forRoute(route, fromAlong, System.currentTimeMillis(), forecast -> {
+            if (mode == MODE_NONE || route != weatherRoute) return;
+            shownForecast = forecast;
+            showWeather(forecast, fromAlong);
+        });
+    }
+
+    private void showWeather(RouteWeather.Forecast forecast, float fromAlong) {
+        final MapEngine engine = host.engine();
+        if (engine != null) {
+            final java.util.List<MapEngine.WeatherMark> marks = new java.util.ArrayList<>();
+            int calm = 0;
+            for (RouteWeather.Point p : RouteWeather.marks(forecast)) {
+                final String when = LocaleController.formatString(R.string.PhogramWeatherAt,
+                        LocaleController.getInstance().getFormatterDay().format(p.time));
+                final int order = p.level >= RouteWeather.LEVEL_DANGER ? 0 : p.level == RouteWeather.LEVEL_CAUTION ? 100 : 1000 + calm++;
+                marks.add(new MapEngine.WeatherMark(p.latitude, p.longitude, MapKinds.weatherBubble(RouteWeather.headline(p), when, p.level), order));
+            }
+            engine.showWeather(marks);
+        }
+        if (mode != MODE_PREVIEW) return;
+        final RouteWeather.Point worst = RouteWeather.worst(forecast);
+        if (worst == null) {
+            weatherText.setText(RouteWeather.emoji(forecast.points.get(0)) + " " + getString(R.string.PhogramWeatherCalm));
+            weatherText.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText));
+        } else {
+            weatherText.setText(alertText(worst, fromAlong));
+            weatherText.setTextColor(worst.level >= RouteWeather.LEVEL_DANGER ? 0xFFE56555
+                    : worst.level == RouteWeather.LEVEL_CAUTION ? 0xFFE07A2E : Theme.getColor(Theme.key_windowBackgroundWhiteBlackText));
+        }
+        final RouteWeather.Point end = forecast.points.get(forecast.points.size() - 1);
+        weatherNote.setText(LocaleController.formatString(R.string.PhogramWeatherDestination, RouteWeather.emoji(end) + " " + end.temperature + "°"));
+        weatherNote.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText));
+        weatherText.setVisibility(View.VISIBLE);
+        weatherNote.setVisibility(View.VISIBLE);
+    }
+
+    /** "⛈️ Thunderstorm in 120 km · at 8:10". */
+    private static String alertText(RouteWeather.Point p, float fromAlong) {
+        return LocaleController.formatString(R.string.PhogramWeatherAhead, RouteWeather.emoji(p) + " " + RouteWeather.name(p.condition),
+                MapsFormat.distance(Math.max(0, p.along - fromAlong)),
+                LocaleController.formatString(R.string.PhogramWeatherAt, LocaleController.getInstance().getFormatterDay().format(p.time)));
+    }
+
+    /** While driving: a fresh forecast now and then and after a new route, and a hazard coming up told once. */
+    private void updateWeather(MapEngine.NavigationState state) {
+        if (state.route == null || !RouteWeather.isAvailable()) return;
+        final float length = state.route.along.length > 0 ? state.route.along[state.route.along.length - 1] : 0;
+        final float travelled = Math.max(0, length - state.remainingMeters);
+        if (state.route != weatherRoute || System.currentTimeMillis() - weatherAsked > WEATHER_REFRESH_MS) {
+            requestWeather(state.route, travelled);
+            return;
+        }
+        final RouteWeather.Forecast forecast = shownForecast;
+        if (forecast == null) return;
+        for (RouteWeather.Point p : forecast.points) {
+            final float ahead = p.along - travelled;
+            if (p.level < RouteWeather.LEVEL_CAUTION || ahead < 0 || ahead > WEATHER_ALERT_METERS) continue;
+            final String key = p.condition + "_" + (int) (p.along / 20000);
+            if (weatherAlerts.add(key)) {
+                BulletinFactory.of(host.fragment()).createSimpleBulletin(R.raw.chats_infotip, alertText(p, travelled)).show();
+            }
+            break;
+        }
+    }
+
+    private void clearWeather() {
+        weatherRoute = null;
+        shownForecast = null;
+        weatherAlerts.clear();
+        if (weather != null) weather.clear();
+        final MapEngine engine = host.engine();
+        if (engine != null) engine.showWeather(new java.util.ArrayList<>());
+        weatherText.setVisibility(View.GONE);
+        weatherNote.setVisibility(View.GONE);
     }
 
     /**
@@ -1054,6 +1164,8 @@ final class MapsRouteUi {
         progressRoute = route;
         panelProgress.reset(MapKinds.routeColor(route.index), stopFractions(route));
         engine.startNavigation(route, this::onNavigation);
+        weatherAlerts.clear();
+        requestWeather(route, 0);
         if (voice == null) voice = new VoiceGuide(host.fragment().getParentActivity() != null ? host.fragment().getParentActivity() : org.telegram.messenger.ApplicationLoader.applicationContext);
         voice.onStart();
         updateMuteButton();
@@ -1128,6 +1240,7 @@ final class MapsRouteUi {
         panelDistance.set(MapsFormat.distanceParts(state.remainingMeters), true);
         updateTripProgress(state);
         updateDriving(state);
+        if (!state.rerouting) updateWeather(state);
         if (voice != null) voice.onNavigation(state);
     }
 
@@ -1167,6 +1280,8 @@ final class MapsRouteUi {
         setKeepScreenOn(false);
         mode = MODE_NONE;
         routes.clear();
+        // The trip's weather tiles are deleted with it.
+        clearWeather();
         updateMode();
     }
 

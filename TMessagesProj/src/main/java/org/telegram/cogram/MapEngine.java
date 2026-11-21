@@ -356,6 +356,25 @@ public interface MapEngine {
     default void showOverview() {
     }
 
+    /** A weather bubble on the route: its image, drawn with its tail at the point, and its rank (0 shows first). */
+    final class WeatherMark {
+        public final double latitude;
+        public final double longitude;
+        public final android.graphics.Bitmap image;
+        public final int order;
+
+        public WeatherMark(double latitude, double longitude, android.graphics.Bitmap image, int order) {
+            this.latitude = latitude;
+            this.longitude = longitude;
+            this.image = image;
+            this.order = order;
+        }
+    }
+
+    /** Shows the weather on the route as bubbles, as many as fit, the most serious first; an empty list clears them. */
+    default void showWeather(java.util.List<WeatherMark> marks) {
+    }
+
     /** Back to following the driver, zoomed in and tilted. */
     default void recenter() {
     }

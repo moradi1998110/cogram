@@ -217,6 +217,9 @@ android {
         // Where the app finds its updates inside the organization: update.json in the releases project on GitLab,
         // given to release builds (-PPHOGRAM_UPDATE_URL=...); empty in other builds, which then never look.
         buildConfigField "String", "UPDATE_URL", "\"" + (project.findProperty("PHOGRAM_UPDATE_URL") ?: "") + "\""
+        // The weather on the routes: the index of the weather tiles beside the updates (.github/workflows/weather.yml),
+        // given to every build of the workflows (-PPHOGRAM_WEATHER_URL=...); empty elsewhere, which shows no weather.
+        buildConfigField "String", "WEATHER_URL", "\"" + (project.findProperty("PHOGRAM_WEATHER_URL") ?: "") + "\""
         ndkVersion "27.2.12479018"
 
         multiDexEnabled true

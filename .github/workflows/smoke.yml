@@ -94,7 +94,11 @@ jobs:
             refs/tags/v*|refs/tags/psmoke*) TASK=:TMessagesProj_App:assembleAfatRelease;;
             refs/tags/usmoke*) EXTRA="-PPHOGRAM_UPDATE_URL=${GITLAB_API_URL%/}/projects/$GITLAB_RELEASES_PROJECT/packages/generic/phogram/latest/update.json";;
           esac
-          echo "Build: $TASK"
+          # The weather on the routes, from the tiles beside the updates (weather.yml), so the trip checks it too.
+          if [ -n "$GITLAB_API_URL" ] && [ -n "$GITLAB_RELEASES_PROJECT" ]; then
+            EXTRA="$EXTRA -PPHOGRAM_WEATHER_URL=${GITLAB_API_URL%/}/projects/$GITLAB_RELEASES_PROJECT/packages/generic/phogram-weather/latest/index.json"
+          fi
+          echo "Build: $TASK $EXTRA"
           ./gradlew --no-daemon --stacktrace \
             -Pandroid.injected.build.abi=x86_64 \
             -Pandroid.injected.testOnly=false \

@@ -281,6 +281,10 @@ if tap_view 'content-desc="Where to?"' || adb shell input tap 160 532; then
   adb exec-out screencap -p > "$OUT/7-maps-route.png" || true
   adb logcat -d -s PhogramRoute:D | tee -a "$OUT/steps.txt" > "$OUT/route.txt" || true
   adb logcat -d | grep -E "net.osmand|System.err" | tail -40 > "$OUT/route-errors.txt" || true
+  # The weather on the route: the line under the route's time and the bubbles on it, once the tiles have come.
+  sleep 8
+  adb exec-out screencap -p > "$OUT/7-maps-weather.png" || true
+  adb logcat -d -s PhogramWeather:D | tee -a "$OUT/steps.txt" > "$OUT/weather.txt" || true
   # The navigation: the green strip with the next turn, and the panel with the arrival and End.
   tap_view 'text="Start"' || adb shell input tap 90 540
   for wait in 1 2 3 4; do
@@ -309,6 +313,11 @@ if tap_view 'content-desc="Where to?"' || adb shell input tap 160 532; then
   send_fix
   sleep 2
   adb exec-out screencap -p > "$OUT/7-maps-back-to-driving.png" || true
+  # No position for over half a minute (a tunnel, a weak signal): the arrow stays an arrow, in grey.
+  sleep 36
+  adb exec-out screencap -p > "$OUT/7-maps-stale.png" || true
+  send_fix
+  sleep 2
   # The overview frames the whole route ahead at the first press.
   if tap_view 'content-desc="Overview"'; then
     sleep 3

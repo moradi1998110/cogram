@@ -467,6 +467,78 @@ final class MapKinds {
         return bitmap;
     }
 
+    /**
+     * The weather at a point of the route, in the shape of the road names' bubble with its tail on the road: what is
+     * there on the first line, when the driver gets there under it. A danger is in Telegram's red, a caution in its
+     * orange, the rest in the theme's surface.
+     */
+    static android.graphics.Bitmap weatherBubble(CharSequence what, CharSequence when, int level) {
+        final int background;
+        final int textColor;
+        if (level >= RouteWeather.LEVEL_DANGER) {
+            background = 0xFFE56555;
+            textColor = 0xFFFFFFFF;
+        } else if (level == RouteWeather.LEVEL_CAUTION) {
+            background = 0xFFF28C48;
+            textColor = 0xFFFFFFFF;
+        } else {
+            background = Theme.getColor(Theme.key_windowBackgroundWhite);
+            textColor = Theme.getColor(Theme.key_windowBackgroundWhiteBlackText);
+        }
+        final android.text.TextPaint first = new android.text.TextPaint(Paint.ANTI_ALIAS_FLAG);
+        first.setTextSize(dp(13));
+        first.setTypeface(org.telegram.messenger.AndroidUtilities.bold());
+        first.setColor(textColor);
+        final android.text.TextPaint second = new android.text.TextPaint(Paint.ANTI_ALIAS_FLAG);
+        second.setTextSize(dp(11));
+        second.setColor(ColorUtils.setAlphaComponent(textColor, 0xCC));
+        final int firstWidth = (int) Math.ceil(android.text.Layout.getDesiredWidth(what, first));
+        final int secondWidth = when == null ? 0 : (int) Math.ceil(android.text.Layout.getDesiredWidth(when, second));
+        final int textWidth = Math.max(firstWidth, secondWidth);
+        final android.text.StaticLayout line1 = new android.text.StaticLayout(what, first, textWidth,
+                android.text.Layout.Alignment.ALIGN_CENTER, 1f, 0f, false);
+        final android.text.StaticLayout line2 = when == null ? null : new android.text.StaticLayout(when, second, textWidth,
+                android.text.Layout.Alignment.ALIGN_CENTER, 1f, 0f, false);
+        final float tail = dp(BUBBLE_TAIL);
+        final float radius = dp(12);
+        final float padX = dp(10);
+        final float padY = dp(6);
+        final float shadow = dp(2);
+        final float bodyWidth = textWidth + padX * 2;
+        final float bodyHeight = line1.getHeight() + (line2 != null ? line2.getHeight() : 0) + padY * 2;
+        final int width = (int) Math.ceil(bodyWidth + tail);
+        final int height = (int) Math.ceil(bodyHeight + shadow);
+        final android.graphics.Bitmap bitmap = android.graphics.Bitmap.createBitmap(width, height, android.graphics.Bitmap.Config.ARGB_8888);
+        final android.graphics.Canvas canvas = new android.graphics.Canvas(bitmap);
+        final float left = tail;
+        final float right = tail + bodyWidth;
+        final float bottom = bodyHeight;
+        final android.graphics.Path bubble = new android.graphics.Path();
+        bubble.moveTo(left + radius, 0);
+        bubble.lineTo(right - radius, 0);
+        bubble.quadTo(right, 0, right, radius);
+        bubble.lineTo(right, bottom - radius);
+        bubble.quadTo(right, bottom, right - radius, bottom);
+        bubble.lineTo(0, bottom);
+        bubble.quadTo(left, bottom - dp(1), left, bottom - dp(8));
+        bubble.lineTo(left, radius);
+        bubble.quadTo(left, 0, left + radius, 0);
+        bubble.close();
+        final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        paint.setColor(background);
+        paint.setShadowLayer(dp(1.5f), 0, dp(1), 0x40000000);
+        canvas.drawPath(bubble, paint);
+        canvas.save();
+        canvas.translate(left + padX, padY);
+        line1.draw(canvas);
+        if (line2 != null) {
+            canvas.translate(0, line1.getHeight());
+            line2.draw(canvas);
+        }
+        canvas.restore();
+        return bitmap;
+    }
+
     /** The head of the turn arrow drawn on the road, pointing up before the map turns it. */
     static android.graphics.Bitmap arrowHead() {
         final int size = dp(24);
