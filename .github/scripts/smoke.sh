@@ -258,7 +258,17 @@ if tap_view 'content-desc="Where to?"' || adb shell input tap 160 532; then
   tap_view_top 'content-desc="Search results"' || adb shell input tap 160 175
   sleep 5
   dump_screen 7-maps-place
-  # Directions by car from Basra to Mosul, offline: how long the route takes is written to the log.
+  # A short trip is enough to see the navigation: the card is closed, and a place dropped by a long press a few
+  # hundred metres up the map from the driver becomes the destination (about 1 km by road).
+  adb shell input keyevent 4
+  sleep 2
+  tap_view 'content-desc="My location"' || true
+  send_fix
+  sleep 3
+  adb shell input swipe 160 190 160 190 900 || true
+  sleep 4
+  dump_screen 7-maps-pin
+  # Directions by car, offline: how long the route takes is written to the log.
   adb logcat -c || true
   send_fix
   tap_view 'text="Go"' || adb shell input tap 88 523
@@ -278,6 +288,16 @@ if tap_view 'content-desc="Where to?"' || adb shell input tap 160 532; then
     send_fix
   done
   adb exec-out screencap -p > "$OUT/7-maps-navigation.png" || true
+  # Driving a few steps up the road: the part of the route already driven disappears behind the arrow.
+  for step in 1 2 3 4 5; do
+    lat=$(awk -v s="$step" 'BEGIN { printf "%.6f", 30.5085 + s * 0.0004 }')
+    adb shell cmd location providers set-test-provider-location gps --location "$lat,47.7804" --accuracy 5 || true
+    adb emu geo fix 47.7804 "$lat" || true
+    sleep 2
+  done
+  adb exec-out screencap -p > "$OUT/7-maps-driven.png" || true
+  send_fix
+  sleep 2
   # Moving the map pops up the route's road names in Telegram's message bubbles; then back to the driver.
   adb shell input swipe 160 360 160 200 400 || true
   sleep 3
@@ -312,6 +332,33 @@ if tap_view 'content-desc="Where to?"' || adb shell input tap 160 532; then
   tap_view 'text="End"' || adb shell input tap 280 505
   sleep 3
   adb exec-out screencap -p > "$OUT/7-maps-after-navigation.png" || true
+  # The same trip in dark mode: the map's dark palette, the speed gauge, the road-name bubbles and the trip figures.
+  adb shell cmd uimode night yes || true
+  sleep 5
+  send_fix
+  adb exec-out screencap -p > "$OUT/7-maps-dark.png" || true
+  adb shell input swipe 160 190 160 190 900 || true
+  sleep 4
+  send_fix
+  if tap_view 'text="Go"'; then
+    for wait in $(seq 1 12); do
+      sleep 3
+      send_fix
+      tap_view 'text="Start"' && break
+    done
+    for wait in 1 2 3; do
+      sleep 2
+      send_fix
+    done
+    adb exec-out screencap -p > "$OUT/7-maps-navigation-dark.png" || true
+    adb shell input swipe 160 360 160 200 400 || true
+    sleep 3
+    adb exec-out screencap -p > "$OUT/7-maps-names-dark.png" || true
+    tap_view 'text="End"' || adb shell input tap 280 505
+    sleep 2
+  fi
+  adb shell cmd uimode night no || true
+  sleep 3
   # The place goes to the demo chat as a location, through Telegram's chat picker.
   if tap_view 'text="Send to chat"'; then
     sleep 3

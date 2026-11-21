@@ -43,25 +43,64 @@ final class MapKinds {
         }
     }
 
+    /**
+     * The kind's symbol on the map's badges (MapSymbols), so the search, the cards and the categories show the very
+     * symbol the map does; null for kinds the map has no badge for, which keep their emoji.
+     */
+    static String symbol(int kind) {
+        switch (kind) {
+            case MapEngine.KIND_FOOD: return "restaurant";
+            case MapEngine.KIND_FUEL: return "fuel";
+            case MapEngine.KIND_HEALTH: return "hospital";
+            case MapEngine.KIND_PHARMACY: return "pharmacy";
+            case MapEngine.KIND_WORSHIP: return "religious-muslim";
+            case MapEngine.KIND_EDUCATION: return "college";
+            case MapEngine.KIND_MONEY: return "bank";
+            case MapEngine.KIND_LODGING: return "lodging";
+            case MapEngine.KIND_SHOP: return "shop";
+            case MapEngine.KIND_PARKING: return "parking";
+            default: return null;
+        }
+    }
+
+    /** Whether the kind is drawn as the map's badge (its symbol, white on its color) rather than an emoji. */
+    static boolean hasSymbol(int kind) {
+        return MapSymbols.has(symbol(kind));
+    }
+
+    /** The kind's color: the map badge's for landmarks (Telegram's colors), Telegram's avatar colors for the rest. */
     static int color(int kind) {
+        switch (kind) {
+            case MapEngine.KIND_FOOD: return 0xFFF28C48;
+            case MapEngine.KIND_FUEL: return 0xFF5FBED5;
+            case MapEngine.KIND_PARKING: return 0xFF5FBED5;
+            case MapEngine.KIND_HEALTH: return 0xFFE56555;
+            case MapEngine.KIND_PHARMACY: return 0xFFE56555;
+            case MapEngine.KIND_WORSHIP: return 0xFF45AE9D;
+            case MapEngine.KIND_EDUCATION: return 0xFFC08A5B;
+            case MapEngine.KIND_MONEY: return 0xFF3E9DB5;
+            case MapEngine.KIND_LODGING: return 0xFFF2749A;
+            case MapEngine.KIND_SHOP: return 0xFF549CDD;
+        }
         final int index;
         switch (kind) {
-            case MapEngine.KIND_FOOD: index = ORANGE; break;
-            case MapEngine.KIND_FUEL: index = RED; break;
-            case MapEngine.KIND_HEALTH: index = RED; break;
-            case MapEngine.KIND_PHARMACY: index = GREEN; break;
-            case MapEngine.KIND_WORSHIP: index = GREEN; break;
-            case MapEngine.KIND_EDUCATION: index = VIOLET; break;
-            case MapEngine.KIND_MONEY: index = CYAN; break;
-            case MapEngine.KIND_LODGING: index = PINK; break;
-            case MapEngine.KIND_SHOP: index = VIOLET; break;
-            case MapEngine.KIND_PARKING: index = BLUE; break;
             case MapEngine.KIND_CITY: index = BLUE; break;
             case MapEngine.KIND_STREET: index = CYAN; break;
             case MapEngine.KIND_PIN: index = RED; break;
             default: index = BLUE; break;
         }
         return Theme.getColor(Theme.keys_avatar_background[index]);
+    }
+
+    /** The kind's mark on a circle of its color: the map's white symbol, or its emoji when it has none. */
+    static void drawMark(Canvas canvas, int kind, float cx, float cy, float size) {
+        if (hasSymbol(kind)) {
+            final Paint white = new Paint(Paint.ANTI_ALIAS_FLAG);
+            white.setColor(0xFFFFFFFF);
+            MapSymbols.draw(canvas, symbol(kind), cx, cy, size * 0.82f, white);
+        } else {
+            drawEmoji(canvas, emoji(kind), cx, cy, size);
+        }
     }
 
     /**
@@ -84,6 +123,42 @@ final class MapKinds {
     /** Telegram's accent color, as the theme the user chose has it. */
     static int accent() {
         return Theme.getColor(Theme.key_featuredStickers_addButton) | 0xFF000000;
+    }
+
+    /**
+     * The driver's arrow while navigating, as in Waze and Google Maps: a pointed arrow in Telegram's accent with a white
+     * border and a soft shadow, pointing up (the map turns it with the heading).
+     */
+    static android.graphics.Bitmap navigationArrow() {
+        final int size = dp(46);
+        final android.graphics.Bitmap bitmap = android.graphics.Bitmap.createBitmap(size, size, android.graphics.Bitmap.Config.ARGB_8888);
+        final android.graphics.Canvas canvas = new android.graphics.Canvas(bitmap);
+        final float c = size / 2f;
+        final float half = dp(14);
+        final android.graphics.Path arrow = new android.graphics.Path();
+        arrow.moveTo(c, c - half - dp(3));
+        arrow.lineTo(c + half, c + half);
+        arrow.lineTo(c, c + half * 0.45f);
+        arrow.lineTo(c - half, c + half);
+        arrow.close();
+        final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        paint.setStrokeJoin(Paint.Join.ROUND);
+        paint.setStyle(Paint.Style.FILL_AND_STROKE);
+        paint.setStrokeWidth(dp(6));
+        paint.setColor(0xFFFFFFFF);
+        paint.setShadowLayer(dp(3), 0, dp(1.5f), 0x55000000);
+        canvas.drawPath(arrow, paint);
+        paint.clearShadowLayer();
+        paint.setStyle(Paint.Style.FILL_AND_STROKE);
+        paint.setStrokeWidth(dp(1));
+        paint.setColor(accent());
+        canvas.drawPath(arrow, paint);
+        return bitmap;
+    }
+
+    /** Text on the accent: white, or near black when the theme's accent is too light for white to read. */
+    static int onAccent() {
+        return ColorUtils.calculateContrast(0xFFFFFFFF, accent()) >= 3 ? 0xFFFFFFFF : 0xFF1A1A1A;
     }
 
     /** A deeper shade of the accent, for outlines around it. */
@@ -171,7 +246,7 @@ final class MapKinds {
         paint.clearShadowLayer();
         paint.setColor(color(kind));
         canvas.drawCircle(cx, cy, r - dp(3.5f), paint);
-        drawEmoji(canvas, emoji(kind), cx, cy, dp(19));
+        drawMark(canvas, kind, cx, cy, dp(19));
         return bitmap;
     }
 
@@ -377,8 +452,9 @@ final class MapKinds {
         bubble.quadTo(left, top, left + radius, top);
         bubble.close();
         final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        paint.setColor(Theme.getColor(Theme.key_chat_inBubble));
-        paint.setShadowLayer(dp(1.5f), 0, dp(1), Theme.getColor(Theme.key_chat_inBubbleShadow));
+        // Telegram's accent in both modes: the incoming bubble's color was near black on the dark map.
+        paint.setColor(accent());
+        paint.setShadowLayer(dp(1.5f), 0, dp(1), 0x40000000);
         canvas.drawPath(bubble, paint);
         return bitmap;
     }
@@ -425,6 +501,8 @@ final class MapKinds {
 
         SpeedView(Context context) {
             super(context);
+            // The gauge's soft shadow is a paint shadow, which needs a software layer.
+            setLayerType(LAYER_TYPE_SOFTWARE, null);
             ring.setStyle(Paint.Style.STROKE);
             ring.setStrokeCap(Paint.Cap.ROUND);
             text.setTextAlign(Paint.Align.CENTER);
@@ -457,15 +535,20 @@ final class MapKinds {
             final float size = Math.min(getWidth(), getHeight());
             final float r = size / 2f;
             final boolean over = limit > 0 && speed > limit + 2;
-            fill.setColor(Theme.getColor(Theme.key_windowBackgroundWhite));
-            canvas.drawCircle(r, r, r - dp(1), fill);
-            final float stroke = dp(4);
+            final boolean dark = Theme.isCurrentThemeDark();
+            final int surface = Theme.getColor(Theme.key_windowBackgroundWhite) | 0xFF000000;
+            // On the dark map the gauge is a step lighter than the map, with a soft shadow, so it stands out.
+            fill.setColor(dark ? ColorUtils.blendARGB(surface, 0xFFFFFFFF, 0.10f) : 0xFFFFFFFF);
+            fill.setShadowLayer(dp(3), 0, dp(1), dark ? 0x80000000 : 0x40000000);
+            canvas.drawCircle(r, r, r - dp(4), fill);
+            final float stroke = dp(5);
             ring.setStrokeWidth(stroke);
-            arc.set(stroke, stroke, size - stroke, size - stroke);
-            ring.setColor(Theme.getColor(Theme.key_divider));
+            arc.set(stroke + dp(4), stroke + dp(4), size - stroke - dp(4), size - stroke - dp(4));
+            // The empty part of the ring is the accent, faint, rather than the divider's grey, lost on a dark map.
+            ring.setColor(ColorUtils.setAlphaComponent(accent(), dark ? 0x55 : 0x33));
             canvas.drawArc(arc, 135, 270, false, ring);
             final float top = limit > 0 ? limit : 120;
-            ring.setColor(over ? 0xFFE53935 : Theme.getColor(Theme.key_featuredStickers_addButton));
+            ring.setColor(over ? 0xFFE53935 : accent());
             canvas.drawArc(arc, 135, 270 * Math.min(1, speed / top), false, ring);
             text.setTextSize(size * 0.34f);
             text.setColor(over ? 0xFFE53935 : Theme.getColor(Theme.key_windowBackgroundWhiteBlackText));
@@ -473,8 +556,8 @@ final class MapKinds {
             number.setTextColor(text.getColor());
             number.setBounds(0, (int) (r - size * 0.22f), (int) size, (int) (r + size * 0.18f));
             number.draw(canvas);
-            unit.setTextSize(size * 0.15f);
-            unit.setColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText));
+            unit.setTextSize(size * 0.14f);
+            unit.setColor(ColorUtils.setAlphaComponent(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText), 0xA0));
             canvas.drawText(org.telegram.messenger.LocaleController.getString(org.telegram.messenger.R.string.PhogramNavKmh), r, r + size * 0.3f, unit);
         }
     }
@@ -514,23 +597,31 @@ final class MapKinds {
         }
     }
 
-    /** A kind's emoji on its soft colored circle; it redraws itself once Telegram's emoji are loaded. */
+    /**
+     * A kind's mark: the map's badge (its white symbol on its color) for landmarks, so the search, the cards and the
+     * categories show what the map shows; other kinds keep their emoji on a soft circle, redrawn once Telegram's emoji
+     * are loaded.
+     */
     static final class IconView extends View {
 
         private final Paint circle = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint white = new Paint(Paint.ANTI_ALIAS_FLAG);
         private Drawable emoji;
         private int kind = -1;
+        private boolean symbol;
 
         IconView(Context context) {
             super(context);
+            white.setColor(0xFFFFFFFF);
             NotificationCenter.listenEmojiLoading(this);
         }
 
         void setKind(int kind) {
             if (this.kind == kind) return;
             this.kind = kind;
-            emoji = Emoji.getEmojiDrawable(MapKinds.emoji(kind));
-            circle.setColor(ColorUtils.setAlphaComponent(color(kind), 0x2E));
+            symbol = hasSymbol(kind);
+            emoji = symbol ? null : Emoji.getEmojiDrawable(MapKinds.emoji(kind));
+            circle.setColor(symbol ? color(kind) : ColorUtils.setAlphaComponent(color(kind), 0x2E));
             invalidate();
         }
 
@@ -539,7 +630,9 @@ final class MapKinds {
             final float cx = getWidth() / 2f;
             final float cy = getHeight() / 2f;
             canvas.drawCircle(cx, cy, Math.min(cx, cy), circle);
-            if (emoji != null) {
+            if (symbol) {
+                MapSymbols.draw(canvas, symbol(kind), cx, cy, Math.min(getWidth(), getHeight()) * 0.52f, white);
+            } else if (emoji != null) {
                 final int half = (int) (Math.min(getWidth(), getHeight()) * 0.27f);
                 emoji.setBounds((int) cx - half, (int) cy - half, (int) cx + half, (int) cy + half);
                 emoji.draw(canvas);

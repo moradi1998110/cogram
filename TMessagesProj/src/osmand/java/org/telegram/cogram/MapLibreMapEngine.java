@@ -221,7 +221,9 @@ final class MapLibreMapEngine implements MapEngine {
         if (map == null || style == null || !hasLocationPermission()) return;
         final LocationComponent location = map.getLocationComponent();
         if (!location.isLocationComponentActivated()) {
-            // The user's position in Telegram's accent color, as the route and the road plates.
+            // The user's position in Telegram's accent color, as the route and the road plates. While navigating the
+            // marker is the driver's arrow, a style image (gpsName) the tint leaves alone: tinting MapLibre's own
+            // arrow turned it into a flat disc.
             final int accent = MapTheme.accent();
             final org.maplibre.android.location.LocationComponentOptions dot =
                     org.maplibre.android.location.LocationComponentOptions.builder(context)
@@ -229,6 +231,7 @@ final class MapLibreMapEngine implements MapEngine {
                             .bearingTintColor(accent)
                             .accuracyColor(accent)
                             .accuracyAlpha(0.15f)
+                            .gpsName(NAV_ARROW)
                             .build();
             location.activateLocationComponent(LocationComponentActivationOptions.builder(context, style)
                     .locationComponentOptions(dot)
@@ -491,6 +494,8 @@ final class MapLibreMapEngine implements MapEngine {
     // a white casing, the alternatives in grey under it, all below the labels so names stay readable.
 
     private static final String ROUTE_SOURCE = "phogram-route";
+    /** The driver's arrow while navigating, a style image the position marker uses (MapKinds.navigationArrow). */
+    private static final String NAV_ARROW = "phogram-nav-arrow";
     private static final String ROUTE_CASING = "phogram-route-casing";
     private static final String ROUTE_LINE = "phogram-route-line";
     private static final String ALTERNATIVE_SOURCE = "phogram-route-alternatives";
@@ -800,7 +805,9 @@ final class MapLibreMapEngine implements MapEngine {
         GeoJsonSource alternativeSource = style.getSourceAs(ALTERNATIVE_SOURCE);
         if (source == null || alternativeSource == null) {
             alternativeSource = new GeoJsonSource(ALTERNATIVE_SOURCE, alternativeLines);
-            source = new GeoJsonSource(ROUTE_SOURCE, chosenLines);
+            // Line metrics let the line be painted along its length, which hides the part already driven.
+            source = new GeoJsonSource(ROUTE_SOURCE, chosenLines,
+                    new org.maplibre.android.style.sources.GeoJsonOptions().withLineMetrics(true));
             style.addSource(alternativeSource);
             style.addSource(source);
             final Expression color = Expression.get("color");
@@ -923,6 +930,7 @@ final class MapLibreMapEngine implements MapEngine {
     private void addRoadImages(Style target) {
         MapTheme.apply(target, Theme.isCurrentThemeDark());
         PoiBadges.addTo(context, target);
+        target.addImage(NAV_ARROW, MapKinds.navigationArrow());
         final int plate = MapKinds.dp(28);
         final int corner = MapKinds.dp(9);
         final List<org.maplibre.android.maps.ImageStretches> stretch = new ArrayList<>();
@@ -973,7 +981,7 @@ final class MapLibreMapEngine implements MapEngine {
                 PropertyFactory.textField(Expression.get("name")),
                 PropertyFactory.textFont(new String[] { "Phogram Medium" }),
                 PropertyFactory.textSize(14f),
-                PropertyFactory.textColor(Theme.getColor(Theme.key_chat_messageTextIn)),
+                PropertyFactory.textColor(MapKinds.onAccent()),
                 // In Telegram's message bubble, its tail on the road: the name sits up and to the right of the point.
                 PropertyFactory.iconImage("phogram-bubble"),
                 PropertyFactory.iconTextFit(Property.ICON_TEXT_FIT_BOTH),
@@ -987,7 +995,7 @@ final class MapLibreMapEngine implements MapEngine {
                 PropertyFactory.textField(Expression.get("name")),
                 PropertyFactory.textFont(new String[] { "Phogram Medium" }),
                 PropertyFactory.textSize(13f),
-                PropertyFactory.textColor(Theme.getColor(Theme.key_chat_messageTextIn)),
+                PropertyFactory.textColor(MapKinds.onAccent()),
                 PropertyFactory.iconImage("phogram-bubble"),
                 PropertyFactory.iconTextFit(Property.ICON_TEXT_FIT_BOTH),
                 PropertyFactory.iconTextFitPadding(new Float[] { 2f, 3f, 2f, 3f }),
@@ -1383,12 +1391,48 @@ final class MapLibreMapEngine implements MapEngine {
         }
     }
 
+    /** How far behind the arrow the driven part fades out, so the line does not end in a hard cut. */
+    private static final float DRIVEN_FADE_METERS = 25;
+
+    /**
+     * While driving, the part of the route already driven disappears and only the way ahead stays, as in Waze: the
+     * route's line is painted along its length (line-gradient), clear up to the driver and in the route's color after,
+     * with a short fade at the arrow. Only the cut moves on each position; the line itself is not redrawn. A null route
+     * shows the whole line again.
+     */
+    private void showDriven(Route route, float progress) {
+        if (style == null) return;
+        final org.maplibre.android.style.layers.Layer line = style.getLayer(ROUTE_LINE);
+        final org.maplibre.android.style.layers.Layer casing = style.getLayer(ROUTE_CASING);
+        if (line == null || casing == null) return;
+        if (route == null || progress <= 0) {
+            line.setProperties(PropertyFactory.lineGradient((Expression) null));
+            casing.setProperties(PropertyFactory.lineGradient((Expression) null));
+            return;
+        }
+        final float total = route.along.length > 0 ? route.along[route.along.length - 1] : 0;
+        final float fade = total > 0 ? Math.min(0.2f, DRIVEN_FADE_METERS / total) : 0.01f;
+        final float cut = Math.min(Math.max(progress, 0.0001f), 1 - fade - 0.0001f);
+        line.setProperties(PropertyFactory.lineGradient(driven(cut, fade, MapKinds.routeColor(route.index))));
+        casing.setProperties(PropertyFactory.lineGradient(driven(cut, fade, 0xFFFFFFFF)));
+    }
+
+    private static Expression driven(float cut, float fade, int color) {
+        final int clear = color & 0x00FFFFFF;
+        return Expression.interpolate(Expression.linear(), Expression.lineProgress(),
+                Expression.stop(0, Expression.color(clear)),
+                Expression.stop(cut, Expression.color(clear)),
+                Expression.stop(cut + fade, Expression.color(color)),
+                Expression.stop(1, Expression.color(color)));
+    }
+
     private void onNavigationPosition(Location location) {
         final RouteNavigator current = navigator;
         if (current == null || destroyed || location == null) return;
         final NavigationState state = current.update(location.getLatitude(), location.getLongitude());
         state.speed = location.hasSpeed() ? location.getSpeed() * 3.6f : 0;
         showDriver(location, state);
+        showDriven(current.route, state.progress);
         // A stop reached leaves the route's stops, so a new route after a wrong turn does not go back to it.
         if (state.passedStop != null) {
             current.route.stops.remove(state.passedStop);
@@ -1482,6 +1526,7 @@ final class MapLibreMapEngine implements MapEngine {
         navigator = null;
         navigationListener = null;
         rerouting = false;
+        showDriven(null, 0);
         drawRoadMarks();
         if (map != null && map.getLocationComponent().isLocationComponentActivated()) {
             final LocationComponent location = map.getLocationComponent();

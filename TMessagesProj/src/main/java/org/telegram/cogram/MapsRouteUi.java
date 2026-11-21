@@ -102,15 +102,15 @@ final class MapsRouteUi {
     // The navigation.
     private final FrameLayout banner;
     private final MapKinds.TurnView bannerTurn;
-    private final AnimatedTextView bannerDistance;
+    private final Figure bannerDistance;
     private final TextView bannerStreet;
     private final LinearLayout bannerThen;
     private final TextView bannerThenText;
     private final MapKinds.TurnView bannerThenTurn;
     private final LinearLayout panel;
-    private final AnimatedTextView panelArrival;
-    private final AnimatedTextView panelTime;
-    private final AnimatedTextView panelDistance;
+    private final Figure panelArrival;
+    private final Figure panelTime;
+    private final Figure panelDistance;
     private final TextView panelArrivalLabel;
     private final TextView panelTimeLabel;
     private final TextView panelDistanceLabel;
@@ -197,8 +197,7 @@ final class MapsRouteUi {
         banner.setClickable(true);
         bannerTurn = new MapKinds.TurnView(context);
         banner.addView(bannerTurn, LayoutHelper.createFrame(52, 52, (rtl ? Gravity.RIGHT : Gravity.LEFT) | Gravity.TOP, rtl ? 0 : 12, 12, rtl ? 12 : 0, 0));
-        bannerDistance = number(context, 28);
-        bannerDistance.setGravity(rtl ? Gravity.RIGHT : Gravity.LEFT);
+        bannerDistance = new Figure(context, 28, rtl ? Gravity.RIGHT : Gravity.LEFT);
 
         banner.addView(bannerDistance, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, 38, Gravity.TOP, rtl ? 14 : 76, 8, rtl ? 76 : 14, 0));
         bannerStreet = text(context, 16, rtl);
@@ -227,13 +226,13 @@ final class MapsRouteUi {
         final LinearLayout figures = new LinearLayout(context);
         figures.setOrientation(LinearLayout.HORIZONTAL);
         figures.setGravity(Gravity.CENTER_VERTICAL);
-        panelArrival = number(context, 16);
+        panelArrival = new Figure(context, 16, Gravity.CENTER_HORIZONTAL);
         panelArrivalLabel = text(context, 13, rtl);
         figures.addView(figure(context, panelArrival, panelArrivalLabel, getString(R.string.PhogramNavArrival)), LayoutHelper.createLinear(0, LayoutHelper.WRAP_CONTENT, 1f));
-        panelTime = number(context, 16);
+        panelTime = new Figure(context, 16, Gravity.CENTER_HORIZONTAL);
         panelTimeLabel = text(context, 13, rtl);
         figures.addView(figure(context, panelTime, panelTimeLabel, getString(R.string.PhogramNavTimeLeft)), LayoutHelper.createLinear(0, LayoutHelper.WRAP_CONTENT, 1f));
-        panelDistance = number(context, 16);
+        panelDistance = new Figure(context, 16, Gravity.CENTER_HORIZONTAL);
         panelDistanceLabel = text(context, 13, rtl);
         figures.addView(figure(context, panelDistance, panelDistanceLabel, getString(R.string.PhogramNavDistanceLeft)), LayoutHelper.createLinear(0, LayoutHelper.WRAP_CONTENT, 1f));
         endButton = button(context, getString(R.string.PhogramNavEnd));
@@ -295,12 +294,13 @@ final class MapsRouteUi {
         final FrameLayout gauges = new FrameLayout(context);
         speedView = new MapKinds.SpeedView(context);
         speedView.setTranslationZ(dp(3));
-        gauges.addView(speedView, LayoutHelper.createFrame(68, 68, Gravity.LEFT | Gravity.BOTTOM, 0, 0, 0, 0));
+        // Big enough to read at a glance while driving; the limit sign sits on its upper edge.
+        gauges.addView(speedView, LayoutHelper.createFrame(82, 82, Gravity.LEFT | Gravity.BOTTOM, 0, 0, 0, 0));
         limitView = new MapKinds.LimitView(context);
         limitView.setTranslationZ(dp(4));
         limitView.setVisibility(View.GONE);
-        gauges.addView(limitView, LayoutHelper.createFrame(34, 34, Gravity.LEFT | Gravity.TOP, 50, 0, 0, 0));
-        speedGroup.addView(gauges, LayoutHelper.createLinear(88, 80));
+        gauges.addView(limitView, LayoutHelper.createFrame(38, 38, Gravity.LEFT | Gravity.TOP, 60, 0, 0, 0));
+        speedGroup.addView(gauges, LayoutHelper.createLinear(104, 96));
         streetPill = new TextView(context);
         streetPill.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 13);
         streetPill.setTypeface(AndroidUtilities.bold());
@@ -685,9 +685,9 @@ final class MapsRouteUi {
         speedView.invalidate();
         final GradientDrawable pill = new GradientDrawable();
         pill.setCornerRadius(dp(12));
-        pill.setColor(0xFF2B6CB8);
+        pill.setColor(MapKinds.accent());
         streetPill.setBackground(pill);
-        streetPill.setTextColor(0xFFFFFFFF);
+        streetPill.setTextColor(MapKinds.onAccent());
         final GradientDrawable chip = new GradientDrawable();
         chip.setCornerRadius(dp(16));
         chip.setColor(white);
@@ -779,11 +779,49 @@ final class MapsRouteUi {
         return view;
     }
 
-    private static LinearLayout figure(Context context, AnimatedTextView value, TextView label, String name) {
+    /**
+     * A trip figure: its number in Telegram's rolling digits and its unit as ordinary text beside it, so Arabic keeps
+     * "1.1 كم" and "5:25 م" in their order (MapsFormat's parts). The row takes the page's direction.
+     */
+    static final class Figure extends LinearLayout {
+
+        final AnimatedTextView number;
+        final TextView unit;
+
+        Figure(Context context, int sizeDp, int gravity) {
+            super(context);
+            setOrientation(HORIZONTAL);
+            setGravity(gravity | Gravity.BOTTOM);
+            number = number(context, sizeDp);
+            unit = new TextView(context);
+            unit.setTextSize(TypedValue.COMPLEX_UNIT_DIP, Math.max(11, sizeDp * 0.62f));
+            unit.setTypeface(AndroidUtilities.bold());
+            unit.setSingleLine(true);
+            addView(number, LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, LayoutHelper.MATCH_PARENT));
+            addView(unit, LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, Gravity.BOTTOM, 4, 0, 4, (int) (sizeDp * 0.12f)));
+        }
+
+        void set(String[] parts, boolean animated) {
+            number.setText(parts[0], animated);
+            unit.setText(parts.length > 1 ? parts[1] : "");
+            unit.setVisibility(parts.length > 1 && parts[1].length() > 0 ? VISIBLE : GONE);
+        }
+
+        void clear() {
+            number.setText("", false);
+            unit.setText("");
+        }
+
+        void setTextColor(int color) {
+            number.setTextColor(color);
+            unit.setTextColor(color);
+        }
+    }
+
+    private static LinearLayout figure(Context context, Figure value, TextView label, String name) {
         final LinearLayout column = new LinearLayout(context);
         column.setOrientation(LinearLayout.VERTICAL);
-        value.setGravity(Gravity.CENTER);
-        value.setEllipsizeByGradient(true);
+        value.setGravity(Gravity.CENTER_HORIZONTAL | Gravity.BOTTOM);
         label.setGravity(Gravity.CENTER);
         label.setText(name);
         column.addView(value, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 28));
@@ -1000,7 +1038,7 @@ final class MapsRouteUi {
         if (engine == null || chosen >= routes.size()) return;
         mode = MODE_NAVIGATION;
         updateMode();
-        bannerDistance.setText("", false);
+        bannerDistance.clear();
         bannerStreet.setText(getString(R.string.PhogramNavStarting));
         setKeepScreenOn(true);
         engine.setTrackingListener(() -> {
@@ -1066,12 +1104,12 @@ final class MapsRouteUi {
         }
         if (state.rerouting) {
             bannerTurn.setTurn(MapEngine.Maneuver.STRAIGHT, 0);
-            bannerDistance.setText("", false);
+            bannerDistance.clear();
             bannerStreet.setText(getString(R.string.PhogramNavRerouting));
             bannerThen.setVisibility(View.GONE);
         } else if (state.next != null) {
             bannerTurn.setTurn(state.next);
-            bannerDistance.setText(MapsFormat.distance(state.toNext), true);
+            bannerDistance.set(MapsFormat.distanceParts(state.toNext), true);
             bannerStreet.setText(MapKinds.describe(state.next));
             // The turn after next, when it comes soon after this one.
             if (state.then != null && state.then.distance - state.next.distance < 300) {
@@ -1081,9 +1119,9 @@ final class MapsRouteUi {
                 bannerThen.setVisibility(View.GONE);
             }
         }
-        panelArrival.setText(MapsFormat.arrival(state.remainingSeconds), true);
-        panelTime.setText(MapsFormat.duration(state.remainingSeconds), true);
-        panelDistance.setText(MapsFormat.distance(state.remainingMeters), true);
+        panelArrival.set(MapsFormat.arrivalParts(state.remainingSeconds), true);
+        panelTime.set(MapsFormat.durationParts(state.remainingSeconds), true);
+        panelDistance.set(MapsFormat.distanceParts(state.remainingMeters), true);
         updateTripProgress(state);
         updateDriving(state);
         if (voice != null) voice.onNavigation(state);

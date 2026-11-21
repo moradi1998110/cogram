@@ -115,8 +115,17 @@ function svgToPath(svg) {
     parts.push(`M${+(a.x || 0)},${+(a.y || 0)}h${+a.width}v${+a.height}h${-a.width}z`);
   }
   if (/<(polygon|polyline|ellipse|line)\b/.test(svg) || parts.length === 0) return null;
-  return { d: parts.join(' '), w: size[2], h: size[3], evenOdd: /fill-rule="evenodd"/.test(svg) };
+  // Some of Maki's files break their path data with XML's character codes for a new line or a tab (&#xA;&#x9;);
+  // Android's path parser refuses them, which left those landmarks with a name and no badge.
+  const d = parts.join(' ').replace(/&#x[0-9a-fA-F]+;|&#\d+;/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!PATH_DATA.test(d)) {
+    throw new Error('path data with characters Android cannot parse: ' + d.replace(/[MmLlHhVvCcSsQqTtAaZz0-9eE.,\s+-]/g, '').slice(0, 20));
+  }
+  return { d, w: size[2], h: size[3], evenOdd: /fill-rule="evenodd"/.test(svg) };
 }
+
+/** What Android's path parser takes: the path commands, numbers and separators, nothing else. */
+const PATH_DATA = /^[MmLlHhVvCcSsQqTtAaZz0-9eE.,\s+-]+$/;
 
 function attrs(text) {
   const out = {};
@@ -277,14 +286,14 @@ function transform(style, flavor) {
         ['>=', ['zoom'], ['-', ['get', 'min_zoom'], ['match', ['get', 'kind'], EARLY, 1, 0]]]];
       layer.layout = {
         'icon-image': ['concat', 'pb:', poiKey()],
-        'icon-size': ['interpolate', ['linear'], ['zoom'], 13, 0.8, 16, 1, 18, 1.15],
+        'icon-size': ['interpolate', ['linear'], ['zoom'], 13, 0.85, 16, 1, 18, 1.2],
         'icon-padding': 3,
         'symbol-sort-key': ['get', 'min_zoom'],
         'text-field': textField,
         'text-font': ['literal', ['Phogram Medium']],
-        'text-size': ['interpolate', ['linear'], ['zoom'], 14, 11, 17, 12.5, 19, 14],
+        'text-size': ['interpolate', ['linear'], ['zoom'], 14, 11.5, 17, 13, 19, 14.5],
         'text-variable-anchor': ['right', 'left', 'top', 'bottom'],
-        'text-radial-offset': 1.25,
+        'text-radial-offset': 1.45,
         'text-justify': 'auto',
         'text-max-width': 8,
         'text-optional': true,
