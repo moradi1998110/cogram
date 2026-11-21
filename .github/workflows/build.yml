@@ -194,6 +194,31 @@ jobs:
               ;;
           esac
 
+      # Native libraries are run from inside the APK, so on phones with 16 KB memory pages (some Android 15 and
+      # later) they must sit on 16 KB boundaries in the APK and be built with 16 KB segments; otherwise the app
+      # cannot load them there. The APK's own alignment is ours and fails the build; a library's segments come
+      # from its build and are reported for each library.
+      - name: Check 16 KB page alignment
+        run: |
+          TOOLS="$ANDROID_HOME/build-tools/36.0.0"
+          "$TOOLS/zipalign" -c -P 16 -v 4 dist/phogram-arm64.apk | grep -E "\.so|Verification" || true
+          "$TOOLS/zipalign" -c -P 16 4 dist/phogram-arm64.apk
+          READELF=$(ls "$ANDROID_HOME"/ndk/*/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf 2>/dev/null | head -1)
+          if [ -z "$READELF" ]; then
+            echo "::warning::llvm-readelf not found; the libraries' segment alignment was not checked"
+            exit 0
+          fi
+          rm -rf /tmp/apklibs && mkdir -p /tmp/apklibs && unzip -q -o dist/phogram-arm64.apk 'lib/*' -d /tmp/apklibs
+          for so in /tmp/apklibs/lib/*/*.so; do
+            ALIGN=$("$READELF" -lW "$so" | awk '$1=="LOAD" {print $NF}' | sort -u | tr '\n' ' ')
+            echo "$(basename "$so"): LOAD alignment $ALIGN"
+            for a in $ALIGN; do
+              if [ $((a)) -lt 16384 ]; then
+                echo "::warning::$(basename "$so") has $a segment alignment; phones with 16 KB pages cannot load it"
+              fi
+            done
+          done
+
       # A production build's R8 mapping, kept on GitHub only, turns the shortened names of a crash report back.
       - uses: actions/upload-artifact@v4
         if: startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/prod')
@@ -266,8 +291,14 @@ jobs:
           NOTES=$(printf '%s\n' "$NOTES" | grep -v '^\[required\]')
           echo "Version $VERSION, code $CODE, SHA-256 $SHA, minimum $MIN"
           curl --fail-with-body -sS -H "PRIVATE-TOKEN: $GITLAB_RELEASES_TOKEN" --upload-file "$APK" "$API/$VERSION/$APK"
-          jq -n --arg version "$VERSION" --argjson code "$CODE" --arg file "$API/$VERSION/$APK" --arg sha "$SHA" \
-            --argjson min "$MIN" --arg notes "$NOTES" \
-            '{version: $version, version_code: $code, file_url: $file, sha256: $sha, min_version_code: $min, changelog: $notes}' > update.json
+          # The APK keeps its code and libraries uncompressed, so phones store them once; gzipped it is about half
+          # the download. Versions that know file_gz_url fetch it and check the unpacked APK's SHA-256; older
+          # versions keep fetching file_url.
+          gzip -9 -n -c "$APK" > "$APK.gz"
+          ls -l "$APK" "$APK.gz"
+          curl --fail-with-body -sS -H "PRIVATE-TOKEN: $GITLAB_RELEASES_TOKEN" --upload-file "$APK.gz" "$API/$VERSION/$APK.gz"
+          jq -n --arg version "$VERSION" --argjson code "$CODE" --arg file "$API/$VERSION/$APK" --arg gz "$API/$VERSION/$APK.gz" \
+            --arg sha "$SHA" --argjson min "$MIN" --arg notes "$NOTES" \
+            '{version: $version, version_code: $code, file_url: $file, file_gz_url: $gz, sha256: $sha, min_version_code: $min, changelog: $notes}' > update.json
           cat update.json
           curl --fail-with-body -sS -H "PRIVATE-TOKEN: $GITLAB_RELEASES_TOKEN" --upload-file update.json "$API/latest/update.json"

@@ -406,6 +406,19 @@ else
 fi
 as_app ls -R files/Telegram cache > "$OUT/private-files.txt" 2>&1 || true
 
+# How much the installed app takes, as Settings > Apps counts "App size": the APK, libraries unpacked from it
+# (none when they run from the APK) and the code Android prepared (oat). Read as root where the shell may not.
+CODE_DIR=$(adb shell pm path "$PACKAGE" | head -1 | tr -d '\r' | sed 's|^package:||; s|/base.apk$||')
+if [ -n "$CODE_DIR" ]; then
+  sizes=$(adb shell "du -sk $CODE_DIR $CODE_DIR/lib $CODE_DIR/oat 2>/dev/null" | tr -d '\r')
+  if [ -z "$sizes" ]; then
+    sizes=$(adb shell su 0 du -sk "$CODE_DIR" "$CODE_DIR/lib" "$CODE_DIR/oat" 2>/dev/null | tr -d '\r')
+  fi
+  echo "Installed app size (KB):" | tee -a "$OUT/steps.txt"
+  echo "$sizes" | sed "s|$CODE_DIR|<app>|" | tee -a "$OUT/steps.txt"
+  adb shell ls -l "$CODE_DIR/base.apk" | tr -d '\r' | tee -a "$OUT/steps.txt" || true
+fi
+
 adb shell pidof "$PACKAGE" > "$OUT/pid.txt" || true
 adb logcat -d -v threadtime > "$OUT/logcat.txt" || true
 adb logcat -d -b crash -v threadtime > "$OUT/logcat-crash.txt" || true

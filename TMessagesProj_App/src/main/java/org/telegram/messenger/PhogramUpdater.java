@@ -58,6 +58,8 @@ public class PhogramUpdater {
     private int minVersionCode;
     private String fileUrl;
     private String path;
+    /** fileUrl is the APK gzipped for the trip (file_gz_url), unpacked before its SHA-256 is checked. */
+    private boolean gzipped;
     private long lastCheck;
     private boolean checking;
     private boolean firstCheck = true;
@@ -79,6 +81,7 @@ public class PhogramUpdater {
         sha256 = p.getString("sha256", null);
         minVersionCode = p.getInt("minVersionCode", 0);
         fileUrl = p.getString("fileUrl", null);
+        gzipped = p.getBoolean("gzipped", false);
         path = p.getString("path", null);
         lastCheck = p.getLong("lastCheck", 0L);
         if (currentVersionCode() >= versionCode || !TextUtils.isEmpty(path) && !new File(path).exists()) {
@@ -94,6 +97,7 @@ public class PhogramUpdater {
                 .putString("sha256", sha256)
                 .putInt("minVersionCode", minVersionCode)
                 .putString("fileUrl", fileUrl)
+                .putBoolean("gzipped", gzipped)
                 .putString("path", path)
                 .putLong("lastCheck", lastCheck)
                 .apply();
@@ -151,7 +155,11 @@ public class PhogramUpdater {
                     version = json.getString("version");
                     versionCode = newCode;
                     sha256 = newSha;
-                    fileUrl = resolve(url, json.getString("file_url"));
+                    // The APK keeps its code and libraries uncompressed so the phone stores them once; the
+                    // release also offers it gzipped, which is about half the download.
+                    final String gzUrl = json.optString("file_gz_url", "");
+                    gzipped = !TextUtils.isEmpty(gzUrl);
+                    fileUrl = resolve(url, gzipped ? gzUrl : json.getString("file_url"));
                     minVersionCode = json.optInt("min_version_code", 0);
                     final String arabic = json.optString("changelog_ar", "");
                     final boolean inArabic = "ar".equals(LocaleController.getInstance().getCurrentLocale().getLanguage());
@@ -256,8 +264,10 @@ public class PhogramUpdater {
         progress = 0;
         NotificationCenter.getGlobalInstance().postNotificationName(NotificationCenter.appUpdateLoading);
         final String expected = sha256;
-        task = new HttpGetFileTask(file -> Utilities.globalQueue.postRunnable(() -> {
-            // The file is hashed off the main thread; a file that does not match is thrown away.
+        final boolean unpack = gzipped;
+        task = new HttpGetFileTask(downloaded -> Utilities.globalQueue.postRunnable(() -> {
+            // The file is unpacked and hashed off the main thread; a file that does not match is thrown away.
+            final File file = unpack && downloaded != null ? gunzip(downloaded) : downloaded;
             final boolean good = file != null && expected != null && expected.equals(sha256Of(file));
             if (file != null && !good) {
                 FileLog.e("phogram: the downloaded update does not match its SHA-256");
@@ -270,7 +280,8 @@ public class PhogramUpdater {
                     path = file.getAbsolutePath();
                     progress = 1;
                     save();
-                } else if (file != null) {
+                } else if (downloaded != null) {
+                    // Downloaded, but it did not unpack or does not match its SHA-256.
                     NotificationCenter.getGlobalInstance().postNotificationName(NotificationCenter.showBulletin,
                             org.telegram.ui.Components.Bulletin.TYPE_ERROR, LocaleController.getString(R.string.PhogramUpdateBadFile));
                 }
@@ -279,8 +290,39 @@ public class PhogramUpdater {
         }), value -> {
             progress = value;
             NotificationCenter.getGlobalInstance().postNotificationName(NotificationCenter.appUpdateLoading);
-        }).setOverrideExtension("apk");
+        }).setOverrideExtension(unpack ? "gz" : "apk");
         task.execute(fileUrl);
+    }
+
+    /** No release comes near this; a file that would unpack past it is not an APK of Phogram's. */
+    private static final long MAX_UNPACKED_BYTES = 400L * 1024 * 1024;
+
+    /** Unpacks the gzipped download next to it and deletes the download; null when it is not a sound gzip. */
+    private static File gunzip(File gz) {
+        final File apk = new File(gz.getParentFile(), "phogram-update-" + System.currentTimeMillis() + ".apk");
+        boolean done = false;
+        try (InputStream in = new java.util.zip.GZIPInputStream(new java.io.BufferedInputStream(new FileInputStream(gz)), 1 << 16);
+             java.io.OutputStream out = new java.io.FileOutputStream(apk)) {
+            final byte[] buffer = new byte[1 << 16];
+            long total = 0;
+            int n;
+            while ((n = in.read(buffer)) > 0) {
+                total += n;
+                if (total > MAX_UNPACKED_BYTES) {
+                    throw new java.io.IOException("unpacked update too large");
+                }
+                out.write(buffer, 0, n);
+            }
+            done = true;
+        } catch (Exception e) {
+            FileLog.e("phogram: could not unpack the update", e);
+        } finally {
+            gz.delete();
+            if (!done) {
+                apk.delete();
+            }
+        }
+        return done ? apk : null;
     }
 
     public void cancelDownloadingUpdate() {
