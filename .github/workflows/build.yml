@@ -151,6 +151,15 @@ jobs:
                 EXTRA="$EXTRA -PPHOGRAM_UPDATE_URL=${GITLAB_API_URL%/}/projects/$GITLAB_RELEASES_PROJECT/packages/generic/phogram/latest/update.json"
               fi
               ;;
+            refs/tags/prod-v*)
+              # A release to try on one's own phones first (prod-v0.0.33-test1): installs over the latest release
+              # with its data, and later takes the real release as an update; it is never sent to GitLab.
+              TASK=":TMessagesProj_App:assembleAfatRelease"
+              EXTRA="-PAPP_VERSION_CODE=$((8000 + GITHUB_RUN_NUMBER)) -PPHOGRAM_VERSION_NAME=${GITHUB_REF_NAME#prod-v}"
+              if [ -n "$GITLAB_API_URL" ] && [ -n "$GITLAB_RELEASES_PROJECT" ]; then
+                EXTRA="$EXTRA -PPHOGRAM_UPDATE_URL=${GITLAB_API_URL%/}/projects/$GITLAB_RELEASES_PROJECT/packages/generic/phogram/latest/update.json"
+              fi
+              ;;
             refs/tags/prod*)
               TASK=":TMessagesProj_App:assembleAfatRelease"
               ;;
