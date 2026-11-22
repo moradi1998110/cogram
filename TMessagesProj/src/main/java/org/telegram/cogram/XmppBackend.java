@@ -257,6 +257,10 @@ final class XmppBackend implements GatewayBackend {
                 return;
             }
             rememberCaption(message, target, captionSender(message), message.getBody());
+            if (BuildVars.LOGS_ENABLED) {
+                FileLog.d("cogram: caption " + message.getUuid() + " received for " + target
+                        + " from " + captionSender(message) + " status=" + message.getStatus());
+            }
             scheduleSync();
         });
         try {
@@ -393,16 +397,24 @@ final class XmppBackend implements GatewayBackend {
             iterator.remove();
             ids.forgetSend(send.randomId);
             Message caption = captionsAfter.remove(send.randomId);
+            if (caption != null && BuildVars.LOGS_ENABLED) {
+                FileLog.d("cogram: caption " + caption.getUuid() + " for file " + send.message.getUuid()
+                        + " status=" + status + " delivered=" + delivered + " failed=" + send.failed);
+            }
             if (delivered) {
                 TLObject response = send.response.get();
                 finished.add(() -> send.reply.complete(response, null));
                 if (caption != null) {
-                    // The file is out; its caption follows, encrypted as the chat's text is.
+                    // The file is out; its caption follows, encrypted as the chat's text is, the way a text is
+                    // sent, once the lock is free.
                     Conversation conversation = (Conversation) send.message.getConversation();
-                    whenEncryptionDecided(conversation, caption, () -> FileLog.e("cogram: caption not sent"),
-                            () -> service.sendMessage(caption));
+                    finished.add(() -> sendCaption(conversation, caption));
                 }
                 continue;
+            }
+            if (caption != null) {
+                // Its file did not go out, so neither does the caption, which Telegram shows with the failed file.
+                forgetCaption(caption);
             }
             if (rejected) {
                 dropFailedMessage(send.message);
@@ -412,6 +424,35 @@ final class XmppBackend implements GatewayBackend {
             error.text = ERROR_SEND_FAILED;
             finished.add(() -> send.reply.complete(null, error));
         }
+    }
+
+    /**
+     * Sends a file's caption as its own text message. A caption that fails to go out is no longer hidden, so
+     * Telegram shows it as a failed text the user can send again, instead of losing it without a sign.
+     */
+    private void sendCaption(Conversation conversation, Message caption) {
+        whenEncryptionDecided(conversation, caption, () -> {
+            // Never sent bare: it is kept as a failed message of its own, which the sync shows as a text.
+            FileLog.e("cogram: caption " + caption.getUuid() + " not sent: no OMEMO session");
+            forgetCaption(caption);
+            caption.setStatus(Message.STATUS_SEND_FAILED);
+            conversation.add(caption);
+            service.databaseBackend.createMessage(caption);
+            scheduleSync();
+        }, () -> {
+            service.sendMessage(caption);
+            if (BuildVars.LOGS_ENABLED) {
+                FileLog.d("cogram: caption " + caption.getUuid() + " handed to the engine, encryption="
+                        + caption.getEncryption() + " status=" + caption.getStatus()
+                        + " in conversation=" + (conversation.findMessageWithUuid(caption.getUuid()) != null));
+            }
+            scheduleSync();
+        });
+    }
+
+    private void forgetCaption(Message caption) {
+        captionUuids.remove(caption.getUuid());
+        ids.removeCaption(caption.getUuid());
     }
 
     /** Telegram keeps the failed message and offers to resend it, which makes a new one here. */
@@ -1548,6 +1589,14 @@ final class XmppBackend implements GatewayBackend {
             if (message.getType() != Message.TYPE_TEXT || !captionUuids.contains(message.getUuid())) {
                 continue;
             }
+            if (message.getStatus() != Message.STATUS_RECEIVED) {
+                logCaptionStatus(message);
+                if (message.getStatus() == Message.STATUS_SEND_FAILED) {
+                    // Our caption the engine could not send: shown as a failed text, no longer under its file.
+                    forgetCaption(message);
+                    continue;
+                }
+            }
             String[] caption = ids.captionOf(message.getUuid());
             if (caption != null && caption[1].equals(mediaSenders.get(caption[0]))) {
                 attached.add(message.getUuid());
@@ -1559,6 +1608,20 @@ final class XmppBackend implements GatewayBackend {
             }
         }
         return attached;
+    }
+
+    /** The last status logged for each of our captions, so the log shows each change once. */
+    private final Map<String, Integer> loggedCaptionStatus = new java.util.concurrent.ConcurrentHashMap<>();
+
+    private void logCaptionStatus(Message caption) {
+        if (!BuildVars.LOGS_ENABLED) {
+            return;
+        }
+        Integer previous = loggedCaptionStatus.put(caption.getUuid(), caption.getStatus());
+        if (previous == null || previous != caption.getStatus()) {
+            FileLog.d("cogram: caption " + caption.getUuid() + " status " + previous + " -> " + caption.getStatus()
+                    + " encryption=" + caption.getEncryption());
+        }
     }
 
     /** Captions already taken off Telegram's list, so each is deleted there once. */
@@ -2569,11 +2632,15 @@ final class XmppBackend implements GatewayBackend {
         // never comes before its file; it is the file's text here from the start.
         String text = caption == null ? "" : caption.trim();
         if (!text.isEmpty()) {
+            // Addressed as a text is (sendText), to the contact rather than to one of its devices.
             Message captionMessage = new Message(conversation, text, Message.ENCRYPTION_NONE);
-            captionMessage.setCounterpart(conversation.getNextCounterpart());
             captionMessage.attachTo = message.getUuid();
             rememberCaption(captionMessage, message.getUuid(), "self", text);
             captionsAfter.put(randomId, captionMessage);
+        }
+        if (BuildVars.LOGS_ENABLED) {
+            FileLog.d("cogram: sendFile " + message.getUuid() + " mime=" + mime + " size=" + file.length()
+                    + " caption=" + (text.isEmpty() ? "none" : text.length() + " chars"));
         }
         // Read before the engine takes the file, since it deletes the upload once copied.
         TLRPC.MessageMedia media = sentMedia(id, date, file, mime, attributes, photo);

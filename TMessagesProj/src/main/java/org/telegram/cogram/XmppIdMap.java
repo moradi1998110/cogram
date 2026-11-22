@@ -88,6 +88,11 @@ final class XmppIdMap extends SQLiteOpenHelper {
         getWritableDatabase().insertWithOnConflict("captions", null, values, SQLiteDatabase.CONFLICT_REPLACE);
     }
 
+    /** Forgets a caption that did not go out, so its file shows none. */
+    synchronized void removeCaption(String uuid) {
+        getWritableDatabase().delete("captions", "uuid = ?", new String[]{uuid});
+    }
+
     /** The caption a sender attached to this message, by any of its ids; null when none. */
     synchronized String captionFor(String sender, String... targets) {
         for (String target : targets) {
