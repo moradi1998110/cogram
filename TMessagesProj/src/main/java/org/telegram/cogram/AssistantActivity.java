@@ -399,7 +399,7 @@ public class AssistantActivity extends BaseFragment implements MainTabsActivity.
             // The icon is drawn larger inside the circle; scaling the view would scale the circle out of the card.
             icon.setScaleType(ImageView.ScaleType.FIT_CENTER);
             icon.setPadding(dp(22), dp(22), dp(22), dp(22));
-            icon.setImageResource(R.drawable.input_ai);
+            icon.setImageResource(R.drawable.phogram_ai);
             icon.setColorFilter(new PorterDuffColorFilter(Color.WHITE, PorterDuff.Mode.SRC_IN));
             final GradientDrawable circle = new GradientDrawable(GradientDrawable.Orientation.TL_BR, new int[] { 0xFFB659FF, 0xFF617CFF });
             circle.setShape(GradientDrawable.OVAL);
