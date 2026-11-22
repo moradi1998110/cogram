@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Phogram connection state in the status bar. Connection problem (e.g. sign-in refused): one cell with an exclamation mark cut out.
+     Overrides xmpp-core's icon of the same name; generated from the hex mark's geometry. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:fillType="evenOdd"
+        android:pathData="M10.095,1.7Q12,0.6 13.905,1.7L19.967,5.2Q21.873,6.3 21.873,8.5L21.873,15.5Q21.873,17.7 19.967,18.8L13.905,22.3Q12,23.4 10.095,22.3L4.033,18.8Q2.127,17.7 2.127,15.5L2.127,8.5Q2.127,6.3 4.033,5.2ZM10.85,6.4L13.15,6.4L12.75,13.6L11.25,13.6ZM12,15.2L13.3,16.5L12,17.8L10.7,16.5Z" />
+</vector>

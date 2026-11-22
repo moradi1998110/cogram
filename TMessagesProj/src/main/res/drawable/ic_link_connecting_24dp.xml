@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Phogram connection state in the status bar. Connecting: one cell is in, the other still an outline, no bridge yet.
+     Overrides xmpp-core's icon of the same name; generated from the hex mark's geometry. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M5.197,9.828Q6.136,9.286 7.075,9.828L10.48,11.793Q11.419,12.336 11.419,13.42L11.419,17.351Q11.419,18.436 10.48,18.978L7.075,20.943Q6.136,21.486 5.197,20.943L1.793,18.978Q0.853,18.436 0.853,17.351L0.853,13.42Q0.853,12.336 1.793,11.793Z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:fillType="evenOdd"
+        android:pathData="M16.925,3.057Q17.864,2.515 18.803,3.057L22.207,5.022Q23.147,5.565 23.147,6.649L23.147,10.58Q23.147,11.664 22.207,12.207L18.803,14.172Q17.864,14.715 16.925,14.172L13.52,12.207Q12.581,11.664 12.581,10.58L12.581,6.649Q12.581,5.564 13.52,5.022ZM17.227,4.845Q17.864,4.477 18.501,4.845L20.81,6.178Q21.447,6.546 21.447,7.281L21.447,9.948Q21.447,10.683 20.81,11.051L18.501,12.384Q17.864,12.752 17.227,12.384L14.918,11.051Q14.281,10.683 14.281,9.948L14.281,7.281Q14.281,6.546 14.918,6.178Z" />
+</vector>
