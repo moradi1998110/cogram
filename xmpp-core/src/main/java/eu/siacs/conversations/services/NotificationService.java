@@ -1841,11 +1841,6 @@ public class NotificationService {
         }
         // Phogram signs in to one account only, so the notification says how that one connection is, not how many
         // of the accounts are connected.
-        final boolean connecting =
-                accounts != null
-                        && Iterables.any(
-                                accounts,
-                                a -> a.isEnabled() && a.getStatus() == Account.State.CONNECTING);
         mBuilder.setContentText(
                 mXmppConnectionService.getString(
                         connected > 0
