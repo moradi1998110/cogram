@@ -813,6 +813,18 @@ final class MapKinds {
         }
     }
 
+    /** The turn's sign as a picture, for the trip's notification. */
+    static android.graphics.Bitmap turnBitmap(Context context, MapEngine.Maneuver maneuver, int color, int size) {
+        final TurnView view = new TurnView(context);
+        view.setColor(color);
+        view.setTurn(maneuver);
+        view.measure(View.MeasureSpec.makeMeasureSpec(size, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(size, View.MeasureSpec.EXACTLY));
+        view.layout(0, 0, size, size);
+        final android.graphics.Bitmap bitmap = android.graphics.Bitmap.createBitmap(size, size, android.graphics.Bitmap.Config.ARGB_8888);
+        view.draw(new Canvas(bitmap));
+        return bitmap;
+    }
+
     /** A turn drawn as a road with an arrow, as on a road sign, in one color. */
     static final class TurnView extends View {
 
