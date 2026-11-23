@@ -19,6 +19,7 @@ final class MapFling implements View.OnTouchListener, Runnable {
 
     private final View view;
     private final MapLibreMap map;
+    private final Runnable onMove;
     private final Runnable onEnd;
     private final Scroller scroller;
     private final int minVelocity;
@@ -29,12 +30,17 @@ final class MapFling implements View.OnTouchListener, Runnable {
     private double zoomAtDown;
     private int lastX;
     private int lastY;
+    private boolean touchStoppedGlide;
 
-    /** {@code onEnd} runs when a glide comes to its stop, as the camera's idle does after MapLibre's own gestures. */
+    /**
+     * {@code onMove} runs at each step of a glide and {@code onEnd} at its stop, as the camera's move and idle do
+     * during MapLibre's own gestures: its scrollBy tells neither.
+     */
     @SuppressLint("ClickableViewAccessibility")
-    MapFling(View view, MapLibreMap map, Runnable onEnd) {
+    MapFling(View view, MapLibreMap map, Runnable onMove, Runnable onEnd) {
         this.view = view;
         this.map = map;
+        this.onMove = onMove;
         this.onEnd = onEnd;
         final ViewConfiguration configuration = ViewConfiguration.get(view.getContext());
         minVelocity = configuration.getScaledMinimumFlingVelocity();
@@ -49,17 +55,24 @@ final class MapFling implements View.OnTouchListener, Runnable {
         });
     }
 
-    void stop() {
-        if (scroller.isFinished()) return;
+    /** Whether a glide was going on, now stopped. */
+    boolean stop() {
+        if (scroller.isFinished()) return false;
         scroller.abortAnimation();
         view.removeCallbacks(this);
+        return true;
+    }
+
+    /** The touch that has just ended stopped a glide: its tap only stops the map, as in Google Maps. */
+    boolean touchStoppedGlide() {
+        return touchStoppedGlide;
     }
 
     @Override
     public boolean onTouch(View v, MotionEvent event) {
         switch (event.getActionMasked()) {
             case MotionEvent.ACTION_DOWN:
-                stop();
+                touchStoppedGlide = stop();
                 twoFingers = false;
                 zoomAtDown = map.getCameraPosition().zoom;
                 recycle();
@@ -109,6 +122,7 @@ final class MapFling implements View.OnTouchListener, Runnable {
         final int x = scroller.getCurrX();
         final int y = scroller.getCurrY();
         map.scrollBy(x - lastX, y - lastY);
+        onMove.run();
         lastX = x;
         lastY = y;
         view.postOnAnimation(this);

@@ -1101,6 +1101,12 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
             public void onAlongTapped(MapEngine.Place place) {
                 if (routeUi != null) routeUi.offerStop(place);
             }
+
+            // A tap on the bare map closes the place's card, as in Google Maps.
+            @Override
+            public void onEmptyTapped() {
+                if (shownPlace != null && !searchOpen && !isRouting()) hidePlace();
+            }
         });
     }
 

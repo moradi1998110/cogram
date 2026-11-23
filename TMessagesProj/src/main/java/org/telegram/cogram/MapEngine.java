@@ -420,6 +420,10 @@ public interface MapEngine {
         /** A place pin along the route was tapped, while navigating. */
         default void onAlongTapped(Place place) {
         }
+
+        /** The map was tapped where nothing is drawn to tap. */
+        default void onEmptyTapped() {
+        }
     }
 
     default void setMapTapListener(MapTapListener listener) {

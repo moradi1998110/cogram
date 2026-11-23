@@ -157,7 +157,7 @@ final class MapLibreMapEngine implements MapEngine {
         // The page has its own compass button, as Telegram's location page does.
         map.getUiSettings().setCompassEnabled(false);
         map.getUiSettings().setAttributionEnabled(true);
-        fling = new MapFling(view, map, this::onCameraIdle);
+        fling = new MapFling(view, map, this::onCameraMoved, this::onCameraIdle);
         applyAttributionMargins();
         map.setMaxZoomPreference(19);
         map.setCameraPosition(new CameraPosition.Builder()
@@ -481,6 +481,8 @@ final class MapLibreMapEngine implements MapEngine {
 
     private boolean onMapClick(LatLng point) {
         if (tapListener == null || map == null || style == null) return false;
+        // A tap that stopped the gliding map only stops it.
+        if (fling != null && fling.touchStoppedGlide()) return true;
         final PointF screen = map.getProjection().toScreenLocation(point);
         if (onAlongClick(screen)) return true;
         if (onRouteClick(screen)) return true;
@@ -502,6 +504,7 @@ final class MapLibreMapEngine implements MapEngine {
                     kindOfTile(kind), ""));
             return true;
         }
+        tapListener.onEmptyTapped();
         return false;
     }
 
