@@ -1826,12 +1826,18 @@ public class NotificationService {
         final List<Account> accounts = mXmppConnectionService.getAccounts();
         final int enabled;
         final int connected;
+        final boolean connecting;
         if (accounts == null) {
             enabled = 0;
             connected = 0;
+            connecting = false;
         } else {
             enabled = Iterables.size(Iterables.filter(accounts, Account::isEnabled));
             connected = Iterables.size(Iterables.filter(accounts, Account::isOnlineAndConnected));
+            connecting =
+                    Iterables.any(
+                            accounts,
+                            a -> a.isEnabled() && a.getStatus() == Account.State.CONNECTING);
         }
         // Phogram signs in to one account only, so the notification says how that one connection is, not how many
         // of the accounts are connected.
@@ -1853,7 +1859,12 @@ public class NotificationService {
         }
         mBuilder.setWhen(0)
                 .setPriority(Notification.PRIORITY_MIN)
-                .setSmallIcon(connected > 0 ? R.drawable.ic_link_24dp : R.drawable.ic_link_off_24dp)
+                .setSmallIcon(
+                        connected > 0
+                                ? R.drawable.ic_link_24dp
+                                : connecting
+                                        ? R.drawable.ic_link_connecting_24dp
+                                        : R.drawable.ic_link_off_24dp)
                 .setLocalOnly(true);
 
         if (Compatibility.twentySix()) {

@@ -36,6 +36,8 @@ import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.LiteMode;
 import org.telegram.messenger.LocaleController;
 import org.telegram.messenger.R;
+import org.telegram.messenger.Utilities;
+import org.telegram.cogram.live.LiveChannelsActivity;
 import org.telegram.messenger.SharedConfig;
 import org.telegram.ui.ActionBar.BaseFragment;
 import org.telegram.ui.ActionBar.Theme;
@@ -92,18 +94,24 @@ public class ServicesActivity extends BaseFragment implements MainTabsActivity.T
         }
     }
 
-    /** A sample service until the organization's server supplies real ones. */
+    /** A service tile; one without a screen is a sample until the organization's server supplies real ones. */
     private static final class Service {
         final int name;
         final int icon;
         final int colorTop;
         final int colorBottom;
+        final Utilities.Callback0Return<BaseFragment> screen;
 
         Service(int name, int icon, int colorTop, int colorBottom) {
+            this(name, icon, colorTop, colorBottom, null);
+        }
+
+        Service(int name, int icon, int colorTop, int colorBottom, Utilities.Callback0Return<BaseFragment> screen) {
             this.name = name;
             this.icon = icon;
             this.colorTop = colorTop;
             this.colorBottom = colorBottom;
+            this.screen = screen;
         }
     }
 
@@ -115,6 +123,7 @@ public class ServicesActivity extends BaseFragment implements MainTabsActivity.T
     };
 
     private static final Service[] SAMPLE_SERVICES = {
+        new Service(R.string.PhogramServiceLiveTv, R.drawable.msg_videocall, 0xFFF45255, 0xFFDF3955, LiveChannelsActivity::new),
         new Service(R.string.PhogramServiceSalifni, R.drawable.msg_payment_card, 0xFF55CA47, 0xFF27B434),
         new Service(R.string.PhogramServiceBousla, R.drawable.msg_location, 0xFF1BA4ED, 0xFF1488E1),
         new Service(R.string.PhogramServicePayments, R.drawable.msg_payment_delivery, 0xFFEFA612, 0xFFE77512),
@@ -288,6 +297,10 @@ public class ServicesActivity extends BaseFragment implements MainTabsActivity.T
     }
 
     private void openService(Service service) {
+        if (service.screen != null) {
+            presentFragment(service.screen.run());
+            return;
+        }
         BulletinFactory.of(this).createSimpleBulletin(R.raw.info, LocaleController.getString(R.string.PhogramServiceNotReady)).show();
     }
 

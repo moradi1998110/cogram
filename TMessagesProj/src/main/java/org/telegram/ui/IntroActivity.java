@@ -105,6 +105,7 @@ public class IntroActivity extends BaseFragment implements NotificationCenter.No
     private GradientDrawable startMessagingButtonBackground;
     private TextView startMessagingButton;
     private FrameLayout frameLayout2;
+    private org.telegram.cogram.PhogramIntroMark introMark;
     private FrameLayout frameContainerView;
 
     private RLottieDrawable darkThemeDrawable;
@@ -292,6 +293,10 @@ public class IntroActivity extends BaseFragment implements NotificationCenter.No
             }
         });
 
+        // Phogram's mark, drawn in white over the first page's Telegram-blue circle.
+        introMark = new org.telegram.cogram.PhogramIntroMark(context);
+        frameLayout2.addView(introMark, LayoutHelper.createFrame(ICON_WIDTH_DP, ICON_HEIGHT_DP, Gravity.CENTER));
+
         viewPager = new ViewPager(context);
         viewPager.setAdapter(new IntroAdapter());
         viewPager.setPageMargin(0);
@@ -301,6 +306,8 @@ public class IntroActivity extends BaseFragment implements NotificationCenter.No
             @Override
             public void onPageScrolled(int position, float positionOffset, int positionOffsetPixels) {
                 bottomPages.setPageOffset(position, positionOffset);
+                // The mark belongs to the first page: it fades out as soon as the page starts to leave.
+                introMark.setAlpha(position == 0 ? Math.max(0f, 1f - positionOffset * 3f) : 0f);
 
                 float width = viewPager.getMeasuredWidth();
                 if (width == 0) {
@@ -313,6 +320,9 @@ public class IntroActivity extends BaseFragment implements NotificationCenter.No
             @Override
             public void onPageSelected(int i) {
                 currentViewPagerPage = i;
+                if (i == 0) {
+                    introMark.play();
+                }
             }
 
             @Override
@@ -446,9 +456,11 @@ public class IntroActivity extends BaseFragment implements NotificationCenter.No
             if (LocaleController.isRTL) {
                 viewPager.setCurrentItem(6);
                 lastPage = 6;
+                introMark.setAlpha(0f);
             } else {
                 viewPager.setCurrentItem(0);
                 lastPage = 0;
+                introMark.postDelayed(introMark::play, 250);
             }
             justCreated = false;
         }
@@ -790,7 +802,8 @@ public class IntroActivity extends BaseFragment implements NotificationCenter.No
             loadTexture(R.drawable.intro_powerful_star, 18);
             loadTexture(R.drawable.intro_private_door, 19);
             loadTexture(R.drawable.intro_private_screw, 20);
-            loadTexture(R.drawable.intro_tg_plane, 21);
+            // Phogram: no paper plane; PhogramIntroMark assembles the hex mark over the blue circle instead.
+            loadTexture(v -> Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888), 21);
             loadTexture(v -> {
                 Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
                 paint.setColor(ThemeColors.TELEGRAM_COLOR); // It's logo color, it should not be colored by the theme

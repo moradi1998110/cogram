@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Phogram's AI assistant, "the core": one cell of the hex mark with the assistant's spark cut out of it.
+     A flat white silhouette; the tab bar and the assistant page tint it. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:fillType="evenOdd"
+        android:pathData="M9.922,2Q12,0.8 14.078,2L19.621,5.2Q21.699,6.4 21.699,8.8L21.699,15.2Q21.699,17.6 19.621,18.8L14.078,22Q12,23.2 9.922,22L4.379,18.8Q2.301,17.6 2.301,15.2L2.301,8.8Q2.301,6.4 4.379,5.2ZM12,6Q13.024,11.376 18.4,12.4Q13.024,13.424 12,18.8Q10.976,13.424 5.6,12.4Q10.976,11.376 12,6ZM17.2,4.7Q17.58,6.22 19.1,6.6Q17.58,6.98 17.2,8.5Q16.82,6.98 15.3,6.6Q16.82,6.22 17.2,4.7Z" />
+</vector>
