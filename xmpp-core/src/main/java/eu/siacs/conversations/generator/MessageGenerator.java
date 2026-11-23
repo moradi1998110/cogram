@@ -61,7 +61,7 @@ public class MessageGenerator extends AbstractGenerator {
         if (message.edited()) {
             packet.addExtension(new Replace(message.getMessageId()));
         }
-        // Phogram: a caption names the file message it belongs to (XEP-0367); only the id, never the text.
+        // Phogram: a caption, or a file of an album, names the file message it belongs to (XEP-0367); only the id.
         if (message.attachTo != null) {
             packet.addChild("attach-to", MessageAttachments.NAMESPACE).setAttribute("id", message.attachTo);
         }

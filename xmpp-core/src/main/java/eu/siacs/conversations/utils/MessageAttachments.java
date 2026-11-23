@@ -6,7 +6,8 @@ import eu.siacs.conversations.entities.Message;
  * Phogram: messages attached to an earlier one (XEP-0367, Message Attaching), used for the caption of a photo or a
  * file. A caption goes out as a text message of its own right after the file, encrypted as any text is, with
  * {@code <attach-to id="the file message's id"/>}; clients without the extension show it as the next message, and
- * Phogram shows it under the file. The engine only carries the reference; the app keeps it.
+ * Phogram shows it under the file. The files of an album are attached the same way to the album's first file,
+ * which Phogram shows together. The engine only carries the reference; the app keeps it.
  */
 public final class MessageAttachments {
 
