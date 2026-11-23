@@ -660,6 +660,12 @@ public class MessageParser extends AbstractParser
                 }
             }
 
+            // Phogram: a message attached to an earlier one (XEP-0367): the caption of a photo or file, or a file of
+            // an album. Told before the message joins its conversation, so the app knows it from the message's start.
+            final var attachTo = packet.findChild("attach-to", MessageAttachments.NAMESPACE);
+            if (attachTo != null && attachTo.getAttribute("id") != null) {
+                MessageAttachments.attached(message, attachTo.getAttribute("id"));
+            }
             if (query != null
                     && query.getPagingOrder() == MessageArchiveManager.PagingOrder.REVERSE) {
                 conversation.prepend(query.getActualInThisQuery(), message);
@@ -707,11 +713,6 @@ public class MessageParser extends AbstractParser
             }
 
             mXmppConnectionService.databaseBackend.createMessage(message);
-            // Phogram: a text attached to an earlier message (XEP-0367), the caption of a photo or file.
-            final var attachTo = packet.findChild("attach-to", MessageAttachments.NAMESPACE);
-            if (attachTo != null && attachTo.getAttribute("id") != null) {
-                MessageAttachments.attached(message, attachTo.getAttribute("id"));
-            }
             final HttpConnectionManager manager =
                     this.mXmppConnectionService.getHttpConnectionManager();
             final var autoAcceptFileSize =

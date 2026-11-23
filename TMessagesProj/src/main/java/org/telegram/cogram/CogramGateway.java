@@ -850,7 +850,7 @@ public final class CogramGateway {
         long sentBefore = mediaRef(media);
         if (sentBefore != 0) {
             // A picture sent before, which Telegram names instead of uploading it again.
-            return XmppBackend.isMediaId(sentBefore) ? backend.resendMedia(peerId(request.peer), sentBefore, request.random_id, request.message) : null;
+            return XmppBackend.isMediaId(sentBefore) ? backend.resendMedia(peerId(request.peer), sentBefore, request.random_id, request.message, null) : null;
         }
         boolean photo = media instanceof TLRPC.TL_inputMediaUploadedPhoto;
         if (!photo && !(media instanceof TLRPC.TL_inputMediaUploadedDocument) || media.file == null) {
@@ -864,7 +864,7 @@ public final class CogramGateway {
         if (mime == null || mime.isEmpty()) {
             mime = "application/octet-stream";
         }
-        return backend.sendFile(peerId(request.peer), file, mime, photo ? new ArrayList<>() : media.attributes, photo, request.random_id, request.message);
+        return backend.sendFile(peerId(request.peer), file, mime, photo ? new ArrayList<>() : media.attributes, photo, request.random_id, request.message, null);
     }
 
     /** The id of a photo or file Telegram names instead of uploading, or 0. */
@@ -943,79 +943,76 @@ public final class CogramGateway {
         return result;
     }
 
-    /** The sent album stays one album in the chat, as Telegram drew it while it was going out. */
-    private static void groupAlbum(TLRPC.TL_updates updates) {
-        long group = Utilities.random.nextLong() & Long.MAX_VALUE;
-        for (TLRPC.Update update : updates.updates) {
-            TLRPC.Message message = update instanceof TL_update.TL_updateNewMessage ? ((TL_update.TL_updateNewMessage) update).message
-                    : update instanceof TL_update.TL_updateNewChannelMessage ? ((TL_update.TL_updateNewChannelMessage) update).message : null;
-            if (message != null) {
-                message.grouped_id = group;
-                message.flags |= 131072;
+    /**
+     * Sends an album's files one after another, in the order they were chosen: the other side numbers its messages
+     * as they come, and shows an album's files in that order. Each file is attached to the album, so it is one album
+     * on both sides. One answer comes once every file is out, with all their updates, as Telegram's server gives it.
+     */
+    private TLObject sendMultiMedia(TLRPC.TL_messages_sendMultiMedia request) {
+        long peer = peerId(request.peer);
+        ArrayList<TLRPC.TL_inputSingleMedia> items = new ArrayList<>(request.multi_media);
+        if (items.isEmpty()) {
+            return null;
+        }
+        for (TLRPC.TL_inputSingleMedia single : items) {
+            long id = mediaRef(single.media);
+            if (!albumItems.containsKey(id) && !XmppBackend.isMediaId(id)) {
+                discardAlbum(items, 0);
+                return null;
             }
+        }
+        String album = items.size() > 1 ? java.util.UUID.randomUUID().toString() : null;
+        TLRPC.TL_updates all = new TLRPC.TL_updates();
+        all.date = now();
+        DeferredReply reply = new DeferredReply();
+        sendAlbumFrom(peer, items, 0, album, all, reply);
+        return reply;
+    }
+
+    /** Sends the album's file at this index, and the next once it is out; a file that fails leaves the rest going. */
+    private void sendAlbumFrom(long peer, List<TLRPC.TL_inputSingleMedia> items, int index, String album, TLRPC.TL_updates all, DeferredReply reply) {
+        if (index == items.size()) {
+            if (all.updates.isEmpty()) {
+                TLRPC.TL_error fail = new TLRPC.TL_error();
+                fail.code = 400;
+                fail.text = "MEDIA_EMPTY";
+                reply.complete(null, fail);
+            } else {
+                reply.complete(all, null);
+            }
+            return;
+        }
+        TLRPC.TL_inputSingleMedia single = items.get(index);
+        long id = mediaRef(single.media);
+        AlbumItem item = albumItems.remove(id);
+        TLObject sent = item != null
+                ? backend.sendFile(peer, item.file, item.mime, item.attributes, item.photo, single.random_id, single.message, album)
+                // A picture of the album sent before, which Telegram names instead of uploading it again.
+                : backend.resendMedia(peer, id, single.random_id, single.message, album);
+        Reply next = (response, error) -> {
+            if (response instanceof TLRPC.TL_updates) {
+                TLRPC.TL_updates updates = (TLRPC.TL_updates) response;
+                all.updates.addAll(updates.updates);
+                all.users.addAll(updates.users);
+                all.chats.addAll(updates.chats);
+            }
+            sendAlbumFrom(peer, items, index + 1, album, all, reply);
+        };
+        if (sent instanceof DeferredReply) {
+            ((DeferredReply) sent).attach(next);
+        } else {
+            next.run(sent, null);
         }
     }
 
-    private TLObject sendMultiMedia(TLRPC.TL_messages_sendMultiMedia request) {
-        long peer = peerId(request.peer);
-        TLRPC.TL_updates all = new TLRPC.TL_updates();
-        all.date = now();
-        ArrayList<DeferredReply> waiting = new ArrayList<>();
-        for (TLRPC.TL_inputSingleMedia single : request.multi_media) {
-            long id = mediaRef(single.media);
-            AlbumItem item = albumItems.remove(id);
-            TLObject sent;
+    /** Lets go of the files of an album, from this index on, that will not be sent. */
+    private void discardAlbum(List<TLRPC.TL_inputSingleMedia> items, int from) {
+        for (int i = from; i < items.size(); i++) {
+            AlbumItem item = albumItems.remove(mediaRef(items.get(i).media));
             if (item != null) {
-                sent = backend.sendFile(peer, item.file, item.mime, item.attributes, item.photo, single.random_id, single.message);
-            } else if (XmppBackend.isMediaId(id)) {
-                // A picture of the album sent before, which Telegram names instead of uploading it again.
-                sent = backend.resendMedia(peer, id, single.random_id, single.message);
-            } else {
-                return null;
-            }
-            if (sent instanceof DeferredReply) {
-                waiting.add((DeferredReply) sent);
-            } else if (sent instanceof TLRPC.TL_updates) {
-                all.updates.addAll(((TLRPC.TL_updates) sent).updates);
-            } else {
-                return null;
+                item.file.delete();
             }
         }
-        if (waiting.isEmpty()) {
-            groupAlbum(all);
-            return all;
-        }
-        // One answer for the album once every item is out, with all their updates, as Telegram's server gives it.
-        DeferredReply album = new DeferredReply();
-        java.util.concurrent.atomic.AtomicInteger left = new java.util.concurrent.atomic.AtomicInteger(waiting.size());
-        java.util.concurrent.atomic.AtomicBoolean failed = new java.util.concurrent.atomic.AtomicBoolean();
-        for (DeferredReply item : waiting) {
-            item.attach((response, error) -> {
-                synchronized (all) {
-                    if (response instanceof TLRPC.TL_updates) {
-                        all.updates.addAll(((TLRPC.TL_updates) response).updates);
-                        all.users.addAll(((TLRPC.TL_updates) response).users);
-                        all.chats.addAll(((TLRPC.TL_updates) response).chats);
-                    } else if (response instanceof TLRPC.Updates && !(response instanceof TLRPC.TL_updates)) {
-                        failed.set(true);
-                    } else if (error != null) {
-                        failed.set(true);
-                    }
-                }
-                if (left.decrementAndGet() == 0) {
-                    groupAlbum(all);
-                    if (failed.get() && all.updates.isEmpty()) {
-                        TLRPC.TL_error fail = new TLRPC.TL_error();
-                        fail.code = 400;
-                        fail.text = error != null ? error.text : "MEDIA_EMPTY";
-                        album.complete(null, fail);
-                    } else {
-                        album.complete(all, null);
-                    }
-                }
-            });
-        }
-        return album;
     }
 
     /**

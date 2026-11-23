@@ -26,7 +26,7 @@ final class XmppIdMap extends SQLiteOpenHelper {
     private final Map<String, Integer> messageIds = new HashMap<>();
 
     XmppIdMap(Context context) {
-        super(context, DATABASE, null, 7);
+        super(context, DATABASE, null, 8);
     }
 
     /** Forgets every id, so the next account starts with fresh message ids and pts. */
@@ -45,6 +45,7 @@ final class XmppIdMap extends SQLiteOpenHelper {
         createSendTables(db);
         createRoomReads(db);
         createCaptions(db);
+        createAlbums(db);
     }
 
     @Override
@@ -66,6 +67,32 @@ final class XmppIdMap extends SQLiteOpenHelper {
         }
         if (oldVersion < 7) {
             createCaptions(db);
+        }
+        if (oldVersion < 8) {
+            createAlbums(db);
+        }
+    }
+
+    /**
+     * The files sent together as one album: the file message (its uuid), the album (the id of the album's first
+     * file as its sender named it, which every file of the album is attached to) and who sent it.
+     */
+    private static void createAlbums(SQLiteDatabase db) {
+        db.execSQL("CREATE TABLE albums (uuid TEXT PRIMARY KEY, album TEXT NOT NULL, sender TEXT NOT NULL)");
+    }
+
+    synchronized void putAlbumItem(String uuid, String album, String sender) {
+        ContentValues values = new ContentValues();
+        values.put("uuid", uuid);
+        values.put("album", album);
+        values.put("sender", sender);
+        getWritableDatabase().insertWithOnConflict("albums", null, values, SQLiteDatabase.CONFLICT_REPLACE);
+    }
+
+    /** {album, sender} of a file sent in an album, or null for a file sent on its own. */
+    synchronized String[] albumOf(String uuid) {
+        try (Cursor cursor = getReadableDatabase().rawQuery("SELECT album, sender FROM albums WHERE uuid = ?", new String[]{uuid})) {
+            return cursor.moveToFirst() ? new String[]{cursor.getString(0), cursor.getString(1)} : null;
         }
     }
 

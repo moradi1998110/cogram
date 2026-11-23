@@ -253,6 +253,14 @@ final class XmppBackend implements GatewayBackend {
     private void onServiceReady(XmppConnectionService connected) {
         // Before the engine connects, so no caption that comes while it catches up is missed.
         eu.siacs.conversations.utils.MessageAttachments.setListener((message, target) -> {
+            if (isMedia(message)) {
+                // A file of an album, attached to the album's first file (the first file to itself).
+                ids.putAlbumItem(message.getUuid(), target, captionSender(message));
+                if (BuildVars.LOGS_ENABLED) {
+                    FileLog.d("cogram: album item " + message.getUuid() + " of " + target + " from " + captionSender(message));
+                }
+                return;
+            }
             if (message.getType() != Message.TYPE_TEXT || TextUtils.isEmpty(message.getBody())) {
                 return;
             }
@@ -480,7 +488,7 @@ final class XmppBackend implements GatewayBackend {
         TLRPC.MessageMedia media = storedMedia(id);
         boolean room = isRoom(message);
         PendingSend send = track(message, randomId, () -> room ? roomSent(message, userId, randomId)
-                : media != null ? mediaSent(userId, id, date, media, randomId, captionOf(message)) : textSent(id, date, shownText(message)));
+                : media != null ? mediaSent(userId, id, date, media, randomId, captionOf(message), albumGroup(message)) : textSent(id, date, shownText(message)));
         scheduleSync();
         return send;
     }
@@ -526,7 +534,7 @@ final class XmppBackend implements GatewayBackend {
         return sent;
     }
 
-    private TLRPC.Updates mediaSent(long userId, int id, int date, TLRPC.MessageMedia media, long randomId, String caption) {
+    private TLRPC.Updates mediaSent(long userId, int id, int date, TLRPC.MessageMedia media, long randomId, String caption, long album) {
         TLRPC.TL_message tl = new TLRPC.TL_message();
         tl.id = id;
         tl.out = true;
@@ -540,6 +548,10 @@ final class XmppBackend implements GatewayBackend {
         tl.dialog_id = userId;
         tl.flags = TLObject.FLAG_8 | TLObject.FLAG_9;
         tl.media = media;
+        if (album != 0) {
+            tl.grouped_id = album;
+            tl.flags |= TLObject.FLAG_17;
+        }
         pts++;
         savePts();
         ids.setMessagePts(id, pts);
@@ -1772,7 +1784,19 @@ final class XmppBackend implements GatewayBackend {
             String caption = captionOf(message);
             tl.message = caption != null ? caption : "";
             TLRPC.MessageMedia sent = out ? storedMedia(tl.id) : null;
+            if (sent != null) {
+                // Our own file too, so that Telegram reads every size of it from the engine's copy.
+                File file = service.getFileBackend().getFile(message);
+                if (file.exists()) {
+                    showEngineFile(mediaId(tl.id), sent, file);
+                }
+            }
             tl.media = sent != null ? sent : media(message, tl.id, tl.date);
+            long album = albumGroup(message);
+            if (album != 0) {
+                tl.grouped_id = album;
+                tl.flags |= TLObject.FLAG_17;
+            }
         } else if (message.getType() == Message.TYPE_TEXT && message.isGeoUri()) {
             // Conversations sends a location as a geo URI for the whole body; Telegram shows it as a location.
             TLRPC.MessageMedia location = locationMedia(message.getBody());
@@ -1942,12 +1966,7 @@ final class XmppBackend implements GatewayBackend {
             photo.file_reference = new byte[0];
             photo.date = date;
             photo.dc_id = PHOTO_DC_ID;
-            TLRPC.TL_photoSize photoSize = new TLRPC.TL_photoSize();
-            photoSize.type = "y";
-            photoSize.w = width;
-            photoSize.h = height;
-            photoSize.size = (int) size;
-            photo.sizes.add(photoSize);
+            addPhotoSizes(photo, width, height, (int) size);
             TLRPC.TL_messageMediaPhoto photoMedia = new TLRPC.TL_messageMediaPhoto();
             photoMedia.photo = photo;
             photoMedia.flags = TLObject.FLAG_0;
@@ -2010,17 +2029,49 @@ final class XmppBackend implements GatewayBackend {
         if (path.equals(shownEngineFiles.get(mediaId))) {
             return;
         }
-        TLObject attach = null;
+        org.telegram.messenger.FileLoader loader = org.telegram.messenger.FileLoader.getInstance(org.telegram.messenger.UserConfig.selectedAccount);
         if (media instanceof TLRPC.TL_messageMediaDocument && media.document != null) {
-            attach = media.document;
+            loader.setLocalPathTo(media.document, path);
         } else if (media instanceof TLRPC.TL_messageMediaPhoto && media.photo != null && !media.photo.sizes.isEmpty()) {
-            attach = media.photo.sizes.get(0);
-        }
-        if (attach == null) {
+            // The preview is drawn from the same file, so it is never fetched as a copy either.
+            for (TLRPC.PhotoSize size : media.photo.sizes) {
+                loader.setLocalPathTo(size, path);
+            }
+        } else {
             return;
         }
-        org.telegram.messenger.FileLoader.getInstance(org.telegram.messenger.UserConfig.selectedAccount).setLocalPathTo(attach, path);
         shownEngineFiles.put(mediaId, path);
+    }
+
+    /** Telegram's own name for its small preview size, and the side it makes that preview. */
+    private static final String PHOTO_PREVIEW_TYPE = "s";
+    private static final int PHOTO_PREVIEW_SIDE = 90;
+
+    /**
+     * The picture, and a small preview of it that Telegram draws, blurred, while the picture loads. With the
+     * picture alone Telegram took the picture for its own preview: it drew it unblurred at the size of the
+     * bubble, and after a send it filed the small preview it had made under the picture's own name, so the
+     * picture showed pixelated until it was opened. A sent picture's preview has Telegram's type, which is how
+     * Telegram matches the preview it made to this one and keeps it where it belongs.
+     */
+    private static void addPhotoSizes(TLRPC.TL_photo photo, int width, int height, int size) {
+        TLRPC.TL_photoSize full = new TLRPC.TL_photoSize();
+        full.type = "y";
+        full.w = width;
+        full.h = height;
+        full.size = size;
+        photo.sizes.add(full);
+        int side = Math.max(width, height);
+        if (side <= PHOTO_PREVIEW_SIDE) {
+            return;
+        }
+        float scale = side / (float) PHOTO_PREVIEW_SIDE;
+        TLRPC.TL_photoSize preview = new TLRPC.TL_photoSize();
+        preview.type = PHOTO_PREVIEW_TYPE;
+        preview.w = Math.max(1, Math.round(width / scale));
+        preview.h = Math.max(1, Math.round(height / scale));
+        preview.size = size;
+        photo.sizes.add(preview);
     }
 
     /** The name as sent comes first, since Telegram finds its copy of a file by the name's extension. */
@@ -2224,17 +2275,21 @@ final class XmppBackend implements GatewayBackend {
         return user.first_name + "\n" + user.username + "\n" + photoId + "\n" + online;
     }
 
-    private static TLRPC.Updates createUsersUpdate(List<TLRPC.User> users) {
+    private TLRPC.Updates createUsersUpdate(List<TLRPC.User> users) {
         TLRPC.TL_updates updates = new TLRPC.TL_updates();
         for (TLRPC.User user : users) {
             TL_update.TL_updateUser photo = new TL_update.TL_updateUser();
             photo.user_id = user.id;
             updates.updates.add(photo);
 
-            TL_update.TL_updateUserStatus status = new TL_update.TL_updateUserStatus();
-            status.user_id = user.id;
-            status.status = user.status;
-            updates.updates.add(status);
+            // Telegram reads our own status as being online on another device, and then holds every
+            // notification three seconds so that it does not ring on both; this phone is the device.
+            if (user.id != selfId) {
+                TL_update.TL_updateUserStatus status = new TL_update.TL_updateUserStatus();
+                status.user_id = user.id;
+                status.status = user.status;
+                updates.updates.add(status);
+            }
 
             TL_update.TL_updateUserName name = new TL_update.TL_updateUserName();
             name.user_id = user.id;
@@ -2612,7 +2667,7 @@ final class XmppBackend implements GatewayBackend {
      * chat's text would be. Telegram gets the message at once, with the file it already holds.
      */
     @Override
-    public synchronized TLObject sendFile(long userId, File file, String mime, List<TLRPC.DocumentAttribute> attributes, boolean photo, long randomId, String caption) {
+    public synchronized TLObject sendFile(long userId, File file, String mime, List<TLRPC.DocumentAttribute> attributes, boolean photo, long randomId, String caption, String album) {
         PendingSend resumed = resumeSend(userId, randomId);
         if (resumed != null) {
             file.delete();
@@ -2626,6 +2681,15 @@ final class XmppBackend implements GatewayBackend {
         Message message = new Message(conversation, "", Message.ENCRYPTION_NONE);
         message.setCounterpart(conversation.getNextCounterpart());
         message.setType(photo ? Message.TYPE_IMAGE : Message.TYPE_FILE);
+        if (album != null) {
+            // An album's files are attached (XEP-0367) to its first file, which takes the album's id as its own, so
+            // the other side knows each file's album, the first one's included, the moment it comes.
+            if (startedAlbums.add(album)) {
+                message.setUuid(album);
+            }
+            message.attachTo = album;
+            ids.putAlbumItem(message.getUuid(), album, "self");
+        }
         int id = ids.messageId(message.getUuid(), message.getTimeSent());
         int date = (int) (message.getTimeSent() / 1000);
         // The caption goes out as its own text message attached to the file (XEP-0367) once the file is out, so it
@@ -2647,7 +2711,8 @@ final class XmppBackend implements GatewayBackend {
         storeSentMedia(id, media);
         snapshots.put(id, snapshot(message));
         boolean room = isRoom(conversation);
-        PendingSend send = track(message, randomId, () -> room ? roomSent(message, userId, randomId) : mediaSent(userId, id, date, media, randomId, text));
+        long group = albumGroup(message);
+        PendingSend send = track(message, randomId, () -> room ? roomSent(message, userId, randomId) : mediaSent(userId, id, date, media, randomId, text, group));
         whenEncryptionDecided(conversation, message, () -> {
             file.delete();
             failSend(send);
@@ -2655,12 +2720,32 @@ final class XmppBackend implements GatewayBackend {
         return send.reply;
     }
 
+    /** The albums whose first file is out or going, so each later file is attached to it. */
+    private final Set<String> startedAlbums = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /**
+     * Telegram's number for the album a file was sent in, or 0 for a file sent on its own. It is made from the
+     * album and its sender, so a file someone else attaches to an album never joins it.
+     */
+    private long albumGroup(Message message) {
+        String[] album = ids.albumOf(message.getUuid());
+        if (album == null) {
+            return 0;
+        }
+        long hash = 1125899906842597L;
+        String key = album[1] + '\n' + album[0];
+        for (int i = 0; i < key.length(); i++) {
+            hash = 31 * hash + key.charAt(i);
+        }
+        return (hash & Long.MAX_VALUE) | 1;
+    }
+
     /**
      * Telegram sends a picture it sent before by naming it instead of uploading it again; it goes out as a new copy
      * of the file this device already holds, as a forward does.
      */
     @Override
-    public synchronized TLObject resendMedia(long userId, long mediaId, long randomId, String caption) {
+    public synchronized TLObject resendMedia(long userId, long mediaId, long randomId, String caption, String album) {
         PendingSend resumed = resumeSend(userId, randomId);
         if (resumed != null) {
             return resumed.reply;
@@ -2692,7 +2777,7 @@ final class XmppBackend implements GatewayBackend {
             mime = photo ? "image/jpeg" : "application/octet-stream";
         }
         List<TLRPC.DocumentAttribute> attributes = document != null ? document.attributes : new ArrayList<>();
-        return sendFile(userId, copy, mime, attributes, photo, randomId, caption);
+        return sendFile(userId, copy, mime, attributes, photo, randomId, caption, album);
     }
 
     private static TLRPC.MessageMedia sentMedia(int messageId, int date, File file, String mime, List<TLRPC.DocumentAttribute> attributes, boolean photo) {
@@ -2708,12 +2793,7 @@ final class XmppBackend implements GatewayBackend {
             tlPhoto.file_reference = new byte[0];
             tlPhoto.date = date;
             tlPhoto.dc_id = PHOTO_DC_ID;
-            TLRPC.TL_photoSize size = new TLRPC.TL_photoSize();
-            size.type = "y";
-            size.w = bounds.outWidth;
-            size.h = bounds.outHeight;
-            size.size = (int) file.length();
-            tlPhoto.sizes.add(size);
+            addPhotoSizes(tlPhoto, bounds.outWidth, bounds.outHeight, (int) file.length());
             TLRPC.TL_messageMediaPhoto photoMedia = new TLRPC.TL_messageMediaPhoto();
             photoMedia.photo = tlPhoto;
             photoMedia.flags = TLObject.FLAG_0;
