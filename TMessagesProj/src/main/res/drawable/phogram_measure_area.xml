@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Measuring an area on the map: a closed shape through four points, in the stroke of Telegram's outline icons.
+     A flat white silhouette; the menu tints it. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.66"
+        android:strokeLineJoin="round"
+        android:pathData="M5,18L7,6L18,5L19,18Z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M2.8,18a2.2,2.2 0 1,0 4.4,0a2.2,2.2 0 1,0 -4.4,0ZM4.8,6a2.2,2.2 0 1,0 4.4,0a2.2,2.2 0 1,0 -4.4,0ZM15.8,5a2.2,2.2 0 1,0 4.4,0a2.2,2.2 0 1,0 -4.4,0ZM16.8,18a2.2,2.2 0 1,0 4.4,0a2.2,2.2 0 1,0 -4.4,0Z" />
+</vector>

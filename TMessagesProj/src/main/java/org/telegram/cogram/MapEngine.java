@@ -429,6 +429,19 @@ public interface MapEngine {
     default void setMapTapListener(MapTapListener listener) {
     }
 
+    /** The map's latitude and longitude under this point of the map's view; null before the map is ready. */
+    default double[] pointAt(float x, float y) {
+        return null;
+    }
+
+    /** Draws a measurement: latitude and longitude pairs, as a line or a closed shape; null clears it. */
+    default void showMeasure(double[] coordinates, boolean closed) {
+    }
+
+    /** Shows or hides the landmarks the map draws. */
+    default void setPlacesShown(boolean shown) {
+    }
+
     void onResume();
 
     void onPause();

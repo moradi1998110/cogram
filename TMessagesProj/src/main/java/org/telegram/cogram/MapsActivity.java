@@ -42,6 +42,7 @@ import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
 
+import org.telegram.cogram.measure.MapTools;
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.ApplicationLoader;
 import org.telegram.messenger.FileLog;
@@ -121,6 +122,7 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
     private static final String RECENT_KEY = "places";
     private static final int SEARCH_BAR_HEIGHT = 48;
 
+    private MapTools tools;
     private FrameLayout searchBar;
     private ImageView searchBarIcon;
     private TextView searchBarText;
@@ -570,7 +572,12 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         searchBarText.setGravity(Gravity.CENTER_VERTICAL | (LocaleController.isRTL ? Gravity.RIGHT : Gravity.LEFT));
         searchBar.addView(searchBarText, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT, Gravity.TOP,
                 LocaleController.isRTL ? 16 : 52, 0, LocaleController.isRTL ? 52 : 16, 0));
-        contentView.addView(searchBar, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, SEARCH_BAR_HEIGHT, Gravity.BOTTOM, 12, 0, 12, 0));
+        contentView.addView(searchBar, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, SEARCH_BAR_HEIGHT, Gravity.BOTTOM, MapTools.SIDE_MARGIN, 0, MapTools.SIDE_MARGIN, 0));
+        // The layers and the tools, a round button on each side of the bar, as Telegram's chat header has them.
+        tools = new MapTools(this, contentView, () -> {
+            updateSearchBar();
+            updateLayout();
+        });
 
         sheetScrim = new View(context);
         sheetScrim.setVisibility(View.GONE);
@@ -1071,7 +1078,11 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         mapReady = false;
         setMapView(mapEngine.getView());
         applyMapPadding();
-        cameraEvents = mapEngine.setCameraMoveListener(this::updateCompass);
+        tools.setEngine(mapEngine);
+        cameraEvents = mapEngine.setCameraMoveListener(() -> {
+            updateCompass();
+            tools.onCameraMoved();
+        });
         if (pageResumed) {
             mapEngine.onResume();
             AndroidUtilities.runOnUIThread(compassCheck, COMPASS_CHECK_MS);
@@ -1082,12 +1093,12 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         mapEngine.setMapTapListener(new MapEngine.MapTapListener() {
             @Override
             public void onPlaceTapped(MapEngine.Place place) {
-                if (!searchOpen && !isRouting()) showPlace(place);
+                if (!searchOpen && !isRouting() && !tools.isMeasuring()) showPlace(place);
             }
 
             @Override
             public void onLongPressed(double latitude, double longitude) {
-                if (searchOpen || isRouting()) return;
+                if (searchOpen || isRouting() || tools.isMeasuring()) return;
                 showPlace(new MapEngine.Place(getString(R.string.PhogramMapsDroppedPin),
                         String.format(java.util.Locale.US, "%.5f, %.5f", latitude, longitude), latitude, longitude));
             }
@@ -1166,11 +1177,12 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
     /** The "Where to?" bar shows over the map, except while a place's card takes its spot. */
     private void updateSearchBar() {
         if (searchBar == null) return;
-        final boolean show = mapEngine != null && mapReady && shownPlace == null && !isRouting();
+        final boolean show = mapEngine != null && mapReady && shownPlace == null && !isRouting() && !tools.isMeasuring();
         if (show != (searchBar.getVisibility() == View.VISIBLE)) {
             searchBar.setVisibility(show ? View.VISIBLE : View.GONE);
             updateLayout();
         }
+        tools.setRowShown(show);
     }
 
     private void showPlace(MapEngine.Place place) {
@@ -1357,6 +1369,10 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         // The tabs page passes back to this tab first: it closes the search, then the place's card.
         if (searchOpen) {
             if (invoked) closeSearch();
+            return false;
+        }
+        if (tools.isMeasuring()) {
+            if (invoked) tools.close();
             return false;
         }
         // Then the navigation (back to the preview), then the preview (back to the place's card).
@@ -1725,13 +1741,14 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
 
         // From the bottom up: the tab bar, the search bar or the place's card, then the round buttons.
         ((FrameLayout.LayoutParams) searchBar.getLayoutParams()).bottomMargin = padding[3] + dp(12);
+        tools.layout(padding[3] + dp(12), (padding[1] - padding[3]) / 2f);
         ((FrameLayout.LayoutParams) placeCard.getLayoutParams()).bottomMargin = padding[3] + dp(8);
         int buttons = padding[3] + dp(12);
         if (isRouting()) {
             buttons = routeUi.bottomHeight() + dp(12);
         } else if (placeCard.getVisibility() == View.VISIBLE) {
             buttons = padding[3] + dp(8) + placeCard.getHeight() + dp(12);
-        } else if (searchBar.getVisibility() == View.VISIBLE) {
+        } else if (searchBar.getVisibility() == View.VISIBLE || tools.isMeasuring()) {
             buttons += dp(SEARCH_BAR_HEIGHT) + dp(12);
         }
         ((FrameLayout.LayoutParams) locationButton.getLayoutParams()).bottomMargin = buttons;
@@ -1764,6 +1781,7 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         searchBarIcon.setColorFilter(new PorterDuffColorFilter(getThemedColor(Theme.key_windowBackgroundWhiteGrayIcon), PorterDuff.Mode.MULTIPLY));
         searchBarText.setTextColor(getThemedColor(Theme.key_windowBackgroundWhiteHintText));
         sheetScrim.setBackgroundColor(0x33000000);
+        tools.updateColors();
         final GradientDrawable sheetBackground = new GradientDrawable();
         sheetBackground.setCornerRadii(new float[] { dp(14), dp(14), dp(14), dp(14), 0, 0, 0, 0 });
         sheetBackground.setColor(getThemedColor(Theme.key_windowBackgroundWhite));
