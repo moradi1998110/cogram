@@ -904,6 +904,8 @@
     <string name="Ban">حظر</string>
     <string name="Rename">إعادة تسمية</string>
     <string name="Delete">حذف</string>
+    <string name="Mute">كتم الصوت</string>
+    <string name="Unmute">تشغيل الصوت</string>
     <string name="Start">بدء</string>
     <string name="Forward">تحويل</string>
     <string name="Retry">إعادة المحاولة</string>
@@ -1275,7 +1277,6 @@
     <string name="PhogramLiveChannelLink">رابط القناة أو معرّفها</string>
     <string name="PhogramLiveInvalidLink">لم يُعثر على قناة يوتيوب بهذا الرابط. انسخ الرابط من زر «مشاركة» في صفحة القناة على يوتيوب.</string>
     <string name="PhogramLiveAlreadyAdded">هذه القناة موجودة في القائمة.</string>
-    <string name="PhogramLiveRename">إعادة التسمية</string>
     <string name="PhogramAdSample1Title">إعلان تجريبي</string>
     <string name="PhogramAdSample1Text">ستظهر هنا إعلانات مؤسستك.</string>
     <string name="PhogramAdSample2Title">خدمات جديدة</string>

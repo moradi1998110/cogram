@@ -16,8 +16,9 @@ public final class LiveChannel {
     }
 
     /** The player for this channel's current broadcast, found by {@link LiveStreamResolver}. */
-    static String embedUrl(String videoId) {
-        return "https://www.youtube.com/embed/" + videoId + "?autoplay=1&mute=1&playsinline=1&rel=0";
+    static String embedUrl(String videoId, String origin) {
+        // enablejsapi and origin: the page sends the player its commands (mute) and hears what it plays.
+        return "https://www.youtube.com/embed/" + videoId + "?autoplay=1&mute=1&playsinline=1&rel=0&enablejsapi=1&origin=" + origin;
     }
 
     public String youtubeUrl() {

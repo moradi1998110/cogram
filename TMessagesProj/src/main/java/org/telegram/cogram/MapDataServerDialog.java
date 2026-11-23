@@ -39,20 +39,8 @@ public final class MapDataServerDialog {
         info.setTextColor(Theme.getColor(Theme.key_dialogTextBlack));
         layout.addView(info, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 24, 4, 24, 12));
 
-        final EditTextBoldCursor field = new EditTextBoldCursor(context);
-        field.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 16);
-        field.setTextColor(Theme.getColor(Theme.key_dialogTextBlack));
-        field.setHintTextColor(Theme.getColor(Theme.key_dialogTextHint));
-        field.setHint(LocaleController.getString(R.string.PhogramMapsServerHint));
-        field.setSingleLine(true);
-        field.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
-        field.setBackground(null);
-        field.setLineColors(Theme.getColor(Theme.key_dialogInputField), Theme.getColor(Theme.key_dialogInputFieldActivated),
-                Theme.getColor(Theme.key_text_RedBold));
-        field.setCursorColor(Theme.getColor(Theme.key_dialogTextBlack));
-        field.setCursorSize(AndroidUtilities.dp(20));
-        field.setCursorWidth(1.5f);
-        field.setPadding(0, AndroidUtilities.dp(6), 0, AndroidUtilities.dp(6));
+        final EditTextBoldCursor field = DialogField.create(context, R.string.PhogramMapsServerHint,
+                InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
         field.setText(MapData.getCustomServer());
         // Addresses read left to right in every language.
         field.setTextDirection(android.view.View.TEXT_DIRECTION_LTR);

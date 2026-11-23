@@ -122,7 +122,7 @@ public class ServicesActivity extends BaseFragment implements MainTabsActivity.T
         new Advert(R.string.PhogramAdSample3Title, R.string.PhogramAdSample3Text, 0xFFF38B31, 0xFFE26314),
     };
 
-    private static final Service[] SAMPLE_SERVICES = {
+    private static final Service[] SERVICES = {
         new Service(R.string.PhogramServiceLiveTv, R.drawable.msg_videocall, 0xFFF45255, 0xFFDF3955, LiveChannelsActivity::new),
         new Service(R.string.PhogramServiceSalifni, R.drawable.msg_payment_card, 0xFF55CA47, 0xFF27B434),
         new Service(R.string.PhogramServiceBousla, R.drawable.msg_location, 0xFF1BA4ED, 0xFF1488E1),
@@ -522,7 +522,7 @@ public class ServicesActivity extends BaseFragment implements MainTabsActivity.T
 
         ServicesGridView(Context context) {
             super(context);
-            for (final Service service : SAMPLE_SERVICES) {
+            for (final Service service : SERVICES) {
                 final LinearLayout tile = new LinearLayout(context);
                 tile.setOrientation(LinearLayout.VERTICAL);
                 tile.setGravity(Gravity.CENTER);

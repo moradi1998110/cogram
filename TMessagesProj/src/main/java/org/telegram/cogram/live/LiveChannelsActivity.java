@@ -2,15 +2,14 @@ package org.telegram.cogram.live;
 
 import android.content.Context;
 import android.text.InputType;
-import android.util.TypedValue;
 import android.view.View;
 import android.widget.LinearLayout;
 
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.LocaleController;
+import org.telegram.cogram.DialogField;
 import org.telegram.messenger.R;
 import org.telegram.ui.ActionBar.AlertDialog;
-import org.telegram.ui.ActionBar.Theme;
 import org.telegram.ui.Components.BulletinFactory;
 import org.telegram.ui.Components.EditTextBoldCursor;
 import org.telegram.ui.Components.LayoutHelper;
@@ -62,7 +61,7 @@ public class LiveChannelsActivity extends UniversalFragment {
         final AlertDialog.Builder builder = new AlertDialog.Builder(getParentActivity());
         builder.setTitle(channel.name);
         builder.setItems(new CharSequence[]{
-                LocaleController.getString(R.string.PhogramLiveRename),
+                LocaleController.getString(R.string.Rename),
                 LocaleController.getString(R.string.Delete)
         }, (dialog, which) -> {
             if (which == 0) {
@@ -88,11 +87,11 @@ public class LiveChannelsActivity extends UniversalFragment {
 
         final LinearLayout layout = new LinearLayout(context);
         layout.setOrientation(LinearLayout.VERTICAL);
-        final EditTextBoldCursor nameField = field(context, R.string.PhogramLiveChannelName, InputType.TYPE_CLASS_TEXT);
+        final EditTextBoldCursor nameField = DialogField.create(context, R.string.PhogramLiveChannelName, InputType.TYPE_CLASS_TEXT);
         layout.addView(nameField, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 24, 4, 24, 8));
         EditTextBoldCursor linkField = null;
         if (channel == null) {
-            linkField = field(context, R.string.PhogramLiveChannelLink, InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
+            linkField = DialogField.create(context, R.string.PhogramLiveChannelLink, InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
             // Links read left to right in every language.
             linkField.setTextDirection(View.TEXT_DIRECTION_LTR);
             layout.addView(linkField, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 24, 0, 24, 8));
@@ -102,7 +101,7 @@ public class LiveChannelsActivity extends UniversalFragment {
         final EditTextBoldCursor link = linkField;
 
         final AlertDialog.Builder builder = new AlertDialog.Builder(context);
-        builder.setTitle(LocaleController.getString(channel == null ? R.string.PhogramLiveAddChannel : R.string.PhogramLiveRename));
+        builder.setTitle(LocaleController.getString(channel == null ? R.string.PhogramLiveAddChannel : R.string.Rename));
         builder.setView(layout);
         builder.setNegativeButton(LocaleController.getString(R.string.Cancel), null);
         builder.setPositiveButton(LocaleController.getString(R.string.Save), null);
@@ -160,23 +159,5 @@ public class LiveChannelsActivity extends UniversalFragment {
     private void rejectLink(View link) {
         AndroidUtilities.shakeViewSpring(link, -6);
         BulletinFactory.of(this).createSimpleBulletin(R.raw.error, LocaleController.getString(R.string.PhogramLiveInvalidLink), 3).show();
-    }
-
-    private static EditTextBoldCursor field(Context context, int hint, int inputType) {
-        final EditTextBoldCursor field = new EditTextBoldCursor(context);
-        field.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 16);
-        field.setTextColor(Theme.getColor(Theme.key_dialogTextBlack));
-        field.setHintTextColor(Theme.getColor(Theme.key_dialogTextHint));
-        field.setHint(LocaleController.getString(hint));
-        field.setSingleLine(true);
-        field.setInputType(inputType);
-        field.setBackground(null);
-        field.setLineColors(Theme.getColor(Theme.key_dialogInputField), Theme.getColor(Theme.key_dialogInputFieldActivated),
-                Theme.getColor(Theme.key_text_RedBold));
-        field.setCursorColor(Theme.getColor(Theme.key_dialogTextBlack));
-        field.setCursorSize(AndroidUtilities.dp(20));
-        field.setCursorWidth(1.5f);
-        field.setPadding(0, AndroidUtilities.dp(6), 0, AndroidUtilities.dp(6));
-        return field;
     }
 }
