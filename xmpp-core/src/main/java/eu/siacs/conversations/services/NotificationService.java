@@ -411,13 +411,8 @@ public class NotificationService {
     }
 
     public void pushFromBacklog(final Message message) {
-        if (notifyMessage(message)) {
-            synchronized (notifications) {
-                getBacklogMessageCounter((Conversation) message.getConversation())
-                        .incrementAndGet();
-                pushToStack(message);
-            }
-        } else if (notifyMissedCall(message)) {
+        // Phogram: Telegram's NotificationsController reports messages, unread ones at start too (as in push()).
+        if (notifyMissedCall(message)) {
             synchronized (mMissedCalls) {
                 pushMissedCall(message);
             }
