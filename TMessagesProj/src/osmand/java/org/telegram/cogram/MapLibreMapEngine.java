@@ -156,6 +156,11 @@ final class MapLibreMapEngine implements MapEngine {
         // The page has its own compass button, as Telegram's location page does.
         map.getUiSettings().setCompassEnabled(false);
         map.getUiSettings().setAttributionEnabled(true);
+        // The map glides on after any drag let go while moving, slowing to a stop, as Google Maps does. MapLibre's
+        // defaults (1000 px/s, whatever the screen's density, and 150 ms) stopped a short slow drag dead. A finger held
+        // still before lifting still leaves the map where it is.
+        map.getUiSettings().setFlingThreshold(AndroidUtilities.dp(120));
+        map.getUiSettings().setFlingAnimationBaseTime(300);
         applyAttributionMargins();
         map.setMaxZoomPreference(19);
         map.setCameraPosition(new CameraPosition.Builder()
