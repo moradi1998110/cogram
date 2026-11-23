@@ -11662,7 +11662,6 @@
     <string name="PhogramLiveChannelLink">Channel link or ID</string>
     <string name="PhogramLiveInvalidLink">No YouTube channel was found for this link. Copy the link from the channel\'s Share button in YouTube.</string>
     <string name="PhogramLiveAlreadyAdded">This channel is already in the list.</string>
-    <string name="PhogramLiveRename">Rename</string>
     <string name="PhogramAdSample1Title">Sample advert</string>
     <string name="PhogramAdSample1Text">Your organization\'s adverts will appear here.</string>
     <string name="PhogramAdSample2Title">New services</string>

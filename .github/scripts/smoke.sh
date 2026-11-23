@@ -165,6 +165,27 @@ adb exec-out screencap -p > "$OUT/6-services-dark.png" || true
 adb shell cmd uimode night no || true
 sleep 5
 
+# Live TV: Al Jazeera's broadcast plays on its screen, then goes on in the system's small window when the app
+# leaves; the activities' dump shows whether the window is pinned. The launcher brings the screen back.
+if tap_view 'text="Live TV"'; then
+  sleep 3
+  dump_screen 6-live-channels
+  tap_view 'text="Al Jazeera"' || true
+  sleep 20
+  dump_screen 6-live-player
+  adb shell input keyevent 3 || true
+  sleep 6
+  adb exec-out screencap -p > "$OUT/6-live-pip.png" || true
+  adb shell dumpsys activity activities | grep -iE "pinned|mInPictureInPicture|isInPictureInPictureMode" > "$OUT/6-live-pip.txt" || true
+  adb shell am start -n "$PACKAGE/org.telegram.messenger.DefaultIcon"
+  sleep 6
+  dump_screen 6-live-back
+  adb shell input keyevent 4 || true
+  sleep 2
+  adb shell input keyevent 4 || true
+  sleep 3
+fi
+
 # Phogram's Maps tab holds Telegram's Settings slot, so Settings must open from the chats page's options menu.
 tap_view 'text="Maps"' || true
 sleep 3

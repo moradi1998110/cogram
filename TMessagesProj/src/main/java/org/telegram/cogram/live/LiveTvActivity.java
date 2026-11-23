@@ -39,12 +39,20 @@ public class LiveTvActivity extends BaseFragment {
     private static final String PAGE = "<!DOCTYPE html><html><head>"
             + "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
             + "<style>html,body{margin:0;height:100%%;background:#000}iframe{width:100%%;height:100%%;border:0}</style>"
-            + "</head><body><iframe src=\"%s\" referrerpolicy=\"strict-origin-when-cross-origin\""
-            + " allow=\"autoplay; encrypted-media; picture-in-picture; fullscreen\" allowfullscreen></iframe></body></html>";
+            + "</head><body><iframe id=\"p\" src=\"%s\" referrerpolicy=\"strict-origin-when-cross-origin\""
+            + " allow=\"autoplay; encrypted-media; picture-in-picture; fullscreen\" allowfullscreen></iframe>"
+            // The player's own messages keep "muted" true to what it plays; cmd() sends it a command (mute, unMute).
+            + "<script>var p=document.getElementById('p'),muted=true;"
+            + "function send(m){p.contentWindow.postMessage(JSON.stringify(m),'*')}"
+            + "function cmd(f){send({event:'command',func:f,args:[]})}"
+            + "p.onload=function(){send({event:'listening',id:'p'})};"
+            + "addEventListener('message',function(e){try{var i=JSON.parse(e.data).info;"
+            + "if(i&&typeof i.muted=='boolean')muted=i.muted}catch(x){}});</script></body></html>";
 
     private final LiveChannel channel;
 
     private WebView webView;
+    private LiveMini mini;
     private TextView errorView;
     private FrameLayout fullscreenView;
     private WebChromeClient.CustomViewCallback fullscreenCallback;
@@ -55,7 +63,7 @@ public class LiveTvActivity extends BaseFragment {
 
     /** YouTube wants an embedding app to name itself: an https address made of the app's package. */
     private static String origin() {
-        return "https://" + ApplicationLoader.applicationContext.getPackageName() + "/";
+        return "https://" + ApplicationLoader.applicationContext.getPackageName();
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -97,6 +105,7 @@ public class LiveTvActivity extends BaseFragment {
         webView.setWebChromeClient(new FullscreenClient());
         webView.setWebViewClient(new PlayerClient());
         player.addView(webView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
+        mini = new LiveMini(getParentActivity(), player, webView);
 
         errorView = new TextView(context);
         errorView.setTextColor(Color.WHITE);
@@ -128,7 +137,8 @@ public class LiveTvActivity extends BaseFragment {
             showError(R.string.PhogramLiveTvNotLive);
             return;
         }
-        webView.loadDataWithBaseURL(origin(), String.format(PAGE, LiveChannel.embedUrl(videoId)), "text/html", "UTF-8", null);
+        webView.loadDataWithBaseURL(origin() + "/", String.format(PAGE, LiveChannel.embedUrl(videoId, origin())), "text/html", "UTF-8", null);
+        mini.setPlaying(true);
     }
 
     private void showError(int text) {
@@ -145,7 +155,20 @@ public class LiveTvActivity extends BaseFragment {
     @Override
     public void onPause() {
         super.onPause();
-        if (webView != null) webView.onPause();
+        // Leaving the app for the small window, the broadcast goes on in it.
+        if (webView != null && (mini == null || !mini.isOpen())) webView.onPause();
+    }
+
+    @Override
+    public void onBecomeFullyVisible() {
+        super.onBecomeFullyVisible();
+        if (mini != null) mini.setShown(true);
+    }
+
+    @Override
+    public void onBecomeFullyHidden() {
+        super.onBecomeFullyHidden();
+        if (mini != null) mini.setShown(false);
     }
 
     @Override
@@ -161,6 +184,7 @@ public class LiveTvActivity extends BaseFragment {
     public void onFragmentDestroy() {
         super.onFragmentDestroy();
         exitFullscreen(false);
+        if (mini != null) mini.destroy();
         if (webView == null) return;
         try {
             final ViewGroup parent = (ViewGroup) webView.getParent();
@@ -230,6 +254,8 @@ public class LiveTvActivity extends BaseFragment {
         @Override
         public boolean onRenderProcessGone(WebView view, RenderProcessGoneDetail detail) {
             if (view == webView) {
+                mini.destroy();
+                mini = null;
                 ((ViewGroup) view.getParent()).removeView(view);
                 view.destroy();
                 webView = null;

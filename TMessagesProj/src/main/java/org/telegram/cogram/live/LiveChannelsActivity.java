@@ -61,7 +61,7 @@ public class LiveChannelsActivity extends UniversalFragment {
         final AlertDialog.Builder builder = new AlertDialog.Builder(getParentActivity());
         builder.setTitle(channel.name);
         builder.setItems(new CharSequence[]{
-                LocaleController.getString(R.string.PhogramLiveRename),
+                LocaleController.getString(R.string.Rename),
                 LocaleController.getString(R.string.Delete)
         }, (dialog, which) -> {
             if (which == 0) {
@@ -101,7 +101,7 @@ public class LiveChannelsActivity extends UniversalFragment {
         final EditTextBoldCursor link = linkField;
 
         final AlertDialog.Builder builder = new AlertDialog.Builder(context);
-        builder.setTitle(LocaleController.getString(channel == null ? R.string.PhogramLiveAddChannel : R.string.PhogramLiveRename));
+        builder.setTitle(LocaleController.getString(channel == null ? R.string.PhogramLiveAddChannel : R.string.Rename));
         builder.setView(layout);
         builder.setNegativeButton(LocaleController.getString(R.string.Cancel), null);
         builder.setPositiveButton(LocaleController.getString(R.string.Save), null);
