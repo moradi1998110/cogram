@@ -10030,7 +10030,9 @@ public class MessagesStorage extends BaseController {
     public static final int SENT_FILE_TYPE_VIDEO_HIGH_QUALITY = 8;
 
     public Object[] getSentFile(String path, int type) {
-        if (path == null || path.toLowerCase().endsWith("attheme")) {
+        // Cogram: a file sent before is uploaded again rather than named by its id. The gateway uploads every file
+        // to the XMPP server anyway, and the earlier message (or its file) may be gone, which made the send fail.
+        if (org.telegram.cogram.CogramGateway.ENABLED || path == null || path.toLowerCase().endsWith("attheme")) {
             return null;
         }
         CountDownLatch countDownLatch = new CountDownLatch(1);
@@ -10351,7 +10353,8 @@ public class MessagesStorage extends BaseController {
     }
 
     public void putSentFile(String path, TLObject file, int type, String parent) {
-        if (path == null || file == null || parent == null) {
+        // Cogram: never read back (see getSentFile), so not kept either.
+        if (org.telegram.cogram.CogramGateway.ENABLED || path == null || file == null || parent == null) {
             return;
         }
         storageQueue.postRunnable(() -> {

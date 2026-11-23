@@ -2752,10 +2752,12 @@ final class XmppBackend implements GatewayBackend {
         }
         Message original = service == null ? null : engineMessage((int) mediaId);
         if (original == null || !isMedia(original)) {
+            FileLog.d("cogram: resend of media " + mediaId + " failed, " + (original == null ? "no such message" : "not a file"));
             return null;
         }
         File source = service.getFileBackend().getFile(original);
         if (!source.exists()) {
+            FileLog.d("cogram: resend of media " + mediaId + " failed, its file is gone");
             return null;
         }
         File copy = new File(context.getCacheDir(), "resend_" + original.getUuid() + "_" + Long.toHexString(randomId));
