@@ -97,7 +97,9 @@ final class MapLibreMapEngine implements MapEngine {
         // Labels of the tiles and of the device's position are placed apart, which spares the collision work
         // on every frame of a pan; tiles around the view and at lower zooms are fetched ahead (MapLibre's default).
         // Until the tiles draw, the map shows the theme's background instead of MapLibre's beige.
+        // A TextureView draws within the page as any view does: no black hole while tabs slide or the page comes back.
         final MapLibreMapOptions options = MapLibreMapOptions.createFromAttributes(context)
+                .textureMode(true)
                 .crossSourceCollisions(false)
                 .setPrefetchZoomDelta(4)
                 .foregroundLoadColor(Theme.getColor(Theme.key_windowBackgroundGray));
@@ -1784,8 +1786,12 @@ final class MapLibreMapEngine implements MapEngine {
             view.onStart();
         }
         view.onResume();
-        if (map != null && map.getLocationComponent().isLocationComponentActivated()) {
-            map.getLocationComponent().setLocationComponentEnabled(true);
+        if (map != null) {
+            // The tab's page left the window, which drops MapLibre's drawing surface; the new one is drawn at once.
+            map.triggerRepaint();
+            if (map.getLocationComponent().isLocationComponentActivated()) {
+                map.getLocationComponent().setLocationComponentEnabled(true);
+            }
         }
     }
 

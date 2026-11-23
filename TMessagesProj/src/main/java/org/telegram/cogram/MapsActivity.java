@@ -175,6 +175,7 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
 
     private MapEngine mapEngine;
     private boolean mapEngineRequested;
+    private boolean mapReady;
     private boolean pageResumed;
 
     private boolean hasMainTabs;
@@ -530,6 +531,13 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         final boolean engineAvailable = MapEngines.isAvailable();
         emptyView.setVisibility(engineAvailable ? View.GONE : View.VISIBLE);
         progressView.setVisibility(engineAvailable ? View.VISIBLE : View.GONE);
+        // Telegram rebuilds hidden pages, as when the theme turns to night: the running engine moves to the new page.
+        if (mapEngine != null) {
+            mapView = null;
+            // The trip's panel was on the old page; the trip ends rather than going on without it.
+            mapEngine.stopNavigation();
+            attachMapEngine();
+        }
 
         updateColors();
         updateLayout();
@@ -931,7 +939,7 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         final boolean routing = isRouting();
         final boolean navigating = routeUi != null && routeUi.getMode() == MapsRouteUi.MODE_NAVIGATION;
         placeCard.setVisibility(!routing && shownPlace != null ? View.VISIBLE : View.GONE);
-        if (mapView != null && mapContainer.getVisibility() == View.VISIBLE) {
+        if (mapView != null && mapReady) {
             locationButton.setVisibility(navigating ? View.GONE : View.VISIBLE);
         }
         topScrim.setVisibility(mapView != null && !routing ? View.VISIBLE : View.GONE);
@@ -1051,8 +1059,14 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
             emptyView.setVisibility(View.VISIBLE);
             return;
         }
-        // The map stays hidden behind the progress circle until it can draw; its surface is black before that.
-        mapContainer.setVisibility(View.INVISIBLE);
+        attachMapEngine();
+    }
+
+    /** Puts the engine's map on this page and wires it; again on a page rebuilt with the same engine. */
+    private void attachMapEngine() {
+        // The progress circle shows over the map until its style is in; the map's own cover hides it until it draws.
+        // (A TextureView gets its surface only when drawn, so the map is never hidden: it would then never start.)
+        mapReady = false;
         setMapView(mapEngine.getView());
         applyMapPadding();
         cameraEvents = mapEngine.setCameraMoveListener(this::updateCompass);
@@ -1090,7 +1104,7 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
 
     private void updateDownloadCard() {
         if (downloadCard == null) return;
-        final MapEngine.Download offer = mapEngine != null && mapContainer.getVisibility() == View.VISIBLE ? mapEngine.getOfferedDownload() : null;
+        final MapEngine.Download offer = mapEngine != null && mapReady ? mapEngine.getOfferedDownload() : null;
         final boolean show = offer != null && !isRouting() && (offer.downloading || !offer.name.equals(dismissedDownload));
         if (show) {
             // As the player's "performer - title": the name stands out, the state follows in the title color.
@@ -1144,7 +1158,7 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
     /** The "Where to?" bar shows over the map, except while a place's card takes its spot. */
     private void updateSearchBar() {
         if (searchBar == null) return;
-        final boolean show = mapEngine != null && mapContainer.getVisibility() == View.VISIBLE && shownPlace == null && !isRouting();
+        final boolean show = mapEngine != null && mapReady && shownPlace == null && !isRouting();
         if (show != (searchBar.getVisibility() == View.VISIBLE)) {
             searchBar.setVisibility(show ? View.VISIBLE : View.GONE);
             updateLayout();
@@ -1562,7 +1576,7 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
     private void onMapReady() {
         if (contentView == null || mapEngine == null) return;
         progressView.setVisibility(View.GONE);
-        mapContainer.setVisibility(View.VISIBLE);
+        mapReady = true;
         locationButton.setVisibility(View.VISIBLE);
         updateSearchBar();
         updateCompass();
@@ -1818,7 +1832,7 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         if (compassStrip == null) return;
         final float rotation = mapEngine != null ? mapEngine.getRotation() : 0;
         final float heading = mapEngine != null ? mapEngine.getHeading() : Float.NaN;
-        final boolean show = mapView != null && mapContainer.getVisibility() == View.VISIBLE && !isRouting();
+        final boolean show = mapView != null && mapReady && !isRouting();
         if (show != (compassStrip.getVisibility() == View.VISIBLE)) {
             compassStrip.setVisibility(show ? View.VISIBLE : View.GONE);
         }
