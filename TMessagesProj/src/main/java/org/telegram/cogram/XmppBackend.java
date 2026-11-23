@@ -1922,6 +1922,12 @@ final class XmppBackend implements GatewayBackend {
         return status == Transferable.STATUS_CHECKING || status == Transferable.STATUS_DOWNLOADING;
     }
 
+    /** A file the engine left for the user to ask for, its size known or not yet. */
+    private static boolean isOffered(Transferable transferable) {
+        return transferable != null && (transferable.getStatus() == Transferable.STATUS_OFFER
+                || transferable.getStatus() == Transferable.STATUS_OFFER_CHECK_FILESIZE);
+    }
+
     private static long mediaId(int messageId) {
         return MEDIA_ID_BASE | (messageId & 0xffffffffL);
     }
@@ -2625,14 +2631,26 @@ final class XmppBackend implements GatewayBackend {
         File file = service.getFileBackend().getFile(message);
         long deadline = System.currentTimeMillis() + DOWNLOAD_TIMEOUT_MS;
         boolean requested = false;
+        boolean started = false;
         while (!file.exists() || isDownloading(message)) {
-            if (!requested && !isDownloading(message)) {
-                service.getHttpConnectionManager().createNewDownloadConnection(message, true);
-                requested = true;
-            }
             Transferable transferable = message.getTransferable();
+            if (!requested && !isDownloading(message)) {
+                // A file above the size the engine takes on its own waits, offered, for the user to ask for it, and
+                // the engine counts that offer as a download in progress; opening it here is that ask. After a
+                // restart the offer is a placeholder that cannot start, and a new download takes its place.
+                if (!isOffered(transferable) || !transferable.start()) {
+                    service.getHttpConnectionManager().createNewDownloadConnection(message, true);
+                }
+                requested = true;
+                FileLog.d("cogram: fetching media " + mediaId + (isOffered(transferable) ? ", offered" : ""));
+            }
+            started |= isDownloading(message);
             if (System.currentTimeMillis() > deadline || requested && transferable != null
-                    && (transferable.getStatus() == Transferable.STATUS_FAILED || transferable.getStatus() == Transferable.STATUS_CANCELLED)) {
+                    && (transferable.getStatus() == Transferable.STATUS_FAILED || transferable.getStatus() == Transferable.STATUS_CANCELLED
+                    // Back to an offer once it had started: the download failed (the engine says so this way too).
+                    || started && isOffered(transferable))) {
+                FileLog.d("cogram: fetching media " + mediaId + " failed, status "
+                        + (transferable == null ? "none" : Integer.toHexString(transferable.getStatus())));
                 return null;
             }
             try {

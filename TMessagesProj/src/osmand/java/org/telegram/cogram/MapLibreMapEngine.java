@@ -247,7 +247,7 @@ final class MapLibreMapEngine implements MapEngine {
                 location.setLocationEngine(null);
             }
             if (!freeCamera) {
-                location.setCameraMode(CameraMode.TRACKING_GPS, CAMERA_MS, NAVIGATION_ZOOM, null, NAVIGATION_TILT, null);
+                followDriver(location);
             }
         }
     }
@@ -1400,6 +1400,7 @@ final class MapLibreMapEngine implements MapEngine {
     private void frameFlat(LatLngBounds bounds, int[] padding) {
         if (map == null) return;
         map.cancelTransitions();
+        clearDriverPadding();
         final CameraPosition flat = map.getCameraForLatLngBounds(bounds, padding, 0, 0);
         if (flat == null) return;
         map.animateCamera(CameraUpdateFactory.newCameraPosition(flat), CAMERA_MS);
@@ -1411,7 +1412,75 @@ final class MapLibreMapEngine implements MapEngine {
         if (map == null || navigator == null || !map.getLocationComponent().isLocationComponentActivated()) return;
         freeCamera = false;
         drawNames();
-        map.getLocationComponent().setCameraMode(CameraMode.TRACKING_GPS, CAMERA_MS, NAVIGATION_ZOOM, null, NAVIGATION_TILT, null);
+        followDriver(map.getLocationComponent());
+    }
+
+    /** How far above the map's bottom edge the driver's arrow sits while the camera follows them; 0 centers it. */
+    private int driverAnchor;
+
+    /**
+     * Follows the driver with the arrow low on the screen, just above the trip's panel, as navigation apps place it:
+     * more of the road ahead in view than behind. The camera's top padding puts the arrow there, set at once before
+     * the move into tracking, which keeps it.
+     */
+    @SuppressWarnings("MissingPermission")
+    private void followDriver(LocationComponent location) {
+        map.moveCamera(CameraUpdateFactory.paddingTo(0, driverTopPadding(), 0, 0));
+        location.setCameraMode(CameraMode.TRACKING_GPS, CAMERA_MS, NAVIGATION_ZOOM, null, NAVIGATION_TILT, null);
+    }
+
+    private double driverTopPadding() {
+        final int height = view.getHeight();
+        return driverAnchor <= 0 || height <= 0 ? 0 : Math.max(0, height - 2 * driverAnchor);
+    }
+
+    /** The camera's padding back to none, as the overview and the end of a trip frame the map whole. */
+    private void clearDriverPadding() {
+        if (map != null) map.moveCamera(CameraUpdateFactory.paddingTo(0, 0, 0, 0));
+    }
+
+    @Override
+    public void setDriverAnchor(int fromBottom) {
+        if (driverAnchor == fromBottom) return;
+        driverAnchor = fromBottom;
+        if (map == null || navigator == null || freeCamera || !map.getLocationComponent().isLocationComponentActivated()) return;
+        final LocationComponent location = map.getLocationComponent();
+        if (location.getCameraMode() == CameraMode.TRACKING_GPS) {
+            location.paddingWhileTracking(new double[] { 0, driverTopPadding(), 0, 0 }, CAMERA_MS);
+        }
+    }
+
+    @Override
+    public void rotateTo(float bearing) {
+        if (map == null) return;
+        // Turning the map by hand while driving leaves the road's heading, as moving the map does: the page offers
+        // the way back and counts down to it.
+        if (navigator != null) {
+            if (!freeCamera) {
+                freeCamera = true;
+                drawNames();
+                if (map.getLocationComponent().isLocationComponentActivated()) {
+                    map.getLocationComponent().setCameraMode(CameraMode.NONE);
+                }
+            }
+            if (trackingListener != null) trackingListener.run();
+        }
+        map.cancelTransitions();
+        map.moveCamera(CameraUpdateFactory.bearingTo(bearing));
+    }
+
+    @Override
+    public boolean isFollowingDriver() {
+        return navigator != null && !freeCamera;
+    }
+
+    @Override
+    public float getHeading() {
+        if (navigator != null) return shownBearing;
+        if (map == null || !map.getLocationComponent().isLocationComponentActivated()) return Float.NaN;
+        // The direction of travel once moving: standing still, the GPS gives no heading worth showing.
+        final Location last = map.getLocationComponent().getLastKnownLocation();
+        return last != null && last.hasBearing() && last.hasSpeed() && last.getSpeed() >= 1 ? last.getBearing() : Float.NaN;
     }
 
     @Override
@@ -1638,6 +1707,7 @@ final class MapLibreMapEngine implements MapEngine {
                 savedLocationEngine = null;
             }
             location.setCameraMode(CameraMode.NONE);
+            clearDriverPadding();
             location.applyStyle(locationOptions(false));
             location.setRenderMode(RenderMode.NORMAL);
             map.animateCamera(CameraUpdateFactory.newCameraPosition(new CameraPosition.Builder(map.getCameraPosition())

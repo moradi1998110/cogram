@@ -599,6 +599,8 @@ final class MapKinds {
         private final org.telegram.ui.Components.AnimatedTextView.AnimatedTextDrawable number =
                 new org.telegram.ui.Components.AnimatedTextView.AnimatedTextDrawable(false, true, true);
         private int shownSpeed = -1;
+        /** The end of the dial, in km/h. */
+        private static final float MAX_KMH = 200;
 
         SpeedView(Context context) {
             super(context);
@@ -648,9 +650,39 @@ final class MapKinds {
             // The empty part of the ring is the accent, faint, rather than the divider's grey, lost on a dark map.
             ring.setColor(ColorUtils.setAlphaComponent(accent(), dark ? 0x55 : 0x33));
             canvas.drawArc(arc, 135, 270, false, ring);
-            final float top = limit > 0 ? limit : 120;
-            ring.setColor(over ? 0xFFE53935 : accent());
-            canvas.drawArc(arc, 135, 270 * Math.min(1, speed / top), false, ring);
+            // One fixed scale to 200 km/h, so the ring grows with the speed as a car's dial does. It keeps the accent
+            // up to the danger mark, the road's limit or else 120, and past it warms through orange to red at the end.
+            final float danger = Math.min(MAX_KMH - 10, limit > 0 ? limit : 120);
+            final float shown = Math.min(speed, MAX_KMH);
+            final float safe = Math.min(shown, danger);
+            ring.setColor(accent());
+            if (safe > 0) {
+                canvas.drawArc(arc, 135, 270 * safe / MAX_KMH, false, ring);
+            }
+            for (float from = danger; from < shown; from += 4) {
+                final float to = Math.min(shown, from + 4);
+                final float heat = (to - danger) / (MAX_KMH - danger);
+                ring.setColor(heat < 0.5f
+                        ? ColorUtils.blendARGB(accent(), 0xFFFB8C00, heat * 2)
+                        : ColorUtils.blendARGB(0xFFFB8C00, 0xFFE53935, heat * 2 - 1));
+                ring.setStrokeCap(Paint.Cap.BUTT);
+                canvas.drawArc(arc, 135 + 270 * from / MAX_KMH, 270 * (to - from) / MAX_KMH + 0.5f, false, ring);
+            }
+            ring.setStrokeCap(Paint.Cap.ROUND);
+            // The road's limit as a short notch across the ring.
+            if (limit > 0 && limit < MAX_KMH) {
+                final double angle = Math.toRadians(135 + 270 * limit / MAX_KMH);
+                final float radius = arc.width() / 2f;
+                final float cx = arc.centerX();
+                final float cy = arc.centerY();
+                final float inner = radius - stroke;
+                final float outer = radius + stroke;
+                ring.setStrokeWidth(dp(2));
+                ring.setColor(0xFFE53935);
+                canvas.drawLine(cx + (float) Math.cos(angle) * inner, cy + (float) Math.sin(angle) * inner,
+                        cx + (float) Math.cos(angle) * outer, cy + (float) Math.sin(angle) * outer, ring);
+                ring.setStrokeWidth(stroke);
+            }
             text.setTextSize(size * 0.34f);
             text.setColor(over ? 0xFFE53935 : Theme.getColor(Theme.key_windowBackgroundWhiteBlackText));
             number.setTextSize(size * 0.34f);
@@ -680,6 +712,36 @@ final class MapKinds {
             this.limit = limit;
             setVisibility(limit > 0 ? VISIBLE : GONE);
             invalidate();
+        }
+
+        private android.animation.ValueAnimator pulse;
+
+        /** Over the limit the sign beats, growing a little and back, until the speed drops. */
+        void setPulsing(boolean pulsing) {
+            if (pulsing == (pulse != null)) return;
+            if (pulsing) {
+                pulse = android.animation.ValueAnimator.ofFloat(1f, 1.18f);
+                pulse.setDuration(450);
+                pulse.setRepeatMode(android.animation.ValueAnimator.REVERSE);
+                pulse.setRepeatCount(android.animation.ValueAnimator.INFINITE);
+                pulse.setInterpolator(org.telegram.ui.Components.CubicBezierInterpolator.EASE_BOTH);
+                pulse.addUpdateListener(a -> {
+                    final float scale = (float) a.getAnimatedValue();
+                    setScaleX(scale);
+                    setScaleY(scale);
+                });
+                pulse.start();
+            } else {
+                pulse.cancel();
+                pulse = null;
+                animate().scaleX(1f).scaleY(1f).setDuration(200).start();
+            }
+        }
+
+        @Override
+        protected void onDetachedFromWindow() {
+            super.onDetachedFromWindow();
+            setPulsing(false);
         }
 
         @Override

@@ -28,6 +28,24 @@ public interface MapEngine {
     /** Turns the map back to north up. */
     void resetRotation();
 
+    /** Turns the map to this bearing at once, as the compass strip is dragged; while driving it stops following the road. */
+    default void rotateTo(float bearing) {
+    }
+
+    /** The direction the user is heading, in degrees from north: the road's while driving, the GPS's when moving; NaN otherwise. */
+    default float getHeading() {
+        return Float.NaN;
+    }
+
+    /** True while the camera follows the driver, turning with the road. */
+    default boolean isFollowingDriver() {
+        return false;
+    }
+
+    /** While driving, the driver's arrow sits this far above the map's bottom edge, in pixels; 0 centers it. */
+    default void setDriverAnchor(int fromBottom) {
+    }
+
     /**
      * Runs the listener on the main thread whenever the camera moves or stops, so the page follows the rotation
      * without checking it on a timer. False when this map cannot tell, and the page checks on a timer instead.

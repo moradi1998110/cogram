@@ -106,6 +106,9 @@ final class MapsRouteUi {
     private final MapKinds.TurnView bannerTurn;
     private final Figure bannerDistance;
     private final TextView bannerStreet;
+    /** The compass strip along the turn card's lower edge: which way the map faces, and where the next turn lies. */
+    private final CompassStrip bannerCompass;
+    private float nextTurnBearing = Float.NaN;
     private final LinearLayout bannerThen;
     private final TextView bannerThenText;
     private final MapKinds.TurnView bannerThenTurn;
@@ -212,7 +215,29 @@ final class MapsRouteUi {
         banner.addView(bannerDistance, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, 38, Gravity.TOP, rtl ? 14 : 76, 8, rtl ? 76 : 14, 0));
         bannerStreet = text(context, 16, rtl);
         bannerStreet.setMaxLines(2);
-        banner.addView(bannerStreet, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.TOP, rtl ? 14 : 76, 46, rtl ? 76 : 14, 12));
+        banner.addView(bannerStreet, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.TOP, rtl ? 14 : 76, 46, rtl ? 76 : 14, 12 + 28));
+        bannerCompass = new CompassStrip(context);
+        bannerCompass.setContentDescription(getString(R.string.PhogramMapsNorthUp));
+        bannerCompass.setListener(new CompassStrip.Listener() {
+            @Override
+            public void onRotate(float bearing) {
+                final MapEngine engine = host.engine();
+                if (engine != null) engine.rotateTo(bearing);
+            }
+
+            @Override
+            public void onTap() {
+                // Following the road, a tap puts north up for a look around; looking around, it goes back to the road.
+                final MapEngine engine = host.engine();
+                if (engine == null || mode != MODE_NAVIGATION) return;
+                if (engine.isFollowingDriver()) {
+                    engine.rotateTo(0);
+                } else {
+                    backToDriving();
+                }
+            }
+        });
+        banner.addView(bannerCompass, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, 28, Gravity.BOTTOM, 12, 0, 12, 6));
         bannerThen = new LinearLayout(context);
         bannerThen.setOrientation(LinearLayout.HORIZONTAL);
         bannerThen.setGravity(Gravity.CENTER_VERTICAL);
@@ -323,10 +348,11 @@ final class MapsRouteUi {
         parent.addView(speedGroup, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, (rtl ? Gravity.RIGHT : Gravity.LEFT) | Gravity.BOTTOM, 12, 0, 12, 0));
 
         warningChip = new TextView(context);
-        warningChip.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 14);
+        // A small chip under the turn card, so a warning ahead never covers the map.
+        warningChip.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 13);
         warningChip.setTypeface(AndroidUtilities.bold());
         warningChip.setSingleLine(true);
-        warningChip.setPadding(dp(12), dp(6), dp(12), dp(7));
+        warningChip.setPadding(dp(10), dp(5), dp(10), dp(6));
         warningChip.setTranslationZ(dp(3));
         warningChip.setVisibility(View.GONE);
         parent.addView(warningChip, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, (rtl ? Gravity.LEFT : Gravity.RIGHT) | Gravity.TOP, 12, 0, 12, 0));
@@ -483,6 +509,13 @@ final class MapsRouteUi {
             if (voice != null) voice.say("continue");
         });
         host.fragment().showDialog(builder.create());
+    }
+
+    /** The map's bearing and the user's heading, as the page's compass reads them, for the strip in the turn card. */
+    void onCompass(float rotation, float heading) {
+        if (mode != MODE_NAVIGATION) return;
+        bannerCompass.setBearing(rotation);
+        bannerCompass.setMarks(heading, nextTurnBearing);
     }
 
     /** The map moved away from the driver: the way back shows and counts down, from the top on each new move. */
@@ -645,6 +678,8 @@ final class MapsRouteUi {
     private void updateDriving(MapEngine.NavigationState state) {
         speedView.set(state.speed, state.speedLimit);
         limitView.setLimit(Math.round(state.speedLimit));
+        // Over the limit, the small sign on the gauge beats like a pulse instead of anything covering the map.
+        limitView.setPulsing(state.speedLimit > 0 && state.speed > state.speedLimit + 2);
         if (state.street.isEmpty()) {
             streetPill.setVisibility(View.GONE);
         } else {
@@ -657,9 +692,9 @@ final class MapsRouteUi {
                 warningChipType = state.warning.type;
                 final android.graphics.drawable.BitmapDrawable sign = new android.graphics.drawable.BitmapDrawable(
                         warningChip.getResources(), MapKinds.warningImage(state.warning.type));
-                sign.setBounds(0, 0, dp(22), dp(22));
+                sign.setBounds(0, 0, dp(18), dp(18));
                 warningChip.setCompoundDrawablesRelative(sign, null, null, null);
-                warningChip.setCompoundDrawablePadding(dp(8));
+                warningChip.setCompoundDrawablePadding(dp(6));
                 warningChip.setGravity(Gravity.CENTER_VERTICAL);
             }
             warningChip.setText(warningName(state.warning.type) + " · " + MapsFormat.distance(state.toWarning));
@@ -1154,6 +1189,7 @@ final class MapsRouteUi {
         updateMode();
         bannerDistance.clear();
         bannerStreet.setText(getString(R.string.PhogramNavStarting));
+        nextTurnBearing = Float.NaN;
         setKeepScreenOn(true);
         engine.setTrackingListener(() -> {
             if (mode == MODE_NAVIGATION) showBackToDriving();
@@ -1217,6 +1253,14 @@ final class MapsRouteUi {
             arriving = false;
             BulletinFactory.of(host.fragment()).createSimpleBulletin(R.raw.contact_check, LocaleController.formatString(R.string.PhogramNavArrived, name)).show();
             return;
+        }
+        // Where the next turn lies from the driver, as the crow flies, for the compass strip's mark.
+        if (!state.rerouting && state.next != null && state.route != null && state.next.pointIndex >= 0
+                && state.next.pointIndex < state.route.points.size()) {
+            final double[] turn = state.route.points.get(state.next.pointIndex);
+            nextTurnBearing = (float) MapEngine.bearing(state.onRouteLatitude, state.onRouteLongitude, turn[0], turn[1]);
+        } else {
+            nextTurnBearing = Float.NaN;
         }
         if (state.rerouting) {
             bannerTurn.setTurn(MapEngine.Maneuver.STRAIGHT, 0);
@@ -1327,6 +1371,7 @@ final class MapsRouteUi {
             recenterButton.stop();
             recenterButton.setVisibility(View.GONE);
             warningChip.setVisibility(View.GONE);
+            limitView.setPulsing(false);
             alongKind = MapEngine.KIND_OTHER;
             bindAlong(new java.util.ArrayList<>(), true);
             setExpanded(false);
@@ -1350,6 +1395,9 @@ final class MapsRouteUi {
         ((FrameLayout.LayoutParams) muteButton.getLayoutParams()).bottomMargin = above + dp(56);
         ((FrameLayout.LayoutParams) recenterButton.getLayoutParams()).bottomMargin = above + dp(112);
         ((FrameLayout.LayoutParams) warningChip.getLayoutParams()).topMargin = padding[1] + dp(8) + Math.max(banner.getHeight(), dp(100)) + dp(8);
+        // While driving, the arrow sits a little above the panel and the speed, with the road ahead filling the rest.
+        final MapEngine engine = host.engine();
+        if (engine != null) engine.setDriverAnchor(mode == MODE_NAVIGATION ? above + dp(96) : 0);
         speedGroup.requestLayout();
         topCard.requestLayout();
         banner.requestLayout();
@@ -1395,6 +1443,8 @@ final class MapsRouteUi {
         bannerTurn.setColor(onStrip);
         bannerDistance.setTextColor(onStrip);
         bannerStreet.setTextColor(onStrip);
+        // In the card's own white; the next turn's mark in a warm yellow that stands out on the green.
+        bannerCompass.setColors(onStrip, onStrip, onStrip, 0xFFFFD54F, 0);
         final GradientDrawable thenBackground = new GradientDrawable();
         thenBackground.setCornerRadius(dp(15));
         thenBackground.setColor(Theme.getColor(Theme.key_returnToCallBackground));
