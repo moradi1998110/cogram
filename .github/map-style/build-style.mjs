@@ -289,14 +289,16 @@ function transform(style, flavor) {
         ['>=', ['zoom'], ['-', ['get', 'min_zoom'], ['match', ['get', 'kind'], EARLY, 1, 0]]]];
       layer.layout = {
         'icon-image': ['concat', 'pb:', poiKey()],
-        'icon-size': ['interpolate', ['linear'], ['zoom'], 13, 0.85, 16, 1, 18, 1.2],
+        // Landmarks about as large as Google Maps draws them: icons and names a little larger than Protomaps'.
+        'icon-size': ['interpolate', ['linear'], ['zoom'], 13, 1, 16, 1.15, 18, 1.35],
         'icon-padding': 3,
         'symbol-sort-key': ['get', 'min_zoom'],
         'text-field': textField,
         'text-font': ['literal', ['Phogram Medium']],
-        'text-size': ['interpolate', ['linear'], ['zoom'], 14, 11.5, 17, 13, 19, 14.5],
+        'text-size': ['interpolate', ['linear'], ['zoom'], 14, 12.5, 17, 14, 19, 15.5],
         'text-variable-anchor': ['right', 'left', 'top', 'bottom'],
-        'text-radial-offset': 1.45,
+        // In ems of the name: the icon grew more than the name, so the name keeps clear of it.
+        'text-radial-offset': 1.55,
         'text-justify': 'auto',
         'text-max-width': 8,
         'text-optional': true,
