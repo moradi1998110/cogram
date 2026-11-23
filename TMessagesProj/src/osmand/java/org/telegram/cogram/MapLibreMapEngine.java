@@ -79,6 +79,7 @@ final class MapLibreMapEngine implements MapEngine {
     private Runnable cameraListener;
     private final Runnable startOffline = this::offline;
     private MapLibreMap map;
+    private MapFling fling;
     private Style style;
     private boolean destroyed;
     private boolean started;
@@ -156,11 +157,7 @@ final class MapLibreMapEngine implements MapEngine {
         // The page has its own compass button, as Telegram's location page does.
         map.getUiSettings().setCompassEnabled(false);
         map.getUiSettings().setAttributionEnabled(true);
-        // The map glides on after any drag let go while moving, slowing to a stop, as Google Maps does. MapLibre's
-        // defaults (1000 px/s, whatever the screen's density, and 150 ms) stopped a short slow drag dead. A finger held
-        // still before lifting still leaves the map where it is.
-        map.getUiSettings().setFlingThreshold(AndroidUtilities.dp(120));
-        map.getUiSettings().setFlingAnimationBaseTime(300);
+        fling = new MapFling(view, map, this::onCameraIdle);
         applyAttributionMargins();
         map.setMaxZoomPreference(19);
         map.setCameraPosition(new CameraPosition.Builder()
@@ -1804,6 +1801,7 @@ final class MapLibreMapEngine implements MapEngine {
     @SuppressWarnings("MissingPermission")
     public void onPause() {
         resumed = false;
+        if (fling != null) fling.stop();
         // The position is not followed while another tab is open, so the GPS does not use the battery.
         if (map != null && map.getLocationComponent().isLocationComponentActivated()) {
             map.getLocationComponent().setLocationComponentEnabled(false);
@@ -1813,6 +1811,7 @@ final class MapLibreMapEngine implements MapEngine {
 
     @Override
     public void onDestroy() {
+        if (fling != null) fling.stop();
         stopNavigation();
         destroyed = true;
         shownPlace = null;
