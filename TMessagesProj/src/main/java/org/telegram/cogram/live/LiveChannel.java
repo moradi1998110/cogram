@@ -15,9 +15,9 @@ public final class LiveChannel {
         this.builtIn = builtIn;
     }
 
-    public String embedUrl() {
-        return "https://www.youtube.com/embed/live_stream?channel=" + id
-                + "&autoplay=1&mute=1&playsinline=1&rel=0";
+    /** The player for this channel's current broadcast, found by {@link LiveStreamResolver}. */
+    static String embedUrl(String videoId) {
+        return "https://www.youtube.com/embed/" + videoId + "?autoplay=1&mute=1&playsinline=1&rel=0";
     }
 
     public String youtubeUrl() {

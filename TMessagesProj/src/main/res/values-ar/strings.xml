@@ -1268,6 +1268,7 @@
     <string name="PhogramLiveTvSource">البث من قناة %1$s على يوتيوب.</string>
     <string name="PhogramLiveTvOpenYoutube">افتح في يوتيوب</string>
     <string name="PhogramLiveTvError">تعذّر تشغيل البث هنا.</string>
+    <string name="PhogramLiveTvNotLive">هذه القناة لا تبث مباشرة الآن.</string>
     <string name="PhogramLiveAddChannel">إضافة قناة</string>
     <string name="PhogramLiveAddHint">أضف أي قناة على يوتيوب برابطها (youtube.com/channel/UC…) أو بمعرّفها. للحصول على المعرّف: في صفحة «حول» للقناة على يوتيوب اضغط «مشاركة القناة» ثم «نسخ معرّف القناة». قنواتك تبقى على هذا الجهاز، واضغط مطولاً على قناة لإعادة تسميتها أو حذفها.</string>
     <string name="PhogramLiveChannelName">اسم القناة</string>

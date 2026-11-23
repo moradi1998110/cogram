@@ -99,7 +99,6 @@ public class LiveTvActivity extends BaseFragment {
         player.addView(webView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
 
         errorView = new TextView(context);
-        errorView.setText(LocaleController.getString(R.string.PhogramLiveTvError));
         errorView.setTextColor(Color.WHITE);
         errorView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 15);
         errorView.setGravity(Gravity.CENTER);
@@ -119,8 +118,22 @@ public class LiveTvActivity extends BaseFragment {
         openButton.setOnClickListener(v -> Browser.openUrl(context, channel.youtubeUrl()));
         layout.addView(openButton, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 48, 16, 0, 16, 0));
 
-        webView.loadDataWithBaseURL(origin(), String.format(PAGE, channel.embedUrl()), "text/html", "UTF-8", null);
+        LiveStreamResolver.resolve(channel, this::play);
         return fragmentView = layout;
+    }
+
+    private void play(String videoId) {
+        if (webView == null) return;
+        if (videoId == null) {
+            showError(R.string.PhogramLiveTvNotLive);
+            return;
+        }
+        webView.loadDataWithBaseURL(origin(), String.format(PAGE, LiveChannel.embedUrl(videoId)), "text/html", "UTF-8", null);
+    }
+
+    private void showError(int text) {
+        errorView.setText(LocaleController.getString(text));
+        errorView.setVisibility(View.VISIBLE);
     }
 
     @Override
@@ -220,7 +233,7 @@ public class LiveTvActivity extends BaseFragment {
                 ((ViewGroup) view.getParent()).removeView(view);
                 view.destroy();
                 webView = null;
-                errorView.setVisibility(View.VISIBLE);
+                showError(R.string.PhogramLiveTvError);
             }
             return true;
         }

@@ -11655,6 +11655,7 @@
     <string name="PhogramLiveTvSource">Broadcast from the %1$s channel on YouTube.</string>
     <string name="PhogramLiveTvOpenYoutube">Open in YouTube</string>
     <string name="PhogramLiveTvError">The broadcast could not be played here.</string>
+    <string name="PhogramLiveTvNotLive">This channel is not broadcasting live right now.</string>
     <string name="PhogramLiveAddChannel">Add channel</string>
     <string name="PhogramLiveAddHint">Add any YouTube channel by its link (youtube.com/channel/UC…) or its ID. To find the ID: on the channel\'s About page in YouTube, tap Share channel, then Copy channel ID. Your channels stay on this device; long-press one to rename or remove it.</string>
     <string name="PhogramLiveChannelName">Channel name</string>
