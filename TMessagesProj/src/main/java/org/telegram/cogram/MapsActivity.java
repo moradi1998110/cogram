@@ -92,6 +92,8 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
     private static final int LOCATION_PERMISSION_REQUEST = 7301;
     private static final String LOCATION_ASKED_KEY = "phogramMapsLocationAsked";
     private static final long COMPASS_CHECK_MS = 250;
+    /** How often the strip's heading mark is brought up to date when the camera reports its own moves. */
+    private static final long HEADING_CHECK_MS = 1000;
 
     private FrameLayout contentView;
     private FrameLayout mapContainer;
@@ -103,7 +105,7 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
     private TextView emptyText;
     private RadialProgressView progressView;
     private ImageView locationButton;
-    private CompassButton compassButton;
+    private CompassStrip compassStrip;
     private FrameLayout downloadCard;
     private TextView downloadTitle;
     private ImageView downloadButton;
@@ -179,15 +181,18 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
     private int statusBarHeight;
     private int navigationBarHeight;
 
-    /** The map reports its camera moves, so the north button follows them without a timer. */
+    /**
+     * The map reports its camera moves, so the compass strip follows them without a timer; the timer then only
+     * brings the heading mark up to date, as the GPS moves on.
+     */
     private boolean cameraEvents;
 
     private final Runnable compassCheck = new Runnable() {
         @Override
         public void run() {
             updateCompass();
-            if (pageResumed && mapEngine != null && !cameraEvents) {
-                AndroidUtilities.runOnUIThread(this, COMPASS_CHECK_MS);
+            if (pageResumed && mapEngine != null) {
+                AndroidUtilities.runOnUIThread(this, cameraEvents ? HEADING_CHECK_MS : COMPASS_CHECK_MS);
             }
         }
     };
@@ -302,8 +307,7 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         backButton.setOnClickListener(v -> finishFragment());
         contentView.addView(backButton, LayoutHelper.createFrame(40, 40, Gravity.LEFT | Gravity.TOP, 12, 0, 0, 0));
 
-        // The location page's round buttons on the right, above the search bar: the device's position, and north
-        // up above it when the map is turned.
+        // The location page's round button on the right, above the search bar: the device's position.
         locationButton = new ImageView(context);
         ScaleStateListAnimator.apply(locationButton);
         locationButton.setTranslationZ(dp(2));
@@ -315,19 +319,23 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         locationButton.setOnClickListener(v -> onLocationButtonClick());
         contentView.addView(locationButton, LayoutHelper.createFrame(40, 40, Gravity.RIGHT | Gravity.BOTTOM, 0, 0, 12, 12));
 
-        compassButton = new CompassButton(context);
-        ScaleStateListAnimator.apply(compassButton);
-        compassButton.setTranslationZ(dp(2));
-        compassButton.setOutlineProvider(ViewOutlineProviderImpl.BOUNDS_OVAL);
-        compassButton.setContentDescription(getString(R.string.PhogramMapsNorthUp));
-        compassButton.setVisibility(View.GONE);
-        compassButton.setOnClickListener(v -> {
-            if (mapEngine != null) {
-                mapEngine.resetRotation();
-                updateCompass();
+        // The map's heading as a strip of degrees under the status bar: dragged it turns the map, tapped it puts
+        // north up. During a trip the strip in the turn's card takes its place.
+        compassStrip = new CompassStrip(context);
+        compassStrip.setContentDescription(getString(R.string.PhogramMapsNorthUp));
+        compassStrip.setVisibility(View.GONE);
+        compassStrip.setListener(new CompassStrip.Listener() {
+            @Override
+            public void onRotate(float bearing) {
+                if (mapEngine != null) mapEngine.rotateTo(bearing);
+            }
+
+            @Override
+            public void onTap() {
+                if (mapEngine != null) mapEngine.resetRotation();
             }
         });
-        contentView.addView(compassButton, LayoutHelper.createFrame(40, 40, Gravity.RIGHT | Gravity.BOTTOM, 0, 0, 12, 0));
+        contentView.addView(compassStrip, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, 28, Gravity.TOP, 56, 0, 56, 0));
 
         // The offer of a map file to download, a small floating card at the top in the colors of Telegram's player
         // strip: the action on the left, the name in one line, the close button on the right, and a line that
@@ -930,6 +938,7 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         updateSearchBar();
         updateDownloadCard();
         updateLayout();
+        updateCompass();
     }
 
     /** The search sheet, dragged down by its top or by the list once it is scrolled to its start. */
@@ -1685,7 +1694,9 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         ((FrameLayout.LayoutParams) backButton.getLayoutParams()).topMargin = padding[1] + dp(8);
         // The download card floats under the status bar, beside the back button when there is one.
         final FrameLayout.LayoutParams card = (FrameLayout.LayoutParams) downloadCard.getLayoutParams();
-        card.topMargin = padding[1] + dp(10);
+        ((FrameLayout.LayoutParams) compassStrip.getLayoutParams()).topMargin = padding[1] + dp(4);
+        // Under the compass strip.
+        card.topMargin = padding[1] + dp(4 + 28 + 6);
         card.leftMargin = backButton.getVisibility() == View.VISIBLE ? dp(60) : dp(8);
 
         // From the bottom up: the tab bar, the search bar or the place's card, then the round buttons.
@@ -1700,7 +1711,6 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
             buttons += dp(SEARCH_BAR_HEIGHT) + dp(12);
         }
         ((FrameLayout.LayoutParams) locationButton.getLayoutParams()).bottomMargin = buttons;
-        ((FrameLayout.LayoutParams) compassButton.getLayoutParams()).bottomMargin = buttons + dp(40 + 12);
 
         // The sheet rises to just under the status bar, and its list scrolls out from under the tab bar.
         ((FrameLayout.LayoutParams) searchSheet.getLayoutParams()).topMargin = padding[1] + dp(8);
@@ -1755,7 +1765,6 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
 
         locationButton.setBackground(Theme.createSimpleSelectorCircleDrawable(dp(40), getThemedColor(Theme.key_location_actionBackground), getThemedColor(Theme.key_location_actionPressedBackground)));
         locationButton.setColorFilter(new PorterDuffColorFilter(getThemedColor(Theme.key_location_actionActiveIcon), PorterDuff.Mode.MULTIPLY));
-        compassButton.setBackground(Theme.createSimpleSelectorCircleDrawable(dp(40), getThemedColor(Theme.key_location_actionBackground), getThemedColor(Theme.key_location_actionPressedBackground)));
         final GradientDrawable placeBackground = new GradientDrawable();
         placeBackground.setCornerRadius(dp(14));
         placeBackground.setColor(getThemedColor(Theme.key_windowBackgroundWhite));
@@ -1798,24 +1807,24 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         downloadClose.setBackground(Theme.createSelectorDrawable(getThemedColor(Theme.key_inappPlayerClose) & 0x19ffffff, 1, dp(14)));
         downloadProgress.setProgressColor(getThemedColor(Theme.key_inappPlayerPlayPause));
         downloadProgress.setBackColor(0);
-        compassButton.setColors(getThemedColor(Theme.key_text_RedRegular), getThemedColor(Theme.key_location_actionIcon));
+        // Over the bare map, in the map's own light or dark with a soft halo of the page's color around it.
+        compassStrip.setColors(getThemedColor(Theme.key_windowBackgroundWhiteBlackText), getThemedColor(Theme.key_text_RedRegular),
+                MapKinds.accent(), getThemedColor(Theme.key_windowBackgroundWhiteGreenText),
+                (getThemedColor(Theme.key_windowBackgroundWhite) & 0x00ffffff) | 0xE6000000);
     }
 
+    /** The compass strips, the page's and the trip card's, follow the map's bearing and the user's heading. */
     private void updateCompass() {
-        if (compassButton == null) return;
+        if (compassStrip == null) return;
         final float rotation = mapEngine != null ? mapEngine.getRotation() : 0;
-        final boolean turned = mapView != null && mapContainer.getVisibility() == View.VISIBLE && Math.abs(normalize(rotation)) > 0.5f;
-        compassButton.setNeedleRotation(rotation);
-        if (turned != (compassButton.getVisibility() == View.VISIBLE)) {
-            compassButton.setVisibility(turned ? View.VISIBLE : View.GONE);
+        final float heading = mapEngine != null ? mapEngine.getHeading() : Float.NaN;
+        final boolean show = mapView != null && mapContainer.getVisibility() == View.VISIBLE && !isRouting();
+        if (show != (compassStrip.getVisibility() == View.VISIBLE)) {
+            compassStrip.setVisibility(show ? View.VISIBLE : View.GONE);
         }
-    }
-
-    private static float normalize(float degrees) {
-        float d = degrees % 360;
-        if (d > 180) d -= 360;
-        if (d < -180) d += 360;
-        return d;
+        compassStrip.setBearing(rotation);
+        compassStrip.setMarks(heading, Float.NaN);
+        if (routeUi != null) routeUi.onCompass(rotation, heading);
     }
 
     private void onLocationButtonClick() {
@@ -1934,55 +1943,5 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
     public boolean canParentTabsSlide(MotionEvent ev, boolean forward) {
         // With a map shown, a swipe moves the map; without one the tabs slide as on any other page.
         return mapView == null;
-    }
-
-    /** North up button: a compass needle, red to the north, turned with the map. */
-    private static final class CompassButton extends View {
-
-        private final Paint northPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private final Paint southPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private final Path north = new Path();
-        private final Path south = new Path();
-        private float needleRotation;
-
-        CompassButton(Context context) {
-            super(context);
-        }
-
-        void setColors(int northColor, int southColor) {
-            northPaint.setColor(northColor);
-            southPaint.setColor(southColor);
-            invalidate();
-        }
-
-        void setNeedleRotation(float degrees) {
-            if (needleRotation != degrees) {
-                needleRotation = degrees;
-                invalidate();
-            }
-        }
-
-        @Override
-        protected void onDraw(Canvas canvas) {
-            final float cx = getWidth() / 2f;
-            final float cy = getHeight() / 2f;
-            final float half = dp(5);
-            final float length = dp(11);
-            north.rewind();
-            north.moveTo(cx, cy - length);
-            north.lineTo(cx + half, cy);
-            north.lineTo(cx - half, cy);
-            north.close();
-            south.rewind();
-            south.moveTo(cx, cy + length);
-            south.lineTo(cx - half, cy);
-            south.lineTo(cx + half, cy);
-            south.close();
-            canvas.save();
-            canvas.rotate(needleRotation, cx, cy);
-            canvas.drawPath(north, northPaint);
-            canvas.drawPath(south, southPaint);
-            canvas.restore();
-        }
     }
 }
