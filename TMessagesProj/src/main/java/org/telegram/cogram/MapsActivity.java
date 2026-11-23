@@ -320,7 +320,7 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         locationButton.setContentDescription(getString(R.string.AccDescrMyLocation));
         locationButton.setVisibility(View.GONE);
         locationButton.setOnClickListener(v -> onLocationButtonClick());
-        contentView.addView(locationButton, LayoutHelper.createFrame(40, 40, Gravity.RIGHT | Gravity.BOTTOM, 0, 0, 12, 12));
+        contentView.addView(locationButton, LayoutHelper.createFrame(48, 48, (LocaleController.isRTL ? Gravity.RIGHT : Gravity.LEFT) | Gravity.BOTTOM, 12, 0, 12, 12));
 
         // The map's heading as a strip of degrees under the status bar: dragged it turns the map, tapped it puts
         // north up. During a trip the strip in the turn's card takes its place.
@@ -572,8 +572,9 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         searchBarText.setGravity(Gravity.CENTER_VERTICAL | (LocaleController.isRTL ? Gravity.RIGHT : Gravity.LEFT));
         searchBar.addView(searchBarText, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT, Gravity.TOP,
                 LocaleController.isRTL ? 16 : 52, 0, LocaleController.isRTL ? 52 : 16, 0));
-        contentView.addView(searchBar, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, SEARCH_BAR_HEIGHT, Gravity.BOTTOM, MapTools.SIDE_MARGIN, 0, MapTools.SIDE_MARGIN, 0));
-        // The layers and the tools, a round button on each side of the bar, as Telegram's chat header has them.
+        contentView.addView(searchBar, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, SEARCH_BAR_HEIGHT, Gravity.BOTTOM,
+                LocaleController.isRTL ? MapTools.END_MARGIN : MapTools.START_MARGIN, 0, LocaleController.isRTL ? MapTools.START_MARGIN : MapTools.END_MARGIN, 0));
+        // As in Telegram's chat header: "my location" round at the line's start, the layers and the tools at its end.
         tools = new MapTools(this, contentView, () -> {
             updateSearchBar();
             updateLayout();
@@ -1748,9 +1749,10 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
             buttons = routeUi.bottomHeight() + dp(12);
         } else if (placeCard.getVisibility() == View.VISIBLE) {
             buttons = padding[3] + dp(8) + placeCard.getHeight() + dp(12);
-        } else if (searchBar.getVisibility() == View.VISIBLE || tools.isMeasuring()) {
+        } else if (tools.isMeasuring()) {
             buttons += dp(SEARCH_BAR_HEIGHT) + dp(12);
         }
+        // Otherwise "my location" sits in the search bar's row, at its start.
         ((FrameLayout.LayoutParams) locationButton.getLayoutParams()).bottomMargin = buttons;
 
         // The sheet rises to just under the status bar, and its list scrolls out from under the tab bar.
@@ -1805,7 +1807,7 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         }
         searchEmpty.setTextColor(getThemedColor(Theme.key_windowBackgroundWhiteGrayText));
 
-        locationButton.setBackground(Theme.createSimpleSelectorCircleDrawable(dp(40), getThemedColor(Theme.key_location_actionBackground), getThemedColor(Theme.key_location_actionPressedBackground)));
+        locationButton.setBackground(Theme.createSimpleSelectorCircleDrawable(dp(48), getThemedColor(Theme.key_location_actionBackground), getThemedColor(Theme.key_location_actionPressedBackground)));
         locationButton.setColorFilter(new PorterDuffColorFilter(getThemedColor(Theme.key_location_actionActiveIcon), PorterDuff.Mode.MULTIPLY));
         final GradientDrawable placeBackground = new GradientDrawable();
         placeBackground.setCornerRadius(dp(14));

@@ -8,10 +8,12 @@ import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.PorterDuff;
 import android.graphics.PorterDuffColorFilter;
+import android.graphics.drawable.GradientDrawable;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
+import android.widget.LinearLayout;
 
 import org.telegram.cogram.MapEngine;
 import org.telegram.messenger.ApplicationLoader;
@@ -24,9 +26,9 @@ import org.telegram.ui.Components.LayoutHelper;
 import org.telegram.ui.Components.ScaleStateListAnimator;
 
 /**
- * The Maps tab's tools, laid out as Telegram's chat header: the search bar in the middle, a round button on each side.
- * The one at the line's start opens the layers, the one at its end (⋮) the tools: the center point, measuring a
- * distance and an area. While measuring, the measure bar takes the row's place and the line follows the center point.
+ * The Maps tab's tools, laid out as Telegram's chat header: the search bar in the middle, the page's round "my location"
+ * button at the line's start and, at its end, a capsule of two buttons as the header's call and ⋮ are: the layers, and
+ * the tools (⋮): the center point, measuring a distance and an area. While measuring, the measure bar takes the row's place and the line follows the center point.
  */
 public final class MapTools {
 
@@ -35,14 +37,16 @@ public final class MapTools {
         void onToolsChanged();
     }
 
-    /** The search bar's margin on each side, which leaves room for a round button. */
-    public static final int SIDE_MARGIN = 12 + 48 + 8;
+    /** The search bar's margins at the line's start (the round button) and end (the capsule). */
+    public static final int START_MARGIN = 12 + 48 + 8;
+    public static final int END_MARGIN = 12 + 2 * 44 + 8;
 
     private static final String KEY_CENTER = "center_shown";
     private static final String KEY_PLACES = "places_shown";
 
     private final BaseFragment fragment;
     private final Host host;
+    private final LinearLayout capsule;
     private final ImageView layersButton;
     private final ImageView toolsButton;
     private final View center;
@@ -56,15 +60,18 @@ public final class MapTools {
         this.fragment = fragment;
         this.host = host;
         final Context context = container.getContext();
-        final int start = LocaleController.isRTL ? Gravity.RIGHT : Gravity.LEFT;
-        final int end = LocaleController.isRTL ? Gravity.LEFT : Gravity.RIGHT;
-
-        layersButton = roundButton(context, R.drawable.msg_map_type, R.string.PhogramMapsLayers);
+        capsule = new LinearLayout(context);
+        capsule.setTranslationZ(dp(3));
+        capsule.setVisibility(View.GONE);
+        layersButton = button(context, R.drawable.msg_map_type, R.string.PhogramMapsLayers);
         layersButton.setOnClickListener(v -> openLayers());
-        container.addView(layersButton, LayoutHelper.createFrame(48, 48, Gravity.BOTTOM | start, 12, 0, 12, 0));
-        toolsButton = roundButton(context, R.drawable.ic_ab_other, R.string.AccDescrMoreOptions);
+        toolsButton = button(context, R.drawable.ic_ab_other, R.string.AccDescrMoreOptions);
         toolsButton.setOnClickListener(v -> openTools());
-        container.addView(toolsButton, LayoutHelper.createFrame(48, 48, Gravity.BOTTOM | end, 12, 0, 12, 0));
+        // ⋮ at the capsule's outer end, as in the chat header, in both directions.
+        capsule.addView(LocaleController.isRTL ? toolsButton : layersButton, LayoutHelper.createLinear(44, 48));
+        capsule.addView(LocaleController.isRTL ? layersButton : toolsButton, LayoutHelper.createLinear(44, 48));
+        container.addView(capsule, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, 48,
+                Gravity.BOTTOM | (LocaleController.isRTL ? Gravity.LEFT : Gravity.RIGHT), 12, 0, 12, 0));
 
         center = new CenterPoint(context);
         center.setVisibility(preferences().getBoolean(KEY_CENTER, false) ? View.VISIBLE : View.GONE);
@@ -100,11 +107,10 @@ public final class MapTools {
         if (engine != null) engine.setPlacesShown(preferences().getBoolean(KEY_PLACES, true));
     }
 
-    /** The round buttons show with the search bar between them. */
+    /** The capsule shows with the search bar beside it. */
     public void setRowShown(boolean shown) {
         rowShown = shown;
-        layersButton.setVisibility(shown && !isMeasuring() ? View.VISIBLE : View.GONE);
-        toolsButton.setVisibility(layersButton.getVisibility());
+        capsule.setVisibility(shown && !isMeasuring() ? View.VISIBLE : View.GONE);
     }
 
     public boolean isMeasuring() {
@@ -124,8 +130,7 @@ public final class MapTools {
 
     /** The row's distance from the page's bottom, and where the middle of the map's free part is. */
     public void layout(int bottomMargin, float centerOffsetY) {
-        ((FrameLayout.LayoutParams) layersButton.getLayoutParams()).bottomMargin = bottomMargin;
-        ((FrameLayout.LayoutParams) toolsButton.getLayoutParams()).bottomMargin = bottomMargin;
+        ((FrameLayout.LayoutParams) capsule.getLayoutParams()).bottomMargin = bottomMargin;
         ((FrameLayout.LayoutParams) measureBar.getLayoutParams()).bottomMargin = bottomMargin;
         center.setTranslationY(centerOffsetY);
     }
@@ -139,8 +144,12 @@ public final class MapTools {
     }
 
     public void updateColors() {
+        final GradientDrawable background = new GradientDrawable();
+        background.setCornerRadius(dp(24));
+        background.setColor(Theme.getColor(Theme.key_windowBackgroundWhite));
+        capsule.setBackground(background);
         for (ImageView button : new ImageView[] { layersButton, toolsButton }) {
-            button.setBackground(Theme.createSimpleSelectorCircleDrawable(dp(48), Theme.getColor(Theme.key_windowBackgroundWhite), Theme.getColor(Theme.key_listSelector)));
+            button.setBackground(Theme.createSelectorDrawable(Theme.getColor(Theme.key_listSelector), 1, dp(20)));
             button.setColorFilter(new PorterDuffColorFilter(Theme.getColor(Theme.key_windowBackgroundWhiteGrayIcon), PorterDuff.Mode.MULTIPLY));
         }
         measureBar.updateColors();
@@ -184,13 +193,11 @@ public final class MapTools {
         return engine.pointAt(center.getX() + center.getWidth() / 2f, center.getY() + center.getHeight() / 2f);
     }
 
-    private static ImageView roundButton(Context context, int icon, int description) {
+    private static ImageView button(Context context, int icon, int description) {
         final ImageView button = new ImageView(context);
         button.setImageResource(icon);
         button.setScaleType(ImageView.ScaleType.CENTER);
         button.setContentDescription(LocaleController.getString(description));
-        button.setTranslationZ(dp(3));
-        button.setVisibility(View.GONE);
         ScaleStateListAnimator.apply(button);
         return button;
     }
