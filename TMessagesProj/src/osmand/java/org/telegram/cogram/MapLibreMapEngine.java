@@ -79,6 +79,7 @@ final class MapLibreMapEngine implements MapEngine {
     private Runnable cameraListener;
     private final Runnable startOffline = this::offline;
     private MapLibreMap map;
+    private MapFling fling;
     private Style style;
     private boolean destroyed;
     private boolean started;
@@ -156,6 +157,7 @@ final class MapLibreMapEngine implements MapEngine {
         // The page has its own compass button, as Telegram's location page does.
         map.getUiSettings().setCompassEnabled(false);
         map.getUiSettings().setAttributionEnabled(true);
+        fling = new MapFling(view, map, this::onCameraMoved, this::onCameraIdle);
         applyAttributionMargins();
         map.setMaxZoomPreference(19);
         map.setCameraPosition(new CameraPosition.Builder()
@@ -479,6 +481,8 @@ final class MapLibreMapEngine implements MapEngine {
 
     private boolean onMapClick(LatLng point) {
         if (tapListener == null || map == null || style == null) return false;
+        // A tap that stopped the gliding map only stops it.
+        if (fling != null && fling.touchStoppedGlide()) return true;
         final PointF screen = map.getProjection().toScreenLocation(point);
         if (onAlongClick(screen)) return true;
         if (onRouteClick(screen)) return true;
@@ -500,6 +504,7 @@ final class MapLibreMapEngine implements MapEngine {
                     kindOfTile(kind), ""));
             return true;
         }
+        tapListener.onEmptyTapped();
         return false;
     }
 
@@ -1799,6 +1804,7 @@ final class MapLibreMapEngine implements MapEngine {
     @SuppressWarnings("MissingPermission")
     public void onPause() {
         resumed = false;
+        if (fling != null) fling.stop();
         // The position is not followed while another tab is open, so the GPS does not use the battery.
         if (map != null && map.getLocationComponent().isLocationComponentActivated()) {
             map.getLocationComponent().setLocationComponentEnabled(false);
@@ -1808,6 +1814,7 @@ final class MapLibreMapEngine implements MapEngine {
 
     @Override
     public void onDestroy() {
+        if (fling != null) fling.stop();
         stopNavigation();
         destroyed = true;
         shownPlace = null;
