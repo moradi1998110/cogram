@@ -77,6 +77,9 @@ final class MapsRouteUi {
     static final int MODE_NAVIGATION = 2;
 
     private final Host host;
+    private final FrameLayout page;
+    /** The trip in a small window while the app is out of sight. */
+    private TripMini mini;
     private int mode = MODE_NONE;
     private MapEngine.Place destination;
     private final List<MapEngine.Route> routes = new ArrayList<>();
@@ -127,6 +130,7 @@ final class MapsRouteUi {
 
     MapsRouteUi(Context context, FrameLayout parent, Host host) {
         this.host = host;
+        this.page = parent;
         final boolean rtl = LocaleController.isRTL;
 
         // The top card: back, then the two ends of the route with Telegram's small colored dots.
@@ -366,15 +370,7 @@ final class MapsRouteUi {
         parent.addView(overviewButton, LayoutHelper.createFrame(44, 44, (rtl ? Gravity.LEFT : Gravity.RIGHT) | Gravity.BOTTOM, 12, 0, 12, 0));
         // The voice: on or off with one tap, as Telegram's mute button; its language in the trip panel.
         muteButton = roundButton(context, R.drawable.msg_unmute, getString(R.string.PhogramNavVoice));
-        muteButton.setOnClickListener(v -> {
-            final boolean muted = !VoiceGuide.isMuted();
-            if (voice != null) {
-                voice.setMuted(muted);
-            } else {
-                new VoiceGuide(v.getContext()).setMuted(muted);
-            }
-            updateMuteButton();
-        });
+        muteButton.setOnClickListener(v -> toggleVoice());
         parent.addView(muteButton, LayoutHelper.createFrame(44, 44, (rtl ? Gravity.LEFT : Gravity.RIGHT) | Gravity.BOTTOM, 12, 0, 12, 0));
         muteButton.setVisibility(View.GONE);
         recenterButton = styleRound(new CountdownButton(context), R.drawable.msg_current_location, getString(R.string.PhogramNavRecenter));
@@ -483,6 +479,38 @@ final class MapsRouteUi {
             case "fa": return "فارسی";
             default: return "العربية";
         }
+    }
+
+    /** The voice on or off, from the mute button, the notification or the small window. */
+    private void toggleVoice() {
+        final boolean muted = !VoiceGuide.isMuted();
+        if (voice != null) {
+            voice.setMuted(muted);
+        } else {
+            new VoiceGuide(page.getContext()).setMuted(muted);
+        }
+        updateMuteButton();
+        if (mini != null) mini.onVoiceChanged();
+    }
+
+    /** The trip's notification and small window leave. */
+    private void endOutside() {
+        if (mini != null) {
+            mini.destroy();
+            mini = null;
+        }
+        TripService.stop();
+    }
+
+    /** The page goes or is built again: what the trip keeps outside it goes too, and the voice. */
+    void release() {
+        endOutside();
+        if (voice != null) voice.release();
+    }
+
+    /** The map's page shows or leaves; the small window takes the trip when the app goes to the background. */
+    void onPageShown(boolean shown) {
+        if (mini != null) mini.onPageShown(shown);
     }
 
     /** The mute button shows the voice's state with Telegram's speaker icons; the panel's row its language. */
@@ -1205,6 +1233,26 @@ final class MapsRouteUi {
         if (voice == null) voice = new VoiceGuide(host.fragment().getParentActivity() != null ? host.fragment().getParentActivity() : org.telegram.messenger.ApplicationLoader.applicationContext);
         voice.onStart();
         updateMuteButton();
+        // The trip goes on out of the app: the notification with the next turn, and the small window.
+        final TripMini.Host outside = new TripMini.Host() {
+            @Override
+            public void endTrip() {
+                if (mode == MODE_NAVIGATION) MapsRouteUi.this.endTrip();
+            }
+
+            @Override
+            public void toggleVoice() {
+                MapsRouteUi.this.toggleVoice();
+            }
+
+            @Override
+            public void onMapBack() {
+                layout();
+            }
+        };
+        TripService.start(outside);
+        final Activity activity = host.fragment().getParentActivity();
+        if (activity != null) mini = new TripMini(activity, engine, page, outside);
     }
 
     /**
@@ -1286,6 +1334,8 @@ final class MapsRouteUi {
         updateDriving(state);
         if (!state.rerouting) updateWeather(state);
         if (voice != null) voice.onNavigation(state);
+        TripService.update(state);
+        if (mini != null) mini.update(state);
     }
 
     /**
@@ -1316,6 +1366,7 @@ final class MapsRouteUi {
 
     void close() {
         final MapEngine engine = host.engine();
+        endOutside();
         if (voice != null && !arriving) voice.release();
         if (engine != null) {
             engine.stopNavigation();

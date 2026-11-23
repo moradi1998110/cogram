@@ -480,6 +480,8 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         });
 
         createSearch(context);
+        // A page built again (as when the theme turns to night): the old panel's trip ends with it.
+        if (routeUi != null) routeUi.release();
         routeUi = new MapsRouteUi(context, contentView, new MapsRouteUi.Host() {
             @Override
             public MapEngine engine() {
@@ -1657,6 +1659,8 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         super.onFragmentDestroy();
         AndroidUtilities.cancelRunOnUIThread(compassCheck);
         AndroidUtilities.cancelRunOnUIThread(createMapEngine);
+        // A trip still going ends with the page: its notification and small window leave too.
+        if (routeUi != null) routeUi.release();
         if (mapEngine != null) {
             mapEngine.onDestroy();
             mapEngine = null;
@@ -1899,6 +1903,8 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         super.onResume();
         pageResumed = true;
         updateColors();
+        // The small window gives the map back before the page wakes it.
+        if (routeUi != null) routeUi.onPageShown(true);
         if (mapEngine != null) {
             mapEngine.onResume();
             AndroidUtilities.cancelRunOnUIThread(compassCheck);
@@ -1926,6 +1932,10 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         // The map pauses so it does not use the battery while another tab is open.
         if (mapEngine != null) {
             mapEngine.onPause();
+        }
+        // With the app gone to the background during a trip, the small window takes the map.
+        if (routeUi != null) {
+            routeUi.onPageShown(false);
         }
     }
 
