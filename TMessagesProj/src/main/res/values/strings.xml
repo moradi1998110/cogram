@@ -11657,10 +11657,10 @@
     <string name="PhogramLiveTvError">The broadcast could not be played here.</string>
     <string name="PhogramLiveTvNotLive">This channel is not broadcasting live right now.</string>
     <string name="PhogramLiveAddChannel">Add channel</string>
-    <string name="PhogramLiveAddHint">Add any YouTube channel by its link (youtube.com/channel/UC…) or its ID. To find the ID: on the channel\'s About page in YouTube, tap Share channel, then Copy channel ID. Your channels stay on this device; long-press one to rename or remove it.</string>
+    <string name="PhogramLiveAddHint">Add any YouTube channel by pasting its link: in YouTube, open the channel, tap Share, then Copy link. Your channels stay on this device; long-press one to rename or remove it.</string>
     <string name="PhogramLiveChannelName">Channel name</string>
     <string name="PhogramLiveChannelLink">Channel link or ID</string>
-    <string name="PhogramLiveInvalidLink">That is not a channel link. Copy the channel ID from the channel\'s About page in YouTube.</string>
+    <string name="PhogramLiveInvalidLink">No YouTube channel was found for this link. Copy the link from the channel\'s Share button in YouTube.</string>
     <string name="PhogramLiveAlreadyAdded">This channel is already in the list.</string>
     <string name="PhogramLiveRename">Rename</string>
     <string name="PhogramAdSample1Title">Sample advert</string>

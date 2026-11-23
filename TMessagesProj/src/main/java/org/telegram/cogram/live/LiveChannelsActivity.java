@@ -114,20 +114,52 @@ public class LiveChannelsActivity extends UniversalFragment {
                 AndroidUtilities.shakeViewSpring(nameField, -6);
                 return;
             }
-            final String id = channel != null ? channel.id : LiveChannels.parseId(link.getText().toString());
-            if (id == null) {
-                AndroidUtilities.shakeViewSpring(link, -6);
-                BulletinFactory.of(this).createSimpleBulletin(R.raw.error, LocaleController.getString(R.string.PhogramLiveInvalidLink), 3).show();
+            if (channel != null) {
+                save(channel.id, name, dialog);
                 return;
             }
-            if (channel == null && LiveChannels.contains(id)) {
-                BulletinFactory.of(this).createSimpleBulletin(R.raw.info, LocaleController.getString(R.string.PhogramLiveAlreadyAdded)).show();
+            final String input = link.getText().toString();
+            final String id = LiveChannels.parseId(input);
+            if (id != null) {
+                add(id, name, link, dialog);
                 return;
             }
-            LiveChannels.put(id, name);
-            listView.adapter.update(true);
-            dialog.dismiss();
+            final String handle = LiveStreamResolver.parseHandle(input);
+            if (handle == null) {
+                rejectLink(link);
+                return;
+            }
+            // A handle link, as YouTube's Share gives: ask YouTube which channel it is.
+            v.setEnabled(false);
+            LiveStreamResolver.resolveHandle(handle, channelId -> {
+                v.setEnabled(true);
+                if (channelId == null) {
+                    rejectLink(link);
+                } else {
+                    add(channelId, name, link, dialog);
+                }
+            });
         });
+    }
+
+    private void add(String id, String name, View link, AlertDialog dialog) {
+        if (LiveChannels.contains(id)) {
+            AndroidUtilities.shakeViewSpring(link, -6);
+            BulletinFactory.of(this).createSimpleBulletin(R.raw.info, LocaleController.getString(R.string.PhogramLiveAlreadyAdded)).show();
+            return;
+        }
+        save(id, name, dialog);
+    }
+
+    private void save(String id, String name, AlertDialog dialog) {
+        LiveChannels.put(id, name);
+        listView.adapter.update(true);
+        dialog.dismiss();
+    }
+
+    private void rejectLink(View link) {
+        AndroidUtilities.shakeViewSpring(link, -6);
+        BulletinFactory.of(this).createSimpleBulletin(R.raw.error, LocaleController.getString(R.string.PhogramLiveInvalidLink), 3).show();
     }
 
     private static EditTextBoldCursor field(Context context, int hint, int inputType) {
