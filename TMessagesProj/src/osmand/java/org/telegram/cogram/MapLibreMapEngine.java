@@ -80,6 +80,8 @@ final class MapLibreMapEngine implements MapEngine {
     private final Runnable startOffline = this::offline;
     private MapLibreMap map;
     private MapFling fling;
+    private final MapMeasureLayers measure = new MapMeasureLayers();
+    private boolean placesShown = true;
     private Style style;
     private boolean destroyed;
     private boolean started;
@@ -191,6 +193,7 @@ final class MapLibreMapEngine implements MapEngine {
             activateLocation();
             drawRoute();
             drawRoadMarks();
+            drawMeasure(loaded);
             ready = true;
             if (readyListener != null) {
                 readyListener.run();
@@ -449,6 +452,7 @@ final class MapLibreMapEngine implements MapEngine {
             activateLocation();
             drawRoute();
             drawRoadMarks();
+            drawMeasure(loaded);
         });
     }
 
@@ -477,6 +481,31 @@ final class MapLibreMapEngine implements MapEngine {
     @Override
     public void setMapTapListener(MapTapListener listener) {
         tapListener = listener;
+    }
+
+    /** What the app draws over the style on top of the route: the measurement, and the landmarks shown or not. */
+    private void drawMeasure(Style loaded) {
+        measure.attach(loaded);
+        setPlacesShown(placesShown);
+    }
+
+    @Override
+    public double[] pointAt(float x, float y) {
+        if (map == null) return null;
+        final LatLng point = map.getProjection().fromScreenLocation(new PointF(x, y));
+        return new double[] { point.getLatitude(), point.getLongitude() };
+    }
+
+    @Override
+    public void showMeasure(double[] coordinates, boolean closed, String[] sides) {
+        measure.show(coordinates, closed, sides);
+    }
+
+    @Override
+    public void setPlacesShown(boolean shown) {
+        placesShown = shown;
+        final org.maplibre.android.style.layers.Layer pois = style != null ? style.getLayer("pois") : null;
+        if (pois != null) pois.setProperties(PropertyFactory.visibility(shown ? Property.VISIBLE : Property.NONE));
     }
 
     private boolean onMapClick(LatLng point) {

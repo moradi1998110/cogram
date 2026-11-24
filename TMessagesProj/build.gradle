@@ -75,6 +75,8 @@ dependencies {
     implementation 'com.google.code.gson:gson:2.11.0'
     // The same version as the engine's, which is the one Gradle packages anyway.
     implementation 'com.google.guava:guava:33.7.2-android'
+    // The Maps tab's measurements: lengths and areas on the WGS84 ellipsoid, as surveys take them (MIT, no dependencies).
+    implementation 'net.sf.geographiclib:GeographicLib-Java:2.0'
 
 
     implementation "androidx.credentials:credentials:1.6.0-alpha04"

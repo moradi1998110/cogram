@@ -42,6 +42,7 @@ import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
 
+import org.telegram.cogram.measure.MapTools;
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.ApplicationLoader;
 import org.telegram.messenger.FileLog;
@@ -120,7 +121,10 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
     private static final String RECENT_PREFERENCES = "cogram_maps_recent";
     private static final String RECENT_KEY = "places";
     private static final int SEARCH_BAR_HEIGHT = 48;
+    /** The search bar's row, the place's card and the measure bar sit this close above the tab bar. */
+    private static final int ROW_GAP = 6;
 
+    private MapTools tools;
     private FrameLayout searchBar;
     private ImageView searchBarIcon;
     private TextView searchBarText;
@@ -318,7 +322,7 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         locationButton.setContentDescription(getString(R.string.AccDescrMyLocation));
         locationButton.setVisibility(View.GONE);
         locationButton.setOnClickListener(v -> onLocationButtonClick());
-        contentView.addView(locationButton, LayoutHelper.createFrame(40, 40, Gravity.RIGHT | Gravity.BOTTOM, 0, 0, 12, 12));
+        contentView.addView(locationButton, LayoutHelper.createFrame(48, 48, (LocaleController.isRTL ? Gravity.RIGHT : Gravity.LEFT) | Gravity.BOTTOM, 12, 0, 12, 12));
 
         // The map's heading as a strip of degrees under the status bar: dragged it turns the map, tapped it puts
         // north up. During a trip the strip in the turn's card takes its place.
@@ -570,7 +574,13 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         searchBarText.setGravity(Gravity.CENTER_VERTICAL | (LocaleController.isRTL ? Gravity.RIGHT : Gravity.LEFT));
         searchBar.addView(searchBarText, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT, Gravity.TOP,
                 LocaleController.isRTL ? 16 : 52, 0, LocaleController.isRTL ? 52 : 16, 0));
-        contentView.addView(searchBar, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, SEARCH_BAR_HEIGHT, Gravity.BOTTOM, 12, 0, 12, 0));
+        contentView.addView(searchBar, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, SEARCH_BAR_HEIGHT, Gravity.BOTTOM,
+                LocaleController.isRTL ? MapTools.END_MARGIN : MapTools.START_MARGIN, 0, LocaleController.isRTL ? MapTools.START_MARGIN : MapTools.END_MARGIN, 0));
+        // As in Telegram's chat header: "my location" round at the line's start, the layers and the tools at its end.
+        tools = new MapTools(this, contentView, () -> {
+            updateSearchBar();
+            updateLayout();
+        });
 
         sheetScrim = new View(context);
         sheetScrim.setVisibility(View.GONE);
@@ -1071,7 +1081,11 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         mapReady = false;
         setMapView(mapEngine.getView());
         applyMapPadding();
-        cameraEvents = mapEngine.setCameraMoveListener(this::updateCompass);
+        tools.setEngine(mapEngine);
+        cameraEvents = mapEngine.setCameraMoveListener(() -> {
+            updateCompass();
+            tools.onCameraMoved();
+        });
         if (pageResumed) {
             mapEngine.onResume();
             AndroidUtilities.runOnUIThread(compassCheck, COMPASS_CHECK_MS);
@@ -1082,12 +1096,12 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         mapEngine.setMapTapListener(new MapEngine.MapTapListener() {
             @Override
             public void onPlaceTapped(MapEngine.Place place) {
-                if (!searchOpen && !isRouting()) showPlace(place);
+                if (!searchOpen && !isRouting() && !tools.isMeasuring()) showPlace(place);
             }
 
             @Override
             public void onLongPressed(double latitude, double longitude) {
-                if (searchOpen || isRouting()) return;
+                if (searchOpen || isRouting() || tools.isMeasuring()) return;
                 showPlace(new MapEngine.Place(getString(R.string.PhogramMapsDroppedPin),
                         String.format(java.util.Locale.US, "%.5f, %.5f", latitude, longitude), latitude, longitude));
             }
@@ -1166,11 +1180,12 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
     /** The "Where to?" bar shows over the map, except while a place's card takes its spot. */
     private void updateSearchBar() {
         if (searchBar == null) return;
-        final boolean show = mapEngine != null && mapReady && shownPlace == null && !isRouting();
+        final boolean show = mapEngine != null && mapReady && shownPlace == null && !isRouting() && !tools.isMeasuring();
         if (show != (searchBar.getVisibility() == View.VISIBLE)) {
             searchBar.setVisibility(show ? View.VISIBLE : View.GONE);
             updateLayout();
         }
+        tools.setRowShown(show);
     }
 
     private void showPlace(MapEngine.Place place) {
@@ -1357,6 +1372,10 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         // The tabs page passes back to this tab first: it closes the search, then the place's card.
         if (searchOpen) {
             if (invoked) closeSearch();
+            return false;
+        }
+        if (tools.isMeasuring()) {
+            if (invoked) tools.close();
             return false;
         }
         // Then the navigation (back to the preview), then the preview (back to the place's card).
@@ -1724,16 +1743,18 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         card.leftMargin = backButton.getVisibility() == View.VISIBLE ? dp(60) : dp(8);
 
         // From the bottom up: the tab bar, the search bar or the place's card, then the round buttons.
-        ((FrameLayout.LayoutParams) searchBar.getLayoutParams()).bottomMargin = padding[3] + dp(12);
-        ((FrameLayout.LayoutParams) placeCard.getLayoutParams()).bottomMargin = padding[3] + dp(8);
-        int buttons = padding[3] + dp(12);
+        ((FrameLayout.LayoutParams) searchBar.getLayoutParams()).bottomMargin = padding[3] + dp(ROW_GAP);
+        tools.layout(padding[3] + dp(ROW_GAP), (padding[1] - padding[3]) / 2f);
+        ((FrameLayout.LayoutParams) placeCard.getLayoutParams()).bottomMargin = padding[3] + dp(ROW_GAP);
+        int buttons = padding[3] + dp(ROW_GAP);
         if (isRouting()) {
             buttons = routeUi.bottomHeight() + dp(12);
         } else if (placeCard.getVisibility() == View.VISIBLE) {
-            buttons = padding[3] + dp(8) + placeCard.getHeight() + dp(12);
-        } else if (searchBar.getVisibility() == View.VISIBLE) {
+            buttons = padding[3] + dp(ROW_GAP) + placeCard.getHeight() + dp(12);
+        } else if (tools.isMeasuring()) {
             buttons += dp(SEARCH_BAR_HEIGHT) + dp(12);
         }
+        // Otherwise "my location" sits in the search bar's row, at its start.
         ((FrameLayout.LayoutParams) locationButton.getLayoutParams()).bottomMargin = buttons;
 
         // The sheet rises to just under the status bar, and its list scrolls out from under the tab bar.
@@ -1764,6 +1785,7 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         searchBarIcon.setColorFilter(new PorterDuffColorFilter(getThemedColor(Theme.key_windowBackgroundWhiteGrayIcon), PorterDuff.Mode.MULTIPLY));
         searchBarText.setTextColor(getThemedColor(Theme.key_windowBackgroundWhiteHintText));
         sheetScrim.setBackgroundColor(0x33000000);
+        tools.updateColors();
         final GradientDrawable sheetBackground = new GradientDrawable();
         sheetBackground.setCornerRadii(new float[] { dp(14), dp(14), dp(14), dp(14), 0, 0, 0, 0 });
         sheetBackground.setColor(getThemedColor(Theme.key_windowBackgroundWhite));
@@ -1787,7 +1809,7 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         }
         searchEmpty.setTextColor(getThemedColor(Theme.key_windowBackgroundWhiteGrayText));
 
-        locationButton.setBackground(Theme.createSimpleSelectorCircleDrawable(dp(40), getThemedColor(Theme.key_location_actionBackground), getThemedColor(Theme.key_location_actionPressedBackground)));
+        locationButton.setBackground(Theme.createSimpleSelectorCircleDrawable(dp(48), getThemedColor(Theme.key_location_actionBackground), getThemedColor(Theme.key_location_actionPressedBackground)));
         locationButton.setColorFilter(new PorterDuffColorFilter(getThemedColor(Theme.key_location_actionActiveIcon), PorterDuff.Mode.MULTIPLY));
         final GradientDrawable placeBackground = new GradientDrawable();
         placeBackground.setCornerRadius(dp(14));
