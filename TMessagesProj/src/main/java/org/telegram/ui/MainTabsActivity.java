@@ -603,6 +603,22 @@ public class MainTabsActivity extends ViewPagerActivity implements NotificationC
         }
     }
 
+    /** Phogram: the trip's floating window brings Maps' tab back, closing the pages opened over the tabs. */
+    public static void showMaps(BaseFragment tab) {
+        if (tab.getParentLayout() == null) return;
+        final java.util.List<BaseFragment> stack = tab.getParentLayout().getFragmentStack();
+        for (int i = stack.size() - 1; i >= 0; i--) {
+            if (!(stack.get(i) instanceof MainTabsActivity)) continue;
+            final ArrayList<BaseFragment> above = new ArrayList<>(stack.subList(i + 1, stack.size()));
+            for (int j = 0; j < above.size() - 1; j++) tab.getParentLayout().removeFragmentFromStack(above.get(j));
+            if (!above.isEmpty()) above.get(above.size() - 1).finishFragment();
+            final MainTabsActivity tabs = (MainTabsActivity) stack.get(i);
+            tabs.selectTab(POSITION_CALLS_OR_SETTINGS, true);
+            tabs.viewPager.scrollToPosition(POSITION_CALLS_OR_SETTINGS);
+            return;
+        }
+    }
+
     private void openFolder(int folderId) {
         if (viewPager.getCurrentPosition() == POSITION_CHATS && dialogsActivity != null) {
             dialogsActivity.scrollToFolder(folderId);

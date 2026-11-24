@@ -1,6 +1,7 @@
 package org.telegram.cogram.live;
 
 import android.annotation.SuppressLint;
+import android.app.Activity;
 import android.content.Context;
 import android.content.pm.ActivityInfo;
 import android.graphics.Color;
@@ -19,6 +20,7 @@ import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
+import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.ApplicationLoader;
 import org.telegram.messenger.FileLog;
 import org.telegram.messenger.LocaleController;
@@ -53,6 +55,7 @@ public class LiveTvActivity extends BaseFragment {
 
     private WebView webView;
     private LiveMini mini;
+    private boolean playing;
     private TextView errorView;
     private FrameLayout fullscreenView;
     private WebChromeClient.CustomViewCallback fullscreenCallback;
@@ -94,16 +97,21 @@ public class LiveTvActivity extends BaseFragment {
         player.setBackgroundColor(Color.BLACK);
         layout.addView(player, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT));
 
-        webView = new WebView(context);
-        webView.setBackgroundColor(Color.BLACK);
-        webView.setLayerType(View.LAYER_TYPE_HARDWARE, null);
-        final WebSettings settings = webView.getSettings();
-        settings.setJavaScriptEnabled(true);
-        settings.setDomStorageEnabled(true);
-        settings.setMediaPlaybackRequiresUserGesture(false);
-        CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true);
+        // Back from the floating window, the same player goes on playing here.
+        webView = LiveFloat.take(channel);
+        final boolean floated = webView != null;
+        if (!floated) {
+            webView = new WebView(context);
+            webView.setBackgroundColor(Color.BLACK);
+            webView.setLayerType(View.LAYER_TYPE_HARDWARE, null);
+            final WebSettings settings = webView.getSettings();
+            settings.setJavaScriptEnabled(true);
+            settings.setDomStorageEnabled(true);
+            settings.setMediaPlaybackRequiresUserGesture(false);
+            CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true);
+        }
         webView.setWebChromeClient(new FullscreenClient());
-        webView.setWebViewClient(new PlayerClient());
+        webView.setWebViewClient(new PlayerClient(this::onPlayerGone));
         player.addView(webView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
         mini = new LiveMini(getParentActivity(), player, webView);
 
@@ -127,7 +135,12 @@ public class LiveTvActivity extends BaseFragment {
         openButton.setOnClickListener(v -> Browser.openUrl(context, channel.youtubeUrl()));
         layout.addView(openButton, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 48, 16, 0, 16, 0));
 
-        LiveStreamResolver.resolve(channel, this::play);
+        if (floated) {
+            playing = true;
+            mini.setPlaying(true);
+        } else {
+            LiveStreamResolver.resolve(channel, this::play);
+        }
         return fragmentView = layout;
     }
 
@@ -138,6 +151,7 @@ public class LiveTvActivity extends BaseFragment {
             return;
         }
         webView.loadDataWithBaseURL(origin() + "/", String.format(PAGE, LiveChannel.embedUrl(videoId, origin())), "text/html", "UTF-8", null);
+        playing = true;
         mini.setPlaying(true);
     }
 
@@ -186,16 +200,25 @@ public class LiveTvActivity extends BaseFragment {
         exitFullscreen(false);
         if (mini != null) mini.destroy();
         if (webView == null) return;
+        // Left while it plays, the broadcast goes on in the floating window; it ends with the app.
+        final Activity activity = getParentActivity();
+        if (playing && activity != null && !activity.isFinishing()) {
+            LiveFloat.show(activity, channel, webView);
+        } else {
+            destroyPlayer(webView);
+        }
+        webView = null;
+    }
+
+    static void destroyPlayer(WebView player) {
         try {
-            final ViewGroup parent = (ViewGroup) webView.getParent();
-            if (parent != null) parent.removeView(webView);
-            webView.stopLoading();
-            webView.loadUrl("about:blank");
-            webView.destroy();
+            AndroidUtilities.removeFromParent(player);
+            player.stopLoading();
+            player.loadUrl("about:blank");
+            player.destroy();
         } catch (Exception e) {
             FileLog.e(e);
         }
-        webView = null;
     }
 
     /** The player's fullscreen button: its video over the whole window, turned sideways. */
@@ -242,7 +265,23 @@ public class LiveTvActivity extends BaseFragment {
         }
     }
 
-    private class PlayerClient extends WebViewClient {
+    private void onPlayerGone() {
+        if (mini != null) mini.destroy();
+        mini = null;
+        playing = false;
+        if (webView != null) destroyPlayer(webView);
+        webView = null;
+        showError(R.string.PhogramLiveTvError);
+    }
+
+    /** Whoever holds the player, its screen or the floating window: links open outside, a crash is theirs to end. */
+    static final class PlayerClient extends WebViewClient {
+        private final Runnable onGone;
+
+        PlayerClient(Runnable onGone) {
+            this.onGone = onGone;
+        }
+
         /** Taps that leave the player, such as YouTube's logo, open outside the app. */
         @Override
         public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
@@ -253,14 +292,7 @@ public class LiveTvActivity extends BaseFragment {
 
         @Override
         public boolean onRenderProcessGone(WebView view, RenderProcessGoneDetail detail) {
-            if (view == webView) {
-                mini.destroy();
-                mini = null;
-                ((ViewGroup) view.getParent()).removeView(view);
-                view.destroy();
-                webView = null;
-                showError(R.string.PhogramLiveTvError);
-            }
+            onGone.run();
             return true;
         }
     }

@@ -159,17 +159,22 @@ public final class DrawingFormats {
 
     // In.
 
-    /** The drawings in a GeoJSON, KML or GPX file, by its name's extension; their layer and color are the caller's. */
-    public static List<Drawing> read(InputStream in, String fileName, int color) throws Exception {
+    /**
+     * The drawings in a GeoJSON, KML or GPX file, told apart by what it holds rather than by its name, which chat
+     * apps often drop; their layer and color are the caller's.
+     */
+    public static List<Drawing> read(InputStream in, int color) throws Exception {
         final String text = readLimited(in);
-        final String name = fileName.toLowerCase(Locale.US);
         final List<Drawing> out = new ArrayList<>();
-        if (name.endsWith(".kml")) {
-            readXml(text, out, color, false);
-        } else if (name.endsWith(".gpx")) {
-            readXml(text, out, color, true);
-        } else {
+        final String start = text.substring(0, Math.min(text.length(), 4096)).replace("﻿", "").trim();
+        if (start.startsWith("{")) {
             readGeoJson(new JSONObject(text), out, color);
+        } else if (start.startsWith("<") && start.contains("<gpx")) {
+            readXml(text, out, color, true);
+        } else if (start.startsWith("<") && (start.contains("<kml") || start.contains(":kml"))) {
+            readXml(text, out, color, false);
+        } else {
+            throw new IOException("not GeoJSON, KML or GPX");
         }
         int points = 0;
         for (Drawing drawing : out) {
@@ -279,9 +284,12 @@ public final class DrawingFormats {
                         || "wpt".equals(end) || "trkseg".equals(end) || "rte".equals(end)) {
                     double[] coordinates = new double[points.size()];
                     for (int i = 0; i < coordinates.length; i++) coordinates[i] = points.get(i);
+                    final boolean closed = coordinates.length > 2 && coordinates[0] == coordinates[coordinates.length - 2]
+                            && coordinates[1] == coordinates[coordinates.length - 1];
+                    // GPX has no areas: one goes as a closed track, as toGpx writes it and OSM writes a building.
+                    if (gpx && "trkseg".equals(end) && closed && coordinates.length >= 8) kind = Drawing.AREA;
                     // A ring's last point repeats its first.
-                    if (kind == Drawing.AREA && coordinates.length > 2 && coordinates[0] == coordinates[coordinates.length - 2]
-                            && coordinates[1] == coordinates[coordinates.length - 1]) {
+                    if (kind == Drawing.AREA && closed) {
                         coordinates = java.util.Arrays.copyOf(coordinates, coordinates.length - 2);
                     }
                     if (kind >= 0 && valid(kind, coordinates)) {
