@@ -58,7 +58,6 @@ public class DrawingCell extends FrameLayout {
         icon.setScaleType(ImageView.ScaleType.CENTER);
         addView(icon, LayoutHelper.createFrame(24, 24, start, 21, 0, 21, 0));
         check = new CheckBox2(context, 21);
-        check.setColor(-1, Theme.key_windowBackgroundWhite, Theme.key_checkboxCheck);
         check.setDrawUnchecked(true);
         check.setDrawBackgroundAsArc(10);
         check.setVisibility(GONE);
@@ -104,7 +103,9 @@ public class DrawingCell extends FrameLayout {
 
     @Override
     protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
-        super.onMeasure(widthMeasureSpec, MeasureSpec.makeMeasureSpec(dp(58) + (divider ? 1 : 0), MeasureSpec.EXACTLY));
+        // The list's width, as a list row's: left to its content a row was as wide as its name.
+        super.onMeasure(MeasureSpec.makeMeasureSpec(MeasureSpec.getSize(widthMeasureSpec), MeasureSpec.EXACTLY),
+                MeasureSpec.makeMeasureSpec(dp(58) + (divider ? 1 : 0), MeasureSpec.EXACTLY));
     }
 
     public void set(int iconRes, int iconColor, CharSequence name, CharSequence about, boolean shown, boolean selecting, boolean selected, boolean animated, boolean divider) {

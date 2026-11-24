@@ -11762,7 +11762,7 @@
     <string name="PhogramDrawingsImport">Import a file</string>
     <string name="PhogramDrawingsImported">%1$d drawings imported</string>
     <string name="PhogramDrawingsImportFailed">This file could not be read</string>
-    <string name="PhogramDrawingsHint">Tap a drawing to open it. The eye shows or hides a layer or a drawing on the map, ⋮ has the rest. Hold a drawing to pick several to share, move or delete. The download button imports GeoJSON, KML and GPX files.</string>
+    <string name="PhogramDrawingsHint">Tap a folder or a drawing to open it. The eye shows or hides it on the map, ⋮ has the rest. New drawings are kept here; move them into a folder to group them. Hold a drawing to pick several to share, move or delete. The download button imports GeoJSON, KML and GPX files.</string>
     <string name="PhogramDrawingsAll">All</string>
     <string name="PhogramDrawingsPoints">Landmarks</string>
     <string name="PhogramDrawingsLines">Lines</string>
@@ -11796,6 +11796,7 @@
     <string name="PhogramGnssApproximate">Approximate, from Wi-Fi and cell towers</string>
     <string name="PhogramGnssUsed">%1$d of %2$d satellites in use</string>
     <string name="PhogramGnssUnreported">This phone does not report its satellites</string>
+    <string name="PhogramGnssSearching">Searching for satellites…</string>
     <string name="PhogramGnssDualFrequency">Dual frequency (L1 + L5)</string>
     <string name="PhogramGnssSystems">Satellite systems</string>
     <string name="PhogramGnssSystemSignal">%1$d of %2$d · %3$d dB-Hz</string>

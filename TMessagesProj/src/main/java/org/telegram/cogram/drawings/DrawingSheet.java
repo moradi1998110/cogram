@@ -47,7 +47,7 @@ public final class DrawingSheet extends BottomSheet {
                 return LocaleController.getString(R.string.PhogramDrawingLine) + " · " + MeasureBar.length(measure[0]);
             default:
                 return LocaleController.getString(R.string.PhogramDrawingPoint) + " · "
-                        + MeasureBar.coordinates(drawing.coordinates[0], drawing.coordinates[1]);
+                        + MeasureBar.ltr(MeasureBar.coordinates(drawing.coordinates[0], drawing.coordinates[1]));
         }
     }
 

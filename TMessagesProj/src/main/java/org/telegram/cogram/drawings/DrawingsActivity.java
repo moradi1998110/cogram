@@ -38,11 +38,12 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * The Maps tab's layers > My drawings, as a GIS manages its layers: each layer and drawing with its kind, an eye that
- * shows or hides it on the map and ⋮ for its actions; a tap opens a drawing. Chips filter by kind, the bar searches by
- * name. Holding a row picks drawings to share, move or delete together, as Telegram picks messages; sharing from the
- * bar asks the format first, then which drawings. A file imported opens this page again with its drawings, all picked,
- * to keep the ones wanted in a new layer or one there is.
+ * The Maps tab's layers > My drawings, as a file manager shows a folder: the layers as folders on top, then the
+ * drawings kept in My drawings itself (the first layer, which the list does not show as one). A tap opens a folder or
+ * a drawing; each row has its kind, an eye that shows or hides it on the map and ⋮ for its actions. Chips filter by
+ * kind, the bar searches by name. Holding a row picks drawings to share, move or delete together, as Telegram picks
+ * messages; sharing from the bar asks the format first, then which drawings. A file imported opens this page again
+ * with its drawings, all picked, to keep the ones wanted in a new folder or one there is.
  */
 public class DrawingsActivity extends UniversalFragment {
 
@@ -64,26 +65,44 @@ public class DrawingsActivity extends UniversalFragment {
     private NumberTextView count;
     private ActionBarMenuItem exportItem, moveItem, deleteItem, shareItem;
 
+    /** A folder's page: its layer, and My drawings' page under it; or none on My drawings itself. */
+    private final DrawingsStore.Layer folder;
+    private final DrawingsActivity parent;
+
     /** Importing: the file's drawings, its name, and the layer they go to, 0 for a new one named after the file. */
     private final List<Drawing> imported;
     private final String importName;
-    private final DrawingsActivity importedFrom;
     private long importLayer;
 
     public DrawingsActivity(DrawingSheet.Actions actions) {
         this.actions = actions;
+        folder = null;
+        parent = null;
         imported = null;
         importName = null;
-        importedFrom = null;
     }
 
-    private DrawingsActivity(DrawingsActivity from, List<Drawing> drawings, String name) {
-        actions = from.actions;
+    private DrawingsActivity(DrawingsActivity parent, DrawingsStore.Layer folder) {
+        actions = parent.actions;
+        this.folder = folder;
+        this.parent = parent;
+        imported = null;
+        importName = null;
+    }
+
+    private DrawingsActivity(DrawingsActivity parent, List<Drawing> drawings, String name) {
+        actions = parent.actions;
+        folder = null;
+        this.parent = parent;
         imported = drawings;
         importName = name;
-        importedFrom = from;
         for (Drawing drawing : drawings) selected.add(drawing.id);
         selecting = true;
+    }
+
+    /** My drawings' own layer: the first, made when there is none. */
+    private static long rootLayer() {
+        return DrawingsStore.get().defaultLayer();
     }
 
     @Override
@@ -109,6 +128,11 @@ public class DrawingsActivity extends UniversalFragment {
             exportItem.setContentDescription(LocaleController.getString(R.string.PhogramDrawingsExport));
             menu.addItem(MENU_IMPORT, R.drawable.msg_download).setContentDescription(LocaleController.getString(R.string.PhogramDrawingsImport));
             DrawingsStore.get().addListener(changed);
+            // My drawings has no eye of its own any more: one hidden in 0.0.45 shows again.
+            final long root = rootLayer();
+            for (DrawingsStore.Layer layer : DrawingsStore.get().layers()) {
+                if (layer.id == root && !layer.visible) DrawingsStore.get().setLayerVisible(layer.id, true);
+            }
         }
 
         final ActionBarMenu actionMode = actionBar.createActionMode();
@@ -198,7 +222,7 @@ public class DrawingsActivity extends UniversalFragment {
 
     @Override
     protected CharSequence getTitle() {
-        return imported != null ? importName : LocaleController.getString(R.string.PhogramDrawingsTitle);
+        return imported != null ? importName : folder != null ? folder.name : LocaleController.getString(R.string.PhogramDrawingsTitle);
     }
 
     @Override
@@ -214,17 +238,25 @@ public class DrawingsActivity extends UniversalFragment {
             items.add(UItem.asShadow(null));
             return;
         }
-        final boolean filtering = filter.getChosen() != KindFilter.ALL || !query.isEmpty();
-        for (DrawingsStore.Layer layer : DrawingsStore.get().layers()) {
-            final List<Drawing> drawings = shown(layer.id);
-            if (filtering && drawings.isEmpty()) continue;
-            items.add(DrawingCell.Factory.of((int) -layer.id, layer, selecting, selecting && !drawings.isEmpty() && picked(drawings).size() == drawings.size()));
-            for (Drawing drawing : drawings) {
-                items.add(DrawingCell.Factory.of(drawing.id.hashCode(), drawing, selecting, selected.contains(drawing.id)));
+        if (folder == null) {
+            // The folders, each shown while filtering only when something in it matches.
+            final boolean filtering = filter.getChosen() != KindFilter.ALL || !query.isEmpty();
+            final long root = rootLayer();
+            boolean any = false;
+            for (DrawingsStore.Layer layer : DrawingsStore.get().layers()) {
+                if (layer.id == root) continue;
+                final List<Drawing> drawings = shown(layer.id);
+                if (filtering && drawings.isEmpty()) continue;
+                items.add(DrawingCell.Factory.of((int) -layer.id, layer, selecting, selecting && !drawings.isEmpty() && picked(drawings).size() == drawings.size()));
+                any = true;
             }
-            items.add(UItem.asShadow(null));
+            if (any) items.add(UItem.asShadow(null));
         }
-        items.add(UItem.asShadow(LocaleController.getString(R.string.PhogramDrawingsHint)));
+        final List<Drawing> drawings = shown(folder != null ? folder.id : rootLayer());
+        for (Drawing drawing : drawings) {
+            items.add(DrawingCell.Factory.of(drawing.id.hashCode(), drawing, selecting, selected.contains(drawing.id)));
+        }
+        items.add(UItem.asShadow(folder == null ? LocaleController.getString(R.string.PhogramDrawingsHint) : null));
     }
 
     @Override
@@ -246,8 +278,10 @@ public class DrawingsActivity extends UniversalFragment {
             final DrawingsStore.Layer layer = (DrawingsStore.Layer) item.object;
             if (part == DrawingCell.EYE) {
                 DrawingsStore.get().setLayerVisible(layer.id, !layer.visible);
-            } else {
+            } else if (part == DrawingCell.MORE) {
                 layerOptions(layer, view);
+            } else {
+                presentFragment(new DrawingsActivity(this, layer));
             }
         } else if (item.object instanceof Drawing) {
             final Drawing drawing = (Drawing) item.object;
@@ -274,20 +308,25 @@ public class DrawingsActivity extends UniversalFragment {
         return true;
     }
 
-    /** The map's actions, this page closed first so the map shows. */
+    /** The map's actions, this page (and My drawings under a folder's) closed first so the map shows. */
     private final DrawingSheet.Actions leaving = new DrawingSheet.Actions() {
         @Override
         public void editShape(Drawing drawing) {
-            finishFragment();
+            leave();
             actions.editShape(drawing);
         }
 
         @Override
         public void showOnMap(Drawing drawing) {
-            finishFragment();
+            leave();
             actions.showOnMap(drawing);
         }
     };
+
+    private void leave() {
+        if (parent != null) parent.removeSelfFromStack();
+        finishFragment();
+    }
 
     private void layerOptions(DrawingsStore.Layer layer, View view) {
         ItemOptions.makeOptions(this, view)
@@ -344,6 +383,7 @@ public class DrawingsActivity extends UniversalFragment {
             }
             return out;
         }
+        if (folder != null) return shown(folder.id);
         final List<Drawing> out = new ArrayList<>();
         for (DrawingsStore.Layer layer : DrawingsStore.get().layers()) out.addAll(shown(layer.id));
         return out;
@@ -454,6 +494,6 @@ public class DrawingsActivity extends UniversalFragment {
         for (Drawing drawing : drawings) drawing.layerId = layer;
         DrawingsStore.get().saveAll(drawings);
         finishFragment();
-        BulletinFactory.of(importedFrom).createSimpleBulletin(R.raw.done, LocaleController.formatString(R.string.PhogramDrawingsImported, drawings.size())).show();
+        BulletinFactory.of(parent).createSimpleBulletin(R.raw.done, LocaleController.formatString(R.string.PhogramDrawingsImported, drawings.size())).show();
     }
 }

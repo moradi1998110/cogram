@@ -81,7 +81,7 @@ public final class GnssSheet extends BottomSheet implements GnssMonitor.Listener
         accuracy.setTextColor(Theme.getColor(bySatellites ? GnssGauge.color(monitor.getQuality()) : Theme.key_windowBackgroundWhiteGrayText));
         String summary = monitor.isReported()
                 ? LocaleController.formatString(R.string.PhogramGnssUsed, monitor.getUsed(), monitor.getVisible())
-                : LocaleController.getString(R.string.PhogramGnssUnreported);
+                : LocaleController.getString(Build.VERSION.SDK_INT >= Build.VERSION_CODES.N ? R.string.PhogramGnssSearching : R.string.PhogramGnssUnreported);
         if (!bySatellites && fix != null) summary = LocaleController.getString(R.string.PhogramGnssApproximate) + "\n" + summary;
         if (monitor.isDualFrequency()) summary += "\n" + LocaleController.getString(R.string.PhogramGnssDualFrequency);
         satellites.setText(summary);
@@ -98,9 +98,9 @@ public final class GnssSheet extends BottomSheet implements GnssMonitor.Listener
         if (fix == null) return;
         header(R.string.PhogramGnssPosition);
         final String decimal = MeasureBar.coordinates(fix.getLatitude(), fix.getLongitude());
-        row(LocaleController.getString(R.string.PhogramGnssCoordinates), decimal).setOnClickListener(v -> copy(decimal));
+        row(LocaleController.getString(R.string.PhogramGnssCoordinates), MeasureBar.ltr(decimal)).setOnClickListener(v -> copy(decimal));
         final String degrees = dms(fix.getLatitude(), "N", "S") + "  " + dms(fix.getLongitude(), "E", "W");
-        row(LocaleController.getString(R.string.PhogramGnssDegrees), degrees).setOnClickListener(v -> copy(degrees));
+        row(LocaleController.getString(R.string.PhogramGnssDegrees), MeasureBar.ltr(degrees)).setOnClickListener(v -> copy(degrees));
         if (fix.hasAltitude()) {
             String altitude = LocaleController.formatString(R.string.PhogramMapsMeters, (int) Math.round(fix.getAltitude()));
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && fix.hasVerticalAccuracy()) {
