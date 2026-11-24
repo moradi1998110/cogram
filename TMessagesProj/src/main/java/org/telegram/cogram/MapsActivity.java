@@ -1116,6 +1116,11 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
                 if (routeUi != null) routeUi.offerStop(place);
             }
 
+            @Override
+            public void onDrawingTapped(String id) {
+                if (!searchOpen && !isRouting() && !tools.isMeasuring()) tools.openDrawing(id);
+            }
+
             // A tap on the bare map closes the place's card, as in Google Maps.
             @Override
             public void onEmptyTapped() {

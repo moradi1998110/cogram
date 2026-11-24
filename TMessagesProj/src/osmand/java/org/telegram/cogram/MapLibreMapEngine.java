@@ -80,6 +80,7 @@ final class MapLibreMapEngine implements MapEngine {
     private final Runnable startOffline = this::offline;
     private MapLibreMap map;
     private MapFling fling;
+    private final MapDrawingsLayers drawings = new MapDrawingsLayers();
     private final MapMeasureLayers measure = new MapMeasureLayers();
     private boolean placesShown = true;
     private Style style;
@@ -483,8 +484,10 @@ final class MapLibreMapEngine implements MapEngine {
         tapListener = listener;
     }
 
-    /** What the app draws over the style on top of the route: the measurement, and the landmarks shown or not. */
+    /** What the app draws over the style on top of the route: the kept drawings, the measurement over them, and the
+     * landmarks shown or not. */
     private void drawMeasure(Style loaded) {
+        drawings.attach(loaded);
         measure.attach(loaded);
         setPlacesShown(placesShown);
     }
@@ -502,10 +505,40 @@ final class MapLibreMapEngine implements MapEngine {
     }
 
     @Override
+    public void showDrawings(String featureCollection) {
+        drawings.show(featureCollection);
+    }
+
+    @Override
+    public void moveToBounds(double[] bounds) {
+        if (map == null) return;
+        if (bounds[0] == bounds[2] && bounds[1] == bounds[3]) {
+            map.animateCamera(CameraUpdateFactory.newLatLngZoom(new LatLng(bounds[0], bounds[1]), Math.max(map.getCameraPosition().zoom, 16)), CAMERA_MS);
+            return;
+        }
+        final LatLngBounds box = new LatLngBounds.Builder().include(new LatLng(bounds[0], bounds[1])).include(new LatLng(bounds[2], bounds[3])).build();
+        map.animateCamera(CameraUpdateFactory.newLatLngBounds(box, AndroidUtilities.dp(64)), CAMERA_MS);
+    }
+
+    @Override
     public void setPlacesShown(boolean shown) {
         placesShown = shown;
         final org.maplibre.android.style.layers.Layer pois = style != null ? style.getLayer("pois") : null;
         if (pois != null) pois.setProperties(PropertyFactory.visibility(shown ? Property.VISIBLE : Property.NONE));
+    }
+
+    /** A tap on a kept drawing opens it. */
+    private boolean onDrawingClick(PointF screen) {
+        final float slop = AndroidUtilities.dp(12);
+        final List<Feature> features = map.queryRenderedFeatures(
+                new android.graphics.RectF(screen.x - slop, screen.y - slop, screen.x + slop, screen.y + slop), MapDrawingsLayers.TAPPABLE);
+        for (Feature feature : features) {
+            if (feature.hasProperty("id")) {
+                tapListener.onDrawingTapped(feature.getStringProperty("id"));
+                return true;
+            }
+        }
+        return false;
     }
 
     private boolean onMapClick(LatLng point) {
@@ -515,6 +548,7 @@ final class MapLibreMapEngine implements MapEngine {
         final PointF screen = map.getProjection().toScreenLocation(point);
         if (onAlongClick(screen)) return true;
         if (onRouteClick(screen)) return true;
+        if (onDrawingClick(screen)) return true;
         final float slop = AndroidUtilities.dp(12);
         final List<Feature> features = map.queryRenderedFeatures(
                 new android.graphics.RectF(screen.x - slop, screen.y - slop, screen.x + slop, screen.y + slop), TAPPABLE_LAYERS);

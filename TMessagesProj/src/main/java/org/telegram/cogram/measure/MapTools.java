@@ -16,11 +16,18 @@ import android.widget.ImageView;
 import android.widget.LinearLayout;
 
 import org.telegram.cogram.MapEngine;
+import org.telegram.cogram.drawings.Drawing;
+import org.telegram.cogram.drawings.DrawingFormats;
+import org.telegram.cogram.drawings.DrawingSheet;
+import org.telegram.cogram.drawings.DrawingsActivity;
+import org.telegram.cogram.drawings.DrawingsStore;
+import org.telegram.cogram.drawings.SaveDrawingSheet;
 import org.telegram.messenger.ApplicationLoader;
 import org.telegram.messenger.LocaleController;
 import org.telegram.messenger.R;
 import org.telegram.ui.ActionBar.BaseFragment;
 import org.telegram.ui.ActionBar.Theme;
+import org.telegram.ui.Components.BulletinFactory;
 import org.telegram.ui.Components.ItemOptions;
 import org.telegram.ui.Components.LayoutHelper;
 import org.telegram.ui.Components.ScaleStateListAnimator;
@@ -28,12 +35,13 @@ import org.telegram.ui.Components.ScaleStateListAnimator;
 /**
  * The Maps tab's tools, laid out as Telegram's chat header: the search bar in the middle, the page's round "my location"
  * button at the line's start and, at its end, a capsule of two buttons as the header's call and ⋮ are: the layers, and
- * the tools (⋮): the center point, measuring a distance and an area. While measuring, the measure bar takes the row's place and the line follows the center point.
+ * the tools (⋮). The tools draw at the center point: a landmark, a line or an area, measured as it goes; ✓ keeps it
+ * with a name, a layer and a color. The kept drawings show on the map, open with a tap, and list in My drawings.
  */
 public final class MapTools {
 
     public interface Host {
-        /** The row or the measuring started or ended: the page lays its bars out again. */
+        /** The row or the drawing started or ended: the page lays its bars out again. */
         void onToolsChanged();
     }
 
@@ -53,8 +61,24 @@ public final class MapTools {
     private final MeasureBar measureBar;
 
     private MapEngine engine;
+    /** What is being drawn: a landmark, a line, an area; null when nothing is. */
     private Measurement measurement;
+    private int kind;
+    /** The kept drawing whose shape is being changed, or null for a new one. */
+    private Drawing editing;
     private boolean rowShown;
+
+    private final DrawingSheet.Actions actions = new DrawingSheet.Actions() {
+        @Override
+        public void editShape(Drawing drawing) {
+            start(drawing.kind, drawing);
+        }
+
+        @Override
+        public void showOnMap(Drawing drawing) {
+            if (engine != null) engine.moveToBounds(drawing.bounds());
+        }
+    };
 
     public MapTools(BaseFragment fragment, FrameLayout container, Host host) {
         this.fragment = fragment;
@@ -96,15 +120,23 @@ public final class MapTools {
             public void onClose() {
                 close();
             }
+
+            @Override
+            public void onSave() {
+                save();
+            }
         });
         measureBar.setVisibility(View.GONE);
         container.addView(measureBar, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, 48, Gravity.BOTTOM, 12, 0, 12, 0));
+        DrawingsStore.get().addListener(this::showDrawings);
         updateColors();
     }
 
     public void setEngine(MapEngine engine) {
         this.engine = engine;
-        if (engine != null) engine.setPlacesShown(preferences().getBoolean(KEY_PLACES, true));
+        if (engine == null) return;
+        engine.setPlacesShown(preferences().getBoolean(KEY_PLACES, true));
+        showDrawings();
     }
 
     /** The capsule shows with the search bar beside it. */
@@ -117,15 +149,22 @@ public final class MapTools {
         return measurement != null;
     }
 
-    /** Ends the measuring; false when there was none. */
+    /** Ends the drawing; false when there was none. */
     public boolean close() {
         if (measurement == null) return false;
         measurement = null;
+        editing = null;
         if (engine != null) engine.showMeasure(null, false, null);
         measureBar.setVisibility(View.GONE);
         center.setVisibility(preferences().getBoolean(KEY_CENTER, false) ? View.VISIBLE : View.GONE);
         host.onToolsChanged();
         return true;
+    }
+
+    /** A kept drawing was tapped on the map. */
+    public void openDrawing(String id) {
+        final Drawing drawing = DrawingsStore.get().find(id);
+        if (drawing != null && fragment.getParentActivity() != null) DrawingSheet.show(fragment.getParentActivity(), drawing, actions);
     }
 
     /** The row's distance from the page's bottom, and where the middle of the map's free part is. */
@@ -137,7 +176,7 @@ public final class MapTools {
 
     /** The map moved: the line follows the center point to where the next point would go. */
     public void onCameraMoved() {
-        if (measurement == null || engine == null) return;
+        if (measurement == null || engine == null || kind == Drawing.POINT) return;
         final double[] cursor = centerPoint();
         final double[] sides = measurement.sides(cursor);
         final String[] labels = new String[sides.length];
@@ -161,6 +200,10 @@ public final class MapTools {
         center.invalidate();
     }
 
+    private void showDrawings() {
+        if (engine != null) engine.showDrawings(DrawingFormats.toGeoJson(DrawingsStore.get().visible()));
+    }
+
     private void openTools() {
         final boolean centerShown = center.getVisibility() == View.VISIBLE;
         ItemOptions.makeOptions(fragment, toolsButton)
@@ -168,28 +211,64 @@ public final class MapTools {
                     preferences().edit().putBoolean(KEY_CENTER, !centerShown).apply();
                     center.setVisibility(centerShown ? View.GONE : View.VISIBLE);
                 })
-                .add(R.drawable.phogram_measure_distance, LocaleController.getString(R.string.PhogramMeasureDistance), () -> start(false))
-                .add(R.drawable.phogram_measure_area, LocaleController.getString(R.string.PhogramMeasureArea), () -> start(true))
+                .add(R.drawable.msg_location, LocaleController.getString(R.string.PhogramDrawingAddPoint), () -> start(Drawing.POINT, null))
+                .add(R.drawable.phogram_measure_distance, LocaleController.getString(R.string.PhogramMeasureDistance), () -> start(Drawing.LINE, null))
+                .add(R.drawable.phogram_measure_area, LocaleController.getString(R.string.PhogramMeasureArea), () -> start(Drawing.AREA, null))
+                .add(R.drawable.msg_folders, LocaleController.getString(R.string.PhogramDrawingsTitle), () -> fragment.presentFragment(new DrawingsActivity(actions)))
                 .show();
     }
 
+    /** The landmarks, then each layer of drawings, shown or hidden with a tap. */
     private void openLayers() {
         final boolean placesShown = preferences().getBoolean(KEY_PLACES, true);
-        ItemOptions.makeOptions(fragment, layersButton)
+        final ItemOptions options = ItemOptions.makeOptions(fragment, layersButton)
                 .add(R.drawable.msg_location, LocaleController.getString(placesShown ? R.string.PhogramMapsHidePlaces : R.string.PhogramMapsShowPlaces), () -> {
                     preferences().edit().putBoolean(KEY_PLACES, !placesShown).apply();
                     if (engine != null) engine.setPlacesShown(!placesShown);
-                })
-                .show();
+                });
+        for (DrawingsStore.Layer layer : DrawingsStore.get().layers()) {
+            options.add(layer.visible ? R.drawable.msg_views : R.drawable.msg_archive_hide, layer.name,
+                    () -> DrawingsStore.get().setLayerVisible(layer.id, !layer.visible));
+        }
+        options.show();
     }
 
-    private void start(boolean area) {
-        measurement = new Measurement(area);
+    /** Starts drawing {@code kind}, a new one or {@code drawing}'s shape again. */
+    private void start(int kind, Drawing drawing) {
+        this.kind = kind;
+        editing = drawing;
+        measurement = drawing != null && kind != Drawing.POINT
+                ? Measurement.of(kind == Drawing.AREA, drawing.coordinates) : new Measurement(kind == Drawing.AREA);
         center.setVisibility(View.VISIBLE);
         measureBar.setVisibility(View.VISIBLE);
         setRowShown(rowShown);
-        onCameraMoved();
+        if (drawing != null && engine != null) engine.moveToBounds(drawing.bounds());
+        if (kind == Drawing.POINT) {
+            measureBar.setPoint();
+        } else {
+            onCameraMoved();
+        }
         host.onToolsChanged();
+    }
+
+    /** ✓: a changed shape is kept at once; a new drawing asks for its name, layer and color first. */
+    private void save() {
+        final double[] coordinates = kind == Drawing.POINT ? centerPoint() : measurement.coordinates(null);
+        if (coordinates == null || fragment.getParentActivity() == null) return;
+        final Drawing drawing = editing != null ? editing : Drawing.create(kind, coordinates, Theme.getColor(Theme.key_color_blue));
+        close();
+        if (drawing.id != null && DrawingsStore.get().find(drawing.id) != null) {
+            drawing.coordinates = coordinates;
+            drawing.updated = System.currentTimeMillis();
+            DrawingsStore.get().save(drawing);
+            saved();
+            return;
+        }
+        SaveDrawingSheet.show(fragment.getParentActivity(), drawing, this::saved);
+    }
+
+    private void saved() {
+        BulletinFactory.of(fragment).createSimpleBulletin(R.raw.done, LocaleController.getString(R.string.PhogramDrawingSaved)).show();
     }
 
     /** The map's point under the center point's middle. */
