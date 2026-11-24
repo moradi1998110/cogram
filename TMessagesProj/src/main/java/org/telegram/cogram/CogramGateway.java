@@ -460,6 +460,10 @@ public final class CogramGateway {
             TLRPC.TL_messages_readHistory read = (TLRPC.TL_messages_readHistory) request;
             return backend.markRead(peerId(read.peer), read.max_id);
         } else if (request instanceof TLRPC.TL_messages_setTyping) {
+            TLRPC.TL_messages_setTyping typing = (TLRPC.TL_messages_setTyping) request;
+            if (typing.peer instanceof TLRPC.TL_inputPeerUser) {
+                backend.setTyping(typing.peer.user_id, typing.action);
+            }
             return new TLRPC.TL_boolTrue();
         } else if (request instanceof TLRPC.TL_auth_logOut) {
             return signOut();

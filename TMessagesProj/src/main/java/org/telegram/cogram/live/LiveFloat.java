@@ -38,6 +38,8 @@ final class LiveFloat implements FloatingWindow.Listener, NotificationCenter.Not
                 }
             }
         };
+        // The closing screen still holds it.
+        AndroidUtilities.removeFromParent(player);
         content.addView(player);
         // Its screen's clients go with the screen; the player crashing ends the window.
         player.setWebChromeClient(null);

@@ -207,6 +207,36 @@ final class XmppBackend implements GatewayBackend {
             }
         }
     };
+    private final XmppChatStates chatStates = new XmppChatStates(context, new XmppChatStates.Peers() {
+        @Override
+        public Conversation chat(long userId) {
+            final XmppConnectionService engine;
+            final Account account;
+            synchronized (XmppBackend.this) {
+                engine = service;
+                account = engine == null ? null : account();
+            }
+            final String jid = ids.peerJid(userId);
+            if (account == null || jid == null) return null;
+            final Conversation chat = engine.find(account, Jid.of(jid));
+            return chat == null || isRoom(chat) ? null : chat;
+        }
+
+        @Override
+        public long userId(Account account, Jid address) {
+            final XmppConnectionService engine;
+            synchronized (XmppBackend.this) {
+                engine = service;
+            }
+            final Conversation chat = engine == null ? null : engine.find(account, address);
+            return chat == null || isRoom(chat) ? 0 : ids.peerId(address.toString());
+        }
+
+        @Override
+        public void push(TLRPC.Updates updates, long userId) {
+            callPeers.push(updates, userId);
+        }
+    });
     private UpdatesListener listener;
     private XmppConnectionService service;
     private int pts;
@@ -287,6 +317,7 @@ final class XmppBackend implements GatewayBackend {
         connected.setOnRosterUpdateListener(rosterListener);
         connected.setOnMessageChangeListener(messageChange);
         DisplayedManager.roomReadListener = roomReadListener;
+        eu.siacs.conversations.xmpp.manager.ChatStateManager.incomingListener = chatStates;
         Account account;
         synchronized (this) {
             account = account();
@@ -3867,6 +3898,11 @@ final class XmppBackend implements GatewayBackend {
             }
         }
         return result;
+    }
+
+    @Override
+    public void setTyping(long userId, TLRPC.SendMessageAction action) {
+        chatStates.send(userId, action);
     }
 
     @Override

@@ -5,6 +5,7 @@ import com.google.common.collect.ClassToInstanceMap;
 import com.google.common.collect.ImmutableClassToInstanceMap;
 import eu.siacs.conversations.AppSettings;
 import eu.siacs.conversations.Config;
+import eu.siacs.conversations.entities.Account;
 import eu.siacs.conversations.entities.Conversation;
 import eu.siacs.conversations.services.XmppConnectionService;
 import eu.siacs.conversations.xmpp.Jid;
@@ -31,6 +32,20 @@ public class ChatStateManager extends AbstractManager {
                     .put(Inactive.class, new Inactive())
                     .put(Paused.class, new Paused())
                     .build();
+
+    /**
+     * Phogram: hears each chat state a contact sends outside rooms, with its message for anything sent with it; on
+     * the engine's thread.
+     */
+    public interface IncomingListener {
+        void onChatState(
+                Account account,
+                Jid from,
+                Class<? extends ChatStateNotification> state,
+                Message message);
+    }
+
+    public static volatile IncomingListener incomingListener;
 
     private final XmppConnectionService service;
     private final AppSettings appSettings;
@@ -92,6 +107,10 @@ public class ChatStateManager extends AbstractManager {
                 final var previous = this.incoming.put(from.asBareJid(), chatState);
                 if (!Objects.equals(previous, chatState)) {
                     this.service.updateConversationUi();
+                }
+                final var listener = incomingListener;
+                if (listener != null) {
+                    listener.onChatState(getAccount(), from.asBareJid(), chatState, message);
                 }
             }
         }

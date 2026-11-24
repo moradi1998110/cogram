@@ -1904,7 +1904,24 @@ public class AndroidUtilities {
         if (pathString.endsWith(".attheme")) {
             return false;
         }
+        if (org.telegram.cogram.CogramGateway.ENABLED && isSharingCopy(pathString)) {
+            return false;
+        }
         return pathString != null && pathString.toLowerCase().contains("/data/data/" + ApplicationLoader.applicationContext.getPackageName());
+    }
+
+    /**
+     * Phogram's cache is in its private storage, and so are the copies made there of files picked to send: those are
+     * let through, nothing else private is.
+     */
+    private static boolean isSharingCopy(String pathString) {
+        try {
+            final String path = new File(pathString).getCanonicalPath();
+            final String sharing = getSharingDirectory().getCanonicalPath();
+            return path.equals(sharing) || path.startsWith(sharing + File.separator);
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     @SuppressLint("WrongConstant")
