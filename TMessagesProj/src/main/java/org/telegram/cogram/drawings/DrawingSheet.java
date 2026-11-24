@@ -18,7 +18,6 @@ import org.telegram.ui.Components.LayoutHelper;
 
 import java.util.Collections;
 import java.util.Iterator;
-import java.util.Locale;
 
 /**
  * A kept drawing, opened from the map or the list: what it measures, its layer, note and own fields, then what can be
@@ -48,7 +47,7 @@ public final class DrawingSheet extends BottomSheet {
                 return LocaleController.getString(R.string.PhogramDrawingLine) + " · " + MeasureBar.length(measure[0]);
             default:
                 return LocaleController.getString(R.string.PhogramDrawingPoint) + " · "
-                        + String.format(Locale.US, "%.6f, %.6f", drawing.coordinates[0], drawing.coordinates[1]);
+                        + MeasureBar.coordinates(drawing.coordinates[0], drawing.coordinates[1]);
         }
     }
 

@@ -1413,7 +1413,6 @@
     <string name="PhogramGnssDegrees">درجات ودقائق وثوانٍ</string>
     <string name="PhogramGnssAltitude">الارتفاع</string>
     <string name="PhogramGnssSpeed">السرعة</string>
-    <string name="PhogramGnssKmh">%1$d كم/س</string>
     <string name="PhogramGnssHeading">الاتجاه</string>
     <string name="PhogramGnssFixAge">آخر قراءة</string>
     <string name="PhogramGnssSecondsAgo">قبل %1$d ث</string>
@@ -1441,7 +1440,7 @@
     <string name="PhogramWeatherAhead">%1$s بعد %2$s · %3$s</string>
     <string name="PhogramWeatherDestination">الوجهة %1$s · تنبؤ ECMWF</string>
     <string name="PhogramWeatherMm">%1$s ملم</string>
-    <string name="PhogramWeatherKmh">%1$d كم/س</string>
+    <string name="PhogramUnitKmh">%1$d كم/س</string>
     <string name="PhogramWeatherAt">الساعة %1$s</string>
     <string name="PhogramNavFastest">الأسرع</string>
     <string name="PhogramNavSlower">أبطأ بـ %1$s</string>

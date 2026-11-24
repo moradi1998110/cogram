@@ -135,6 +135,11 @@ public final class MeasureBar extends LinearLayout {
         detail.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText));
     }
 
+    /** A point as decimal degrees, latitude first, as surveys and other apps read it. */
+    public static String coordinates(double latitude, double longitude) {
+        return String.format(Locale.US, "%.6f, %.6f", latitude, longitude);
+    }
+
     public static String length(double meters) {
         if (meters < 1000) {
             return LocaleController.formatString(R.string.PhogramMapsMeters, (int) Math.round(meters));

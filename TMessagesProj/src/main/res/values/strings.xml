@@ -11795,7 +11795,6 @@
     <string name="PhogramGnssDegrees">Degrees, minutes, seconds</string>
     <string name="PhogramGnssAltitude">Altitude</string>
     <string name="PhogramGnssSpeed">Speed</string>
-    <string name="PhogramGnssKmh">%1$d km/h</string>
     <string name="PhogramGnssHeading">Heading</string>
     <string name="PhogramGnssFixAge">Last fix</string>
     <string name="PhogramGnssSecondsAgo">%1$d s ago</string>
@@ -11823,7 +11822,7 @@
     <string name="PhogramWeatherAhead">%1$s in %2$s · %3$s</string>
     <string name="PhogramWeatherDestination">At the destination %1$s · ECMWF forecast</string>
     <string name="PhogramWeatherMm">%1$s mm</string>
-    <string name="PhogramWeatherKmh">%1$d km/h</string>
+    <string name="PhogramUnitKmh">%1$d km/h</string>
     <string name="PhogramWeatherAt">at %1$s</string>
     <string name="PhogramNavFastest">Fastest</string>
     <string name="PhogramNavSlower">%1$s slower</string>

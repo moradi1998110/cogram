@@ -10,6 +10,7 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
+import org.telegram.cogram.measure.MeasureBar;
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.LocaleController;
 import org.telegram.messenger.R;
@@ -93,7 +94,7 @@ public final class GnssSheet extends BottomSheet implements GnssMonitor.Listener
         }
         if (fix == null) return;
         header(R.string.PhogramGnssPosition);
-        final String decimal = String.format(Locale.US, "%.6f, %.6f", fix.getLatitude(), fix.getLongitude());
+        final String decimal = MeasureBar.coordinates(fix.getLatitude(), fix.getLongitude());
         row(LocaleController.getString(R.string.PhogramGnssCoordinates), decimal).setOnClickListener(v -> copy(decimal));
         final String degrees = dms(fix.getLatitude(), "N", "S") + "  " + dms(fix.getLongitude(), "E", "W");
         row(LocaleController.getString(R.string.PhogramGnssDegrees), degrees).setOnClickListener(v -> copy(degrees));
@@ -105,7 +106,7 @@ public final class GnssSheet extends BottomSheet implements GnssMonitor.Listener
             row(LocaleController.getString(R.string.PhogramGnssAltitude), altitude);
         }
         if (fix.hasSpeed()) {
-            row(LocaleController.getString(R.string.PhogramGnssSpeed), LocaleController.formatString(R.string.PhogramGnssKmh, Math.round(fix.getSpeed() * 3.6f)));
+            row(LocaleController.getString(R.string.PhogramGnssSpeed), LocaleController.formatString(R.string.PhogramUnitKmh, Math.round(fix.getSpeed() * 3.6f)));
         }
         if (fix.hasBearing()) {
             row(LocaleController.getString(R.string.PhogramGnssHeading), Math.round(fix.getBearing()) + "°");
