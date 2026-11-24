@@ -135,7 +135,13 @@ public final class MeasureBar extends LinearLayout {
         detail.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText));
     }
 
+    /** Kept left to right inside Arabic text, where "33.03, 39.57" showed as "39.57 ,33.03". */
+    public static String ltr(String text) {
+        return "⁦" + text + "⁩";
+    }
+
     /** A point as decimal degrees, latitude first, as surveys and other apps read it. */
+
     public static String coordinates(double latitude, double longitude) {
         return String.format(Locale.US, "%.6f, %.6f", latitude, longitude);
     }

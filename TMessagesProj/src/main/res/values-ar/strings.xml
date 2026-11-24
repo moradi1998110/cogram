@@ -1382,7 +1382,7 @@
     <string name="PhogramDrawingsImport">استيراد ملف</string>
     <string name="PhogramDrawingsImported">تم استيراد %1$d من الرسومات</string>
     <string name="PhogramDrawingsImportFailed">تعذّرت قراءة هذا الملف</string>
-    <string name="PhogramDrawingsHint">المس أي رسم لفتحه. العين تُظهر الطبقة أو الرسم على الخارطة أو تخفيه، وفي ⋮ بقية الإجراءات. اضغط مطولاً على رسم لتحديد عدة رسومات ومشاركتها أو نقلها أو حذفها. زر التنزيل يستورد ملفات GeoJSON وKML وGPX.</string>
+    <string name="PhogramDrawingsHint">المس أي مجلد أو رسم لفتحه. العين تُظهره على الخارطة أو تخفيه، وفي ⋮ بقية الإجراءات. الرسومات الجديدة تُحفظ هنا، وانقلها إلى مجلد لتجميعها. اضغط مطولاً على رسم لتحديد عدة رسومات ومشاركتها أو نقلها أو حذفها. زر التنزيل يستورد ملفات GeoJSON وKML وGPX.</string>
     <string name="PhogramDrawingsAll">الكل</string>
     <string name="PhogramDrawingsPoints">معالم</string>
     <string name="PhogramDrawingsLines">خطوط</string>
@@ -1416,6 +1416,7 @@
     <string name="PhogramGnssApproximate">تقريبي من الشبكة (Wi-Fi والأبراج)</string>
     <string name="PhogramGnssUsed">%1$d من %2$d قمراً مستخدَمة</string>
     <string name="PhogramGnssUnreported">هذا الهاتف لا يبلّغ عن أقماره</string>
+    <string name="PhogramGnssSearching">جارٍ البحث عن الأقمار…</string>
     <string name="PhogramGnssDualFrequency">تردد مزدوج (L1 + L5)</string>
     <string name="PhogramGnssSystems">أنظمة الأقمار</string>
     <string name="PhogramGnssSystemSignal">%1$d من %2$d · %3$d dB-Hz</string>

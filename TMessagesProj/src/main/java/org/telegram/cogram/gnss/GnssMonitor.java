@@ -20,8 +20,9 @@ import java.util.List;
 
 /**
  * What the phone's satellite receiver says while the Maps tab shows: the position's accuracy, and the satellites in
- * view, each with its system, its signal and whether it is used in the position. It listens to the GPS fixes the map
- * already asks for, so it keeps no receiver on by itself; Android 6 has no satellite report, only the accuracy.
+ * view, each with its system, its signal and whether it is used in the position. The map asks Android for a fused
+ * position, which indoors is often Wi-Fi alone with the receiver off; so while the Maps tab shows, this asks the
+ * receiver itself, as map apps do, and lets it go when the tab does. Android 6 has no satellite report.
  */
 public final class GnssMonitor {
 
@@ -59,7 +60,12 @@ public final class GnssMonitor {
     private boolean dualFrequency;
     private boolean reported;
 
-    private final LocationListener locationListener = new LocationListener() {
+    /** The receiver's fixes, asked for; and everyone else's, Wi-Fi and cell towers among them, heard passively. */
+    private final LocationListener gpsListener = new Fixes();
+    private final LocationListener passiveListener = new Fixes();
+
+    /** All four methods: Android before 11 calls them, with no defaults. */
+    private final class Fixes implements LocationListener {
         @Override
         public void onLocationChanged(Location changed) {
             if (LocationManager.GPS_PROVIDER.equals(changed.getProvider())) {
@@ -81,7 +87,7 @@ public final class GnssMonitor {
         @Override
         public void onProviderDisabled(String provider) {
         }
-    };
+    }
 
     public void addListener(Listener listener) {
         if (!listeners.contains(listener)) listeners.add(listener);
@@ -100,8 +106,10 @@ public final class GnssMonitor {
         try {
             location = manager.getLastKnownLocation(LocationManager.GPS_PROVIDER);
             network = manager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER);
-            // Passive: the map's own requests bring the fixes; this one turns no receiver on.
-            manager.requestLocationUpdates(LocationManager.PASSIVE_PROVIDER, 1000, 0, locationListener, Looper.getMainLooper());
+            manager.requestLocationUpdates(LocationManager.PASSIVE_PROVIDER, 1000, 0, passiveListener, Looper.getMainLooper());
+            if (manager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+                manager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000, 0, gpsListener, Looper.getMainLooper());
+            }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                 statusCallback = new GnssStatus.Callback() {
                     @Override
@@ -119,7 +127,8 @@ public final class GnssMonitor {
 
     public void stop() {
         if (manager == null) return;
-        manager.removeUpdates(locationListener);
+        manager.removeUpdates(gpsListener);
+        manager.removeUpdates(passiveListener);
         if (statusCallback != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             manager.unregisterGnssStatusCallback(statusCallback);
         }
