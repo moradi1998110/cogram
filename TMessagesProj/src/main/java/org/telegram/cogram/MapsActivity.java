@@ -23,6 +23,7 @@ import android.text.Editable;
 import android.text.TextWatcher;
 import android.util.TypedValue;
 import android.view.Gravity;
+import android.view.HapticFeedbackConstants;
 import android.view.MotionEvent;
 import android.view.VelocityTracker;
 import android.view.View;
@@ -42,6 +43,9 @@ import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
 
+import org.telegram.cogram.gnss.GnssGauge;
+import org.telegram.cogram.gnss.GnssMonitor;
+import org.telegram.cogram.gnss.GnssSheet;
 import org.telegram.cogram.measure.MapTools;
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.ApplicationLoader;
@@ -125,6 +129,7 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
     private static final int ROW_GAP = 6;
 
     private MapTools tools;
+    private final GnssMonitor gnss = new GnssMonitor();
     private FrameLayout searchBar;
     private ImageView searchBarIcon;
     private TextView searchBarText;
@@ -322,6 +327,15 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         locationButton.setContentDescription(getString(R.string.AccDescrMyLocation));
         locationButton.setVisibility(View.GONE);
         locationButton.setOnClickListener(v -> onLocationButtonClick());
+        // The position's quality as a gauge around the button; pressing and holding it opens the satellites, with a tap
+        // felt as Telegram's long presses are.
+        locationButton.setForeground(new GnssGauge(gnss));
+        gnss.addListener(locationButton::invalidate);
+        locationButton.setOnLongClickListener(v -> {
+            v.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS, HapticFeedbackConstants.FLAG_IGNORE_GLOBAL_SETTING);
+            GnssSheet.show(getParentActivity(), gnss);
+            return true;
+        });
         contentView.addView(locationButton, LayoutHelper.createFrame(48, 48, (LocaleController.isRTL ? Gravity.RIGHT : Gravity.LEFT) | Gravity.BOTTOM, 12, 0, 12, 12));
 
         // The map's heading as a strip of degrees under the status bar: dragged it turns the map, tapped it puts
@@ -1116,6 +1130,11 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
                 if (routeUi != null) routeUi.offerStop(place);
             }
 
+            @Override
+            public void onDrawingTapped(String id) {
+                if (!searchOpen && !isRouting() && !tools.isMeasuring()) tools.openDrawing(id);
+            }
+
             // A tap on the bare map closes the place's card, as in Google Maps.
             @Override
             public void onEmptyTapped() {
@@ -1903,6 +1922,7 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         final Activity activity = getParentActivity();
         if (activity != null && mapEngine != null && hasLocationPermission(activity)) {
             mapEngine.onLocationPermissionGranted();
+            if (getParentActivity() != null) gnss.start(getParentActivity());
             mapEngine.moveToMyLocation();
         }
     }
@@ -1930,6 +1950,7 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
     public void onResume() {
         super.onResume();
         pageResumed = true;
+        if (getParentActivity() != null) gnss.start(getParentActivity());
         updateColors();
         // The small window gives the map back before the page wakes it.
         if (routeUi != null) routeUi.onPageShown(true);
@@ -1953,6 +1974,7 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         super.onPause();
         Bulletin.removeDelegate(this);
         pageResumed = false;
+        gnss.stop();
         AndroidUtilities.cancelRunOnUIThread(compassCheck);
         if (searchField != null) {
             AndroidUtilities.hideKeyboard(searchField);

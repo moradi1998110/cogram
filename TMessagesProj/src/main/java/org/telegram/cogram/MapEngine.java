@@ -421,6 +421,10 @@ public interface MapEngine {
         default void onAlongTapped(Place place) {
         }
 
+        /** A drawing kept on the phone was tapped: its id. */
+        default void onDrawingTapped(String id) {
+        }
+
         /** The map was tapped where nothing is drawn to tap. */
         default void onEmptyTapped() {
         }
@@ -443,6 +447,14 @@ public interface MapEngine {
 
     /** Shows or hides the landmarks the map draws. */
     default void setPlacesShown(boolean shown) {
+    }
+
+    /** Draws the drawings kept on the phone: a GeoJSON FeatureCollection, with simplestyle's "stroke" and "title". */
+    default void showDrawings(String featureCollection) {
+    }
+
+    /** Moves the map to show this box: {minLatitude, minLongitude, maxLatitude, maxLongitude}. */
+    default void moveToBounds(double[] bounds) {
     }
 
     void onResume();

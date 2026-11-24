@@ -19,6 +19,15 @@ public final class Measurement {
         this.area = area;
     }
 
+    /** A measurement of points already known, as latitude and longitude pairs: a saved drawing's. */
+    public static Measurement of(boolean area, double[] coordinates) {
+        final Measurement measurement = new Measurement(area);
+        for (int i = 0; i + 1 < coordinates.length; i += 2) {
+            measurement.add(coordinates[i], coordinates[i + 1]);
+        }
+        return measurement;
+    }
+
     public void add(double latitude, double longitude) {
         points.add(new double[] { latitude, longitude });
     }
@@ -28,6 +37,10 @@ public final class Measurement {
         if (points.isEmpty()) return false;
         points.remove(points.size() - 1);
         return true;
+    }
+
+    public int size() {
+        return points.size();
     }
 
     public boolean isEmpty() {

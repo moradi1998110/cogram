@@ -35,11 +35,14 @@ public final class MeasureBar extends LinearLayout {
         void onUndo();
 
         void onClose();
+
+        void onSave();
     }
 
     private final ImageView close;
     private final ImageView undo;
     private final ImageView add;
+    private final ImageView save;
     private final TextView value;
     private final TextView detail;
 
@@ -69,12 +72,19 @@ public final class MeasureBar extends LinearLayout {
         add.setOnClickListener(v -> listener.onAdd());
         addView(add, LayoutHelper.createLinear(40, 40, 0, 0, 4, 0));
 
+        save = button(context, R.drawable.ic_ab_done, R.string.Save);
+        save.setOnClickListener(v -> listener.onSave());
+        addView(save, LayoutHelper.createLinear(40, 40, 0, 0, 4, 0));
+
         updateColors();
     }
 
     /** What {@code measurement} measures with the point under the map's center: {@link Measurement#measure}. */
     public void set(Measurement measurement, double[] result) {
         final boolean empty = measurement.isEmpty();
+        add.setVisibility(VISIBLE);
+        undo.setVisibility(VISIBLE);
+        enableSave(measurement.size() >= (measurement.area ? 3 : 2));
         undo.setEnabled(!measurement.isEmpty());
         undo.setAlpha(measurement.isEmpty() ? 0.4f : 1f);
         if (empty) {
@@ -91,6 +101,21 @@ public final class MeasureBar extends LinearLayout {
         value.setTextColor(Theme.getColor(empty ? Theme.key_windowBackgroundWhiteGrayText : Theme.key_windowBackgroundWhiteBlackText));
     }
 
+    /** Placing a landmark: the point is the one under the center, saved with ✓. */
+    public void setPoint() {
+        add.setVisibility(GONE);
+        undo.setVisibility(GONE);
+        enableSave(true);
+        value.setText(LocaleController.getString(R.string.PhogramDrawingPlaceHint));
+        value.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText));
+        detail.setVisibility(GONE);
+    }
+
+    private void enableSave(boolean enabled) {
+        save.setEnabled(enabled);
+        save.setAlpha(enabled ? 1f : 0.4f);
+    }
+
     public void updateColors() {
         final GradientDrawable background = new GradientDrawable();
         background.setCornerRadius(dp(24));
@@ -104,11 +129,18 @@ public final class MeasureBar extends LinearLayout {
         // Telegram's round action button: the accent, with its icon color.
         add.setBackground(Theme.createSimpleSelectorCircleDrawable(dp(40), Theme.getColor(Theme.key_chats_actionBackground), Theme.getColor(Theme.key_chats_actionPressedBackground)));
         add.setColorFilter(new PorterDuffColorFilter(Theme.getColor(Theme.key_chats_actionIcon), PorterDuff.Mode.MULTIPLY));
+        save.setBackground(Theme.createSimpleSelectorCircleDrawable(dp(40), Theme.getColor(Theme.key_chats_actionBackground), Theme.getColor(Theme.key_chats_actionPressedBackground)));
+        save.setColorFilter(new PorterDuffColorFilter(Theme.getColor(Theme.key_chats_actionIcon), PorterDuff.Mode.MULTIPLY));
         value.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText));
         detail.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText));
     }
 
-    static String length(double meters) {
+    /** A point as decimal degrees, latitude first, as surveys and other apps read it. */
+    public static String coordinates(double latitude, double longitude) {
+        return String.format(Locale.US, "%.6f, %.6f", latitude, longitude);
+    }
+
+    public static String length(double meters) {
         if (meters < 1000) {
             return LocaleController.formatString(R.string.PhogramMapsMeters, (int) Math.round(meters));
         }
@@ -116,7 +148,7 @@ public final class MeasureBar extends LinearLayout {
     }
 
     /** As a deed writes it: "2 دونم 3 أولك 45 م²", without the parts that are nought. */
-    private static String area(double squareMeters) {
+    public static String area(double squareMeters) {
         final long total = Math.round(squareMeters);
         final long[] counts = { total / 2500, total % 2500 / 100, total % 100 };
         final int[] units = { R.string.PhogramUnitDunams, R.string.PhogramUnitOlks, R.string.PhogramUnitSquareMeters };
@@ -130,7 +162,7 @@ public final class MeasureBar extends LinearLayout {
         return out.toString();
     }
 
-    private static String squareMeters(double squareMeters) {
+    public static String squareMeters(double squareMeters) {
         return LocaleController.formatString(R.string.PhogramUnitSquareMeters, String.format(Locale.US, "%,d", Math.round(squareMeters)));
     }
 

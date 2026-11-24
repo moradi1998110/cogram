@@ -472,7 +472,7 @@ final class RouteWeather {
                         p.rain >= 10 ? String.valueOf(Math.round(p.rain)) : String.format(Locale.US, "%.1f", p.rain));
                 break;
             case WIND:
-                figure = org.telegram.messenger.LocaleController.formatString(org.telegram.messenger.R.string.PhogramWeatherKmh, p.gust);
+                figure = org.telegram.messenger.LocaleController.formatString(org.telegram.messenger.R.string.PhogramUnitKmh, p.gust);
                 break;
             case STORM: case SNOW: case ICE: case FOG: case DUST:
                 figure = name(p.condition);
