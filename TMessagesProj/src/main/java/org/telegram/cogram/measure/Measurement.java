@@ -53,6 +53,23 @@ public final class Measurement {
         return out;
     }
 
+    /**
+     * Each side's length in meters, in the order of {@link #coordinates}: from each point to the next, and for an area
+     * of three points or more, back from the last to the first.
+     */
+    public double[] sides(double[] cursor) {
+        final double[] c = coordinates(cursor);
+        if (c == null) return new double[0];
+        final int count = c.length / 2;
+        final boolean closing = area && count > 2;
+        final double[] out = new double[count - 1 + (closing ? 1 : 0)];
+        for (int i = 0; i < out.length; i++) {
+            final int j = (i + 1) % count;
+            out[i] = Geodesic.WGS84.Inverse(c[i * 2], c[i * 2 + 1], c[j * 2], c[j * 2 + 1]).s12;
+        }
+        return out;
+    }
+
     /** {@code length}: of the line, or the shape's perimeter, in meters. {@code area}: in square meters. */
     public double[] measure(double[] cursor) {
         final PolygonArea polygon = new PolygonArea(Geodesic.WGS84, !area);

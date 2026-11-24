@@ -434,8 +434,11 @@ public interface MapEngine {
         return null;
     }
 
-    /** Draws a measurement: latitude and longitude pairs, as a line or a closed shape; null clears it. */
-    default void showMeasure(double[] coordinates, boolean closed) {
+    /**
+     * Draws a measurement: latitude and longitude pairs, as a line or a closed shape, and each side's length written
+     * at its middle; null clears it.
+     */
+    default void showMeasure(double[] coordinates, boolean closed, String[] sides) {
     }
 
     /** Shows or hides the landmarks the map draws. */

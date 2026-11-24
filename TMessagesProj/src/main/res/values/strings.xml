@@ -11750,11 +11750,11 @@
     <string name="PhogramMeasureArea">Measure area</string>
     <string name="PhogramMeasureAddPoint">Add point</string>
     <string name="PhogramMeasureHint">Move the map to the first point, then tap +</string>
-    <string name="PhogramMeasurePerimeter">Perimeter %1$s</string>
+    <string name="PhogramMeasureAreaDetail">Total %1$s · perimeter %2$s</string>
     <string name="PhogramUnitKilometers">%1$s km</string>
     <string name="PhogramUnitSquareMeters">%1$s m²</string>
     <string name="PhogramUnitDunams">%1$s dunams</string>
-    <string name="PhogramUnitHectares">%1$s ha</string>
+    <string name="PhogramUnitOlks">%1$s olks</string>
     <string name="PhogramNavGo">Go</string>
     <string name="PhogramNavStart">Start</string>
     <string name="PhogramNavSteps">Steps</string>

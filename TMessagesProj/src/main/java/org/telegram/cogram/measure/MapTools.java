@@ -121,7 +121,7 @@ public final class MapTools {
     public boolean close() {
         if (measurement == null) return false;
         measurement = null;
-        if (engine != null) engine.showMeasure(null, false);
+        if (engine != null) engine.showMeasure(null, false, null);
         measureBar.setVisibility(View.GONE);
         center.setVisibility(preferences().getBoolean(KEY_CENTER, false) ? View.VISIBLE : View.GONE);
         host.onToolsChanged();
@@ -139,7 +139,12 @@ public final class MapTools {
     public void onCameraMoved() {
         if (measurement == null || engine == null) return;
         final double[] cursor = centerPoint();
-        engine.showMeasure(measurement.coordinates(cursor), measurement.area);
+        final double[] sides = measurement.sides(cursor);
+        final String[] labels = new String[sides.length];
+        for (int i = 0; i < sides.length; i++) {
+            labels[i] = MeasureBar.length(sides[i]);
+        }
+        engine.showMeasure(measurement.coordinates(cursor), measurement.area, labels);
         measureBar.set(measurement, measurement.measure(cursor));
     }
 

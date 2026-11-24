@@ -497,8 +497,8 @@ final class MapLibreMapEngine implements MapEngine {
     }
 
     @Override
-    public void showMeasure(double[] coordinates, boolean closed) {
-        measure.show(coordinates, closed);
+    public void showMeasure(double[] coordinates, boolean closed, String[] sides) {
+        measure.show(coordinates, closed, sides);
     }
 
     @Override

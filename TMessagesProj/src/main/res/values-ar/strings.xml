@@ -1367,11 +1367,11 @@
     <string name="PhogramMeasureArea">قياس مساحة</string>
     <string name="PhogramMeasureAddPoint">إضافة نقطة</string>
     <string name="PhogramMeasureHint">حرّك الخارطة إلى أول نقطة ثم اضغط +</string>
-    <string name="PhogramMeasurePerimeter">المحيط %1$s</string>
+    <string name="PhogramMeasureAreaDetail">المجموع %1$s · المحيط %2$s</string>
     <string name="PhogramUnitKilometers">%1$s كم</string>
     <string name="PhogramUnitSquareMeters">%1$s م²</string>
     <string name="PhogramUnitDunams">%1$s دونم</string>
-    <string name="PhogramUnitHectares">%1$s هكتار</string>
+    <string name="PhogramUnitOlks">%1$s أولك</string>
     <string name="PhogramNavGo">انطلق</string>
     <string name="PhogramNavStart">ابدأ</string>
     <string name="PhogramNavSteps">الخطوات</string>

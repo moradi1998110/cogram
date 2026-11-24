@@ -121,6 +121,8 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
     private static final String RECENT_PREFERENCES = "cogram_maps_recent";
     private static final String RECENT_KEY = "places";
     private static final int SEARCH_BAR_HEIGHT = 48;
+    /** The search bar's row, the place's card and the measure bar sit this close above the tab bar. */
+    private static final int ROW_GAP = 6;
 
     private MapTools tools;
     private FrameLayout searchBar;
@@ -1741,14 +1743,14 @@ public class MapsActivity extends BaseFragment implements MainTabsActivity.TabFr
         card.leftMargin = backButton.getVisibility() == View.VISIBLE ? dp(60) : dp(8);
 
         // From the bottom up: the tab bar, the search bar or the place's card, then the round buttons.
-        ((FrameLayout.LayoutParams) searchBar.getLayoutParams()).bottomMargin = padding[3] + dp(12);
-        tools.layout(padding[3] + dp(12), (padding[1] - padding[3]) / 2f);
-        ((FrameLayout.LayoutParams) placeCard.getLayoutParams()).bottomMargin = padding[3] + dp(8);
-        int buttons = padding[3] + dp(12);
+        ((FrameLayout.LayoutParams) searchBar.getLayoutParams()).bottomMargin = padding[3] + dp(ROW_GAP);
+        tools.layout(padding[3] + dp(ROW_GAP), (padding[1] - padding[3]) / 2f);
+        ((FrameLayout.LayoutParams) placeCard.getLayoutParams()).bottomMargin = padding[3] + dp(ROW_GAP);
+        int buttons = padding[3] + dp(ROW_GAP);
         if (isRouting()) {
             buttons = routeUi.bottomHeight() + dp(12);
         } else if (placeCard.getVisibility() == View.VISIBLE) {
-            buttons = padding[3] + dp(8) + placeCard.getHeight() + dp(12);
+            buttons = padding[3] + dp(ROW_GAP) + placeCard.getHeight() + dp(12);
         } else if (tools.isMeasuring()) {
             buttons += dp(SEARCH_BAR_HEIGHT) + dp(12);
         }

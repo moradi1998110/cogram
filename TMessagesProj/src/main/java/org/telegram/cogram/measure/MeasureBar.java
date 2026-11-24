@@ -24,7 +24,8 @@ import java.util.Locale;
 /**
  * The bar that takes the search bar's place while measuring, in the colors of Telegram's cards: what the shape
  * measures, and buttons to stop, to take the last point back and to put the next one down at the map's center.
- * A tap on an area changes its unit: dunams (Iraq's, 2500 m²), square meters, hectares.
+ * An area reads as Iraq's land deeds write it, in dunams, olks and square meters (a dunam is 25 olks, an olk
+ * 100 m²), then its total in square meters and its perimeter.
  */
 public final class MeasureBar extends LinearLayout {
 
@@ -36,19 +37,11 @@ public final class MeasureBar extends LinearLayout {
         void onClose();
     }
 
-    private static final int DUNAMS = 0;
-    private static final int SQUARE_METERS = 1;
-    private static final int HECTARES = 2;
-    /** The area's unit, kept while the app runs. */
-    private static int areaUnit = DUNAMS;
-
     private final ImageView close;
     private final ImageView undo;
     private final ImageView add;
     private final TextView value;
     private final TextView detail;
-
-    private double[] shown;
 
     public MeasureBar(Context context, Listener listener) {
         super(context);
@@ -66,7 +59,6 @@ public final class MeasureBar extends LinearLayout {
         detail = text(context, 13);
         texts.addView(value, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT));
         texts.addView(detail, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT));
-        texts.setOnClickListener(v -> nextUnit());
         addView(texts, LayoutHelper.createLinear(0, LayoutHelper.WRAP_CONTENT, 1f));
 
         undo = button(context, R.drawable.photo_undo2, R.string.Undo);
@@ -82,21 +74,21 @@ public final class MeasureBar extends LinearLayout {
 
     /** What {@code measurement} measures with the point under the map's center: {@link Measurement#measure}. */
     public void set(Measurement measurement, double[] result) {
-        shown = measurement.isEmpty() ? null : result;
+        final boolean empty = measurement.isEmpty();
         undo.setEnabled(!measurement.isEmpty());
         undo.setAlpha(measurement.isEmpty() ? 0.4f : 1f);
-        if (shown == null) {
+        if (empty) {
             value.setText(LocaleController.getString(R.string.PhogramMeasureHint));
             detail.setVisibility(GONE);
         } else if (measurement.area) {
             value.setText(area(result[1]));
-            detail.setText(LocaleController.formatString(R.string.PhogramMeasurePerimeter, length(result[0])));
+            detail.setText(LocaleController.formatString(R.string.PhogramMeasureAreaDetail, squareMeters(result[1]), length(result[0])));
             detail.setVisibility(VISIBLE);
         } else {
             value.setText(length(result[0]));
             detail.setVisibility(GONE);
         }
-        value.setTextColor(Theme.getColor(shown == null ? Theme.key_windowBackgroundWhiteGrayText : Theme.key_windowBackgroundWhiteBlackText));
+        value.setTextColor(Theme.getColor(empty ? Theme.key_windowBackgroundWhiteGrayText : Theme.key_windowBackgroundWhiteBlackText));
     }
 
     public void updateColors() {
@@ -116,28 +108,30 @@ public final class MeasureBar extends LinearLayout {
         detail.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText));
     }
 
-    private void nextUnit() {
-        if (shown == null || detail.getVisibility() != VISIBLE) return;
-        areaUnit = (areaUnit + 1) % 3;
-        value.setText(area(shown[1]));
-    }
-
-    private static String length(double meters) {
+    static String length(double meters) {
         if (meters < 1000) {
             return LocaleController.formatString(R.string.PhogramMapsMeters, (int) Math.round(meters));
         }
         return LocaleController.formatString(R.string.PhogramUnitKilometers, String.format(Locale.US, "%.2f", meters / 1000));
     }
 
+    /** As a deed writes it: "2 دونم 3 أولك 45 م²", without the parts that are nought. */
     private static String area(double squareMeters) {
-        switch (areaUnit) {
-            case SQUARE_METERS:
-                return LocaleController.formatString(R.string.PhogramUnitSquareMeters, String.format(Locale.US, "%,d", Math.round(squareMeters)));
-            case HECTARES:
-                return LocaleController.formatString(R.string.PhogramUnitHectares, String.format(Locale.US, "%.2f", squareMeters / 10000));
-            default:
-                return LocaleController.formatString(R.string.PhogramUnitDunams, String.format(Locale.US, "%.2f", squareMeters / 2500));
+        final long total = Math.round(squareMeters);
+        final long[] counts = { total / 2500, total % 2500 / 100, total % 100 };
+        final int[] units = { R.string.PhogramUnitDunams, R.string.PhogramUnitOlks, R.string.PhogramUnitSquareMeters };
+        final StringBuilder out = new StringBuilder();
+        for (int i = 0; i < counts.length; i++) {
+            // Noughts are left out, but for an area of nought square meters.
+            if (counts[i] == 0 && (i < counts.length - 1 || out.length() > 0)) continue;
+            if (out.length() > 0) out.append("  ");
+            out.append(LocaleController.formatString(units[i], String.valueOf(counts[i])));
         }
+        return out.toString();
+    }
+
+    private static String squareMeters(double squareMeters) {
+        return LocaleController.formatString(R.string.PhogramUnitSquareMeters, String.format(Locale.US, "%,d", Math.round(squareMeters)));
     }
 
     private static ImageView button(Context context, int icon, int description) {
