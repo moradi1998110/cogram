@@ -11762,7 +11762,15 @@
     <string name="PhogramDrawingsImport">Import a file</string>
     <string name="PhogramDrawingsImported">%1$d drawings imported</string>
     <string name="PhogramDrawingsImportFailed">This file could not be read</string>
-    <string name="PhogramDrawingsHint">Switch a layer or a drawing to show or hide it on the map. Hold a drawing to go to it, edit, share or delete it. The download button imports GeoJSON, KML and GPX files.</string>
+    <string name="PhogramDrawingsHint">Tap a drawing to open it. The eye shows or hides a layer or a drawing on the map, ⋮ has the rest. Hold a drawing to pick several to share, move or delete. The download button imports GeoJSON, KML and GPX files.</string>
+    <string name="PhogramDrawingsAll">All</string>
+    <string name="PhogramDrawingsPoints">Landmarks</string>
+    <string name="PhogramDrawingsLines">Lines</string>
+    <string name="PhogramDrawingsAreas">Areas</string>
+    <string name="PhogramDrawingsShowHide">Show or hide on the map</string>
+    <string name="PhogramDrawingsMove">Move to a layer</string>
+    <string name="PhogramDrawingsDeleteSelected">Delete %1$d drawings?</string>
+    <string name="PhogramDrawingsNewLayerNamed">%1$s (new layer)</string>
     <string name="PhogramDrawingPlaceHint">Move the map to the landmark, then tap ✓</string>
     <string name="PhogramDrawingSave">Save drawing</string>
     <string name="PhogramDrawingEdit">Edit details</string>
@@ -11785,6 +11793,7 @@
     <string name="PhogramDrawingSaved">Saved</string>
     <string name="PhogramGnssTitle">Satellites</string>
     <string name="PhogramGnssNoFix">No position yet</string>
+    <string name="PhogramGnssApproximate">Approximate, from Wi-Fi and cell towers</string>
     <string name="PhogramGnssUsed">%1$d of %2$d satellites in use</string>
     <string name="PhogramGnssUnreported">This phone does not report its satellites</string>
     <string name="PhogramGnssDualFrequency">Dual frequency (L1 + L5)</string>

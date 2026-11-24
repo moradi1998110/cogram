@@ -10,8 +10,11 @@ import org.telegram.messenger.ApplicationLoader;
 import org.telegram.messenger.FileLog;
 import org.telegram.messenger.LocaleController;
 import org.telegram.messenger.R;
+import org.telegram.messenger.Utilities;
 
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 
 /**
@@ -25,6 +28,8 @@ public final class DrawingsStore extends SQLiteOpenHelper {
         public long id;
         public String name;
         public boolean visible;
+        /** Its drawings. */
+        public int count;
     }
 
     private static DrawingsStore instance;
@@ -72,12 +77,14 @@ public final class DrawingsStore extends SQLiteOpenHelper {
 
     public List<Layer> layers() {
         final List<Layer> out = new ArrayList<>();
-        try (Cursor c = getReadableDatabase().rawQuery("SELECT id, name, visible FROM layers ORDER BY id", null)) {
+        try (Cursor c = getReadableDatabase().rawQuery("SELECT id, name, visible,"
+                + " (SELECT COUNT(*) FROM features WHERE layer_id = layers.id) FROM layers ORDER BY id", null)) {
             while (c.moveToNext()) {
                 final Layer layer = new Layer();
                 layer.id = c.getLong(0);
                 layer.name = c.getString(1);
                 layer.visible = c.getInt(2) != 0;
+                layer.count = c.getInt(3);
                 out.add(layer);
             }
         }
@@ -138,7 +145,7 @@ public final class DrawingsStore extends SQLiteOpenHelper {
     }
 
     public void save(Drawing drawing) {
-        saveAll(java.util.Collections.singletonList(drawing));
+        saveAll(Collections.singletonList(drawing));
     }
 
     /** In one transaction, as an import brings many. */
@@ -185,7 +192,30 @@ public final class DrawingsStore extends SQLiteOpenHelper {
     }
 
     public void delete(String id) {
-        getWritableDatabase().delete("features", "id = ?", new String[] { id });
+        delete(Collections.singletonList(id));
+    }
+
+    /** The drawings picked, in one transaction. */
+    public void delete(Collection<String> ids) {
+        change(ids, id -> getWritableDatabase().delete("features", "id = ?", new String[] { id }));
+    }
+
+    /** The drawings picked, to another layer. */
+    public void move(Collection<String> ids, long layerId) {
+        final ContentValues values = new ContentValues();
+        values.put("layer_id", layerId);
+        change(ids, id -> getWritableDatabase().update("features", values, "id = ?", new String[] { id }));
+    }
+
+    private void change(Collection<String> ids, Utilities.Callback<String> each) {
+        final SQLiteDatabase db = getWritableDatabase();
+        db.beginTransaction();
+        try {
+            for (String id : ids) each.run(id);
+            db.setTransactionSuccessful();
+        } finally {
+            db.endTransaction();
+        }
         changed();
     }
 

@@ -906,6 +906,8 @@
     <string name="Restrict">تقييد</string>
     <string name="Ban">حظر</string>
     <string name="Rename">إعادة تسمية</string>
+    <string name="Select">تحديد</string>
+    <string name="SelectAll">تحديد الكل</string>
     <string name="Delete">حذف</string>
     <string name="Mute">كتم الصوت</string>
     <string name="Unmute">تشغيل الصوت</string>
@@ -1380,7 +1382,15 @@
     <string name="PhogramDrawingsImport">استيراد ملف</string>
     <string name="PhogramDrawingsImported">تم استيراد %1$d من الرسومات</string>
     <string name="PhogramDrawingsImportFailed">تعذّرت قراءة هذا الملف</string>
-    <string name="PhogramDrawingsHint">بدّل مفتاح أي طبقة أو رسم لإظهاره أو إخفائه على الخارطة. اضغط مطولاً على رسم للانتقال إليه أو تعديله أو مشاركته أو حذفه. زر التنزيل يستورد ملفات GeoJSON وKML وGPX.</string>
+    <string name="PhogramDrawingsHint">المس أي رسم لفتحه. العين تُظهر الطبقة أو الرسم على الخارطة أو تخفيه، وفي ⋮ بقية الإجراءات. اضغط مطولاً على رسم لتحديد عدة رسومات ومشاركتها أو نقلها أو حذفها. زر التنزيل يستورد ملفات GeoJSON وKML وGPX.</string>
+    <string name="PhogramDrawingsAll">الكل</string>
+    <string name="PhogramDrawingsPoints">معالم</string>
+    <string name="PhogramDrawingsLines">خطوط</string>
+    <string name="PhogramDrawingsAreas">مساحات</string>
+    <string name="PhogramDrawingsShowHide">إظهار أو إخفاء على الخارطة</string>
+    <string name="PhogramDrawingsMove">نقل إلى طبقة</string>
+    <string name="PhogramDrawingsDeleteSelected">حذف %1$d من الرسومات؟</string>
+    <string name="PhogramDrawingsNewLayerNamed">%1$s (طبقة جديدة)</string>
     <string name="PhogramDrawingPlaceHint">حرّك الخارطة إلى مكان المَعلم ثم اضغط ✓</string>
     <string name="PhogramDrawingSave">حفظ الرسم</string>
     <string name="PhogramDrawingEdit">تعديل البيانات</string>
@@ -1403,6 +1413,7 @@
     <string name="PhogramDrawingSaved">تم الحفظ</string>
     <string name="PhogramGnssTitle">الأقمار الصناعية</string>
     <string name="PhogramGnssNoFix">لا يوجد موقع بعد</string>
+    <string name="PhogramGnssApproximate">تقريبي من الشبكة (Wi-Fi والأبراج)</string>
     <string name="PhogramGnssUsed">%1$d من %2$d قمراً مستخدَمة</string>
     <string name="PhogramGnssUnreported">هذا الهاتف لا يبلّغ عن أقماره</string>
     <string name="PhogramGnssDualFrequency">تردد مزدوج (L1 + L5)</string>
