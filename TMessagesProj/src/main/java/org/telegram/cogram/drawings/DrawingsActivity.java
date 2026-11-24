@@ -467,7 +467,7 @@ public class DrawingsActivity extends UniversalFragment {
             FileLog.e(e);
         }
         try (InputStream in = getParentActivity().getContentResolver().openInputStream(uri)) {
-            final List<Drawing> drawings = DrawingFormats.read(in, fileName, Theme.getColor(Theme.key_color_blue));
+            final List<Drawing> drawings = DrawingFormats.read(in, Theme.getColor(Theme.key_color_blue));
             if (drawings.isEmpty()) throw new IllegalStateException("nothing to import");
             final int dot = fileName.lastIndexOf('.');
             presentFragment(new DrawingsActivity(this, drawings, dot > 0 ? fileName.substring(0, dot) : fileName));
