@@ -12,7 +12,8 @@ import org.maplibre.android.style.sources.GeoJsonSource;
 
 /**
  * The drawings kept on the phone, over the map and under a measurement being made: each in its own color, as the
- * GeoJSON the drawings export with gives it (simplestyle's "stroke"), its name written beside it.
+ * GeoJSON the drawings export with gives it (simplestyle's "stroke"), its name where maps write one: under a
+ * landmark, along a line's middle, at an area's visual center (MapLibre's, inside even an odd shape).
  */
 final class MapDrawingsLayers {
 
@@ -38,17 +39,24 @@ final class MapDrawingsLayers {
                 .withFilter(Expression.eq(Expression.geometryType(), "Point"))
                 .withProperties(PropertyFactory.circleRadius(7f), PropertyFactory.circleColor(color),
                         PropertyFactory.circleStrokeColor(0xffffffff), PropertyFactory.circleStrokeWidth(2.5f)));
-        style.addLayer(new SymbolLayer(SOURCE + "-names", SOURCE)
+        style.addLayer(names("Point", color).withProperties(
+                PropertyFactory.textAnchor(Property.TEXT_ANCHOR_TOP), PropertyFactory.textOffset(new Float[] { 0f, 0.9f })));
+        style.addLayer(names("LineString", color).withProperties(
+                PropertyFactory.symbolPlacement(Property.SYMBOL_PLACEMENT_LINE_CENTER)));
+        style.addLayer(names("Polygon", color));
+    }
+
+    /** The names of one kind of shape, in the drawing's color with a white halo. */
+    private static SymbolLayer names(String type, Expression color) {
+        return new SymbolLayer(SOURCE + "-names-" + type, SOURCE)
+                .withFilter(Expression.eq(Expression.geometryType(), type))
                 .withProperties(
                         PropertyFactory.textField(Expression.get("title")),
                         PropertyFactory.textFont(new String[] { "Phogram Medium" }),
                         PropertyFactory.textSize(12f),
                         PropertyFactory.textColor(color),
                         PropertyFactory.textHaloColor(0xffffffff),
-                        PropertyFactory.textHaloWidth(2f),
-                        PropertyFactory.textVariableAnchor(new String[] { Property.TEXT_ANCHOR_LEFT, Property.TEXT_ANCHOR_RIGHT, Property.TEXT_ANCHOR_TOP }),
-                        PropertyFactory.textRadialOffset(1.2f),
-                        PropertyFactory.textOptional(true)));
+                        PropertyFactory.textHaloWidth(2f));
     }
 
     /** The drawings as a GeoJSON FeatureCollection. */

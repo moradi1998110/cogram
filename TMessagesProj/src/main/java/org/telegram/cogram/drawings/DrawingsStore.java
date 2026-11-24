@@ -36,7 +36,7 @@ public final class DrawingsStore extends SQLiteOpenHelper {
     }
 
     private DrawingsStore() {
-        super(ApplicationLoader.applicationContext, "phogram_drawings.db", null, 1);
+        super(ApplicationLoader.applicationContext, "phogram_drawings.db", null, 2);
     }
 
     @Override
@@ -44,12 +44,15 @@ public final class DrawingsStore extends SQLiteOpenHelper {
         db.execSQL("CREATE TABLE layers (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, visible INTEGER NOT NULL DEFAULT 1, created INTEGER)");
         db.execSQL("CREATE TABLE features (id TEXT PRIMARY KEY, layer_id INTEGER NOT NULL, kind TEXT NOT NULL, name TEXT, note TEXT,"
                 + " color INTEGER, geometry TEXT NOT NULL, min_lat REAL, min_lon REAL, max_lat REAL, max_lon REAL,"
-                + " length_m REAL, area_m2 REAL, properties TEXT, source TEXT, created INTEGER, updated INTEGER)");
+                + " length_m REAL, area_m2 REAL, properties TEXT, source TEXT, created INTEGER, updated INTEGER,"
+                + " hidden INTEGER NOT NULL DEFAULT 0)");
         db.execSQL("CREATE INDEX features_layer ON features (layer_id)");
     }
 
     @Override
     public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
+        // 2: each drawing shown or hidden on its own; the ones kept before stay shown.
+        if (oldVersion < 2) db.execSQL("ALTER TABLE features ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0");
     }
 
     /** Runs whenever a drawing or a layer changes. */
@@ -124,9 +127,9 @@ public final class DrawingsStore extends SQLiteOpenHelper {
         return query("layer_id = ?", new String[] { String.valueOf(layerId) });
     }
 
-    /** The drawings of the layers shown on the map. */
+    /** The drawings shown on the map: not hidden, in a layer shown. */
     public List<Drawing> visible() {
-        return query("layer_id IN (SELECT id FROM layers WHERE visible = 1)", null);
+        return query("hidden = 0 AND layer_id IN (SELECT id FROM layers WHERE visible = 1)", null);
     }
 
     public Drawing find(String id) {
@@ -164,12 +167,20 @@ public final class DrawingsStore extends SQLiteOpenHelper {
                 values.put("source", drawing.source);
                 values.put("created", drawing.created);
                 values.put("updated", drawing.updated);
+                values.put("hidden", drawing.hidden ? 1 : 0);
                 db.insertWithOnConflict("features", null, values, SQLiteDatabase.CONFLICT_REPLACE);
             }
             db.setTransactionSuccessful();
         } finally {
             db.endTransaction();
         }
+        changed();
+    }
+
+    public void setHidden(String id, boolean hidden) {
+        final ContentValues values = new ContentValues();
+        values.put("hidden", hidden ? 1 : 0);
+        getWritableDatabase().update("features", values, "id = ?", new String[] { id });
         changed();
     }
 
@@ -181,7 +192,7 @@ public final class DrawingsStore extends SQLiteOpenHelper {
     private List<Drawing> query(String where, String[] args) {
         final List<Drawing> out = new ArrayList<>();
         try (Cursor c = getReadableDatabase().query("features",
-                new String[] { "id", "layer_id", "kind", "name", "note", "color", "geometry", "properties", "source", "created", "updated" },
+                new String[] { "id", "layer_id", "kind", "name", "note", "color", "geometry", "properties", "source", "created", "updated", "hidden" },
                 where, args, null, null, "created")) {
             while (c.moveToNext()) {
                 try {
@@ -197,6 +208,7 @@ public final class DrawingsStore extends SQLiteOpenHelper {
                     drawing.source = c.getString(8);
                     drawing.created = c.getLong(9);
                     drawing.updated = c.getLong(10);
+                    drawing.hidden = c.getInt(11) != 0;
                     out.add(drawing);
                 } catch (Exception e) {
                     FileLog.e(e);

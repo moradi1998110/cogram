@@ -28,6 +28,8 @@ public final class Drawing {
     public JSONObject properties = new JSONObject();
     /** "drawn", "imported". */
     public String source = "drawn";
+    /** Hidden on the map, its layer shown or not. */
+    public boolean hidden;
     public long created;
     public long updated;
 

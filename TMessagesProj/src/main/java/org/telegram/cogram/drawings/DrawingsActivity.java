@@ -10,7 +10,6 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.EditText;
 
-import org.telegram.cogram.measure.MeasureBar;
 import org.telegram.messenger.FileLog;
 import org.telegram.messenger.LocaleController;
 import org.telegram.messenger.R;
@@ -29,8 +28,8 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * The Maps tab's ⋮ > My drawings: the layers, each shown or hidden on the map with a tap, and their drawings; a tap on
- * a drawing shows it on the map. Holding a row offers renaming, moving, sharing as a file and deleting; the bar
+ * The Maps tab's layers > My drawings, as a GIS manages its layers: each layer and each drawing with its switch, a tap
+ * showing or hiding it on the map. Holding a row offers going to it, editing, sharing as a file and deleting; the bar
  * searches by name and imports GeoJSON, KML or GPX files as a new layer.
  */
 public class DrawingsActivity extends UniversalFragment {
@@ -101,12 +100,12 @@ public class DrawingsActivity extends UniversalFragment {
         int id = 0;
         for (DrawingsStore.Layer layer : DrawingsStore.get().layers()) {
             final List<Drawing> drawings = DrawingsStore.get().drawings(layer.id);
-            final UItem row = UItem.asButton(++id, layer.visible ? R.drawable.msg_views : R.drawable.msg_archive_hide, layer.name, String.valueOf(drawings.size()));
+            final UItem row = UItem.asButtonCheck(++id, layer.name, LocaleController.formatString(R.string.PhogramDrawingsCount, drawings.size())).setChecked(layer.visible);
             row.object = layer;
             items.add(row);
             for (Drawing drawing : drawings) {
                 if (!query.isEmpty() && !DrawingSheet.title(drawing).toLowerCase(Locale.getDefault()).contains(query)) continue;
-                final UItem item = UItem.asButton(++id, icon(drawing.kind), DrawingSheet.title(drawing), shortMeasure(drawing));
+                final UItem item = UItem.asButtonCheck(++id, DrawingSheet.title(drawing), DrawingSheet.describe(drawing)).setChecked(!drawing.hidden);
                 item.object = drawing;
                 items.add(item);
             }
@@ -121,8 +120,8 @@ public class DrawingsActivity extends UniversalFragment {
             final DrawingsStore.Layer layer = (DrawingsStore.Layer) item.object;
             DrawingsStore.get().setLayerVisible(layer.id, !layer.visible);
         } else if (item.object instanceof Drawing) {
-            finishFragment();
-            actions.showOnMap((Drawing) item.object);
+            final Drawing drawing = (Drawing) item.object;
+            DrawingsStore.get().setHidden(drawing.id, !drawing.hidden);
         }
     }
 
@@ -142,6 +141,10 @@ public class DrawingsActivity extends UniversalFragment {
         if (item.object instanceof Drawing) {
             final Drawing drawing = (Drawing) item.object;
             ItemOptions.makeOptions(container, null, view)
+                    .add(R.drawable.msg_map, LocaleController.getString(R.string.PhogramDrawingShow), () -> {
+                        finishFragment();
+                        actions.showOnMap(drawing);
+                    })
                     .add(R.drawable.msg_edit, LocaleController.getString(R.string.PhogramDrawingEdit), () -> SaveDrawingSheet.show(getParentActivity(), drawing, null))
                     .add(R.drawable.msg_share, LocaleController.getString(R.string.PhogramDrawingsExport), () -> DrawingsExport.ask(container, view, java.util.Collections.singletonList(drawing), DrawingSheet.title(drawing)))
                     .add(R.drawable.msg_delete, LocaleController.getString(R.string.Delete), true, () -> confirmDelete(
@@ -183,16 +186,5 @@ public class DrawingsActivity extends UniversalFragment {
             FileLog.e(e);
             BulletinFactory.of(this).createSimpleBulletin(R.raw.error, LocaleController.getString(R.string.PhogramDrawingsImportFailed)).show();
         }
-    }
-
-    static int icon(int kind) {
-        return kind == Drawing.AREA ? R.drawable.phogram_measure_area : kind == Drawing.LINE ? R.drawable.phogram_measure_distance : R.drawable.msg_location;
-    }
-
-    private static String shortMeasure(Drawing drawing) {
-        final double[] measure = drawing.measure();
-        if (drawing.kind == Drawing.AREA) return MeasureBar.area(measure[1]);
-        if (drawing.kind == Drawing.LINE) return MeasureBar.length(measure[0]);
-        return "";
     }
 }

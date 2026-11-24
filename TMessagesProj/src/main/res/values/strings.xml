@@ -11746,8 +11746,8 @@
     <string name="PhogramMapsHideCenter">Hide center point</string>
     <string name="PhogramMapsShowPlaces">Show landmarks</string>
     <string name="PhogramMapsHidePlaces">Hide landmarks</string>
-    <string name="PhogramMeasureDistance">Measure distance</string>
-    <string name="PhogramMeasureArea">Measure area</string>
+    <string name="PhogramDrawLine">Draw a line</string>
+    <string name="PhogramDrawArea">Draw an area</string>
     <string name="PhogramMeasureAddPoint">Add point</string>
     <string name="PhogramMeasureHint">Move the map to the first point, then tap +</string>
     <string name="PhogramMeasureAreaDetail">Total %1$s · perimeter %2$s</string>
@@ -11756,12 +11756,13 @@
     <string name="PhogramUnitDunams">%1$s dunams</string>
     <string name="PhogramUnitOlks">%1$s olks</string>
     <string name="PhogramDrawingsTitle">My drawings</string>
+    <string name="PhogramDrawingsCount">Drawings: %1$d</string>
     <string name="PhogramDrawingsCsv">CSV (landmarks)</string>
     <string name="PhogramDrawingsExport">Share as a file</string>
     <string name="PhogramDrawingsImport">Import a file</string>
     <string name="PhogramDrawingsImported">%1$d drawings imported</string>
     <string name="PhogramDrawingsImportFailed">This file could not be read</string>
-    <string name="PhogramDrawingsHint">Tap a layer to show or hide it on the map, a drawing to see it there. Hold a row for more. The download button imports GeoJSON, KML and GPX files.</string>
+    <string name="PhogramDrawingsHint">Switch a layer or a drawing to show or hide it on the map. Hold a drawing to go to it, edit, share or delete it. The download button imports GeoJSON, KML and GPX files.</string>
     <string name="PhogramDrawingPlaceHint">Move the map to the landmark, then tap ✓</string>
     <string name="PhogramDrawingSave">Save drawing</string>
     <string name="PhogramDrawingEdit">Edit details</string>

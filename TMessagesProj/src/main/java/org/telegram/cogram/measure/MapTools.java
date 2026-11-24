@@ -211,26 +211,24 @@ public final class MapTools {
                     preferences().edit().putBoolean(KEY_CENTER, !centerShown).apply();
                     center.setVisibility(centerShown ? View.GONE : View.VISIBLE);
                 })
+                .addGap()
                 .add(R.drawable.msg_location, LocaleController.getString(R.string.PhogramDrawingAddPoint), () -> start(Drawing.POINT, null))
-                .add(R.drawable.phogram_measure_distance, LocaleController.getString(R.string.PhogramMeasureDistance), () -> start(Drawing.LINE, null))
-                .add(R.drawable.phogram_measure_area, LocaleController.getString(R.string.PhogramMeasureArea), () -> start(Drawing.AREA, null))
-                .add(R.drawable.msg_folders, LocaleController.getString(R.string.PhogramDrawingsTitle), () -> fragment.presentFragment(new DrawingsActivity(actions)))
+                .add(R.drawable.phogram_measure_distance, LocaleController.getString(R.string.PhogramDrawLine), () -> start(Drawing.LINE, null))
+                .add(R.drawable.phogram_measure_area, LocaleController.getString(R.string.PhogramDrawArea), () -> start(Drawing.AREA, null))
                 .show();
     }
 
-    /** The landmarks, then each layer of drawings, shown or hidden with a tap. */
+    /** The map's own landmarks shown or hidden, then My drawings, where each drawing is shown or hidden. */
     private void openLayers() {
         final boolean placesShown = preferences().getBoolean(KEY_PLACES, true);
-        final ItemOptions options = ItemOptions.makeOptions(fragment, layersButton)
+        ItemOptions.makeOptions(fragment, layersButton)
                 .add(R.drawable.msg_location, LocaleController.getString(placesShown ? R.string.PhogramMapsHidePlaces : R.string.PhogramMapsShowPlaces), () -> {
                     preferences().edit().putBoolean(KEY_PLACES, !placesShown).apply();
                     if (engine != null) engine.setPlacesShown(!placesShown);
-                });
-        for (DrawingsStore.Layer layer : DrawingsStore.get().layers()) {
-            options.add(layer.visible ? R.drawable.msg_views : R.drawable.msg_archive_hide, layer.name,
-                    () -> DrawingsStore.get().setLayerVisible(layer.id, !layer.visible));
-        }
-        options.show();
+                })
+                .addGap()
+                .add(R.drawable.msg_folders, LocaleController.getString(R.string.PhogramDrawingsTitle), () -> fragment.presentFragment(new DrawingsActivity(actions)))
+                .show();
     }
 
     /** Starts drawing {@code kind}, a new one or {@code drawing}'s shape again. */
