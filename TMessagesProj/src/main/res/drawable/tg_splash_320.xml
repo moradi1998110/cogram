@@ -1,3 +1,5 @@
+<!-- Launch splash: Telegram's blue circle, and Phogram's hex mark assembling in it in white in place of the
+     paper plane: the centre cell, the six around it, then the bridges into the "M". Generated from the mark's geometry. -->
 <animated-vector
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:aapt="http://schemas.android.com/aapt">
@@ -8,35 +10,101 @@
             android:height="320dp"
             android:viewportWidth="320"
             android:viewportHeight="320">
-            <group
-                android:name="scaleme"
-                android:pivotX="160"
-                android:pivotY="160"
-                android:scaleX="1"
-                android:scaleY="1">
-                <group android:name="bg">
-                    <path
-                        android:name="circle"
-                        android:pathData="M 160 110 C 146.744 110 134.018 115.271 124.645 124.645 C 115.271 134.018 110 146.744 110 160 C 110 173.256 115.271 185.982 124.645 195.355 C 134.018 204.729 146.744 210 160 210 C 173.256 210 185.982 204.729 195.355 195.355 C 204.729 185.982 210 173.256 210 160 C 210 146.744 204.729 134.018 195.355 124.645 C 185.982 115.271 173.256 110 160 110 Z"
-                        android:fillColor="#2aabee"
-                        android:fillAlpha="0"
-                        android:strokeWidth="1"/>
-                </group>
+            <path
+                android:name="circle"
+                android:pathData="M 160 110 C 146.744 110 134.018 115.271 124.645 124.645 C 115.271 134.018 110 146.744 110 160 C 110 173.256 115.271 185.982 124.645 195.355 C 134.018 204.729 146.744 210 160 210 C 173.256 210 185.982 204.729 195.355 195.355 C 204.729 185.982 210 173.256 210 160 C 210 146.744 204.729 134.018 195.355 124.645 C 185.982 115.271 173.256 110 160 110 Z"
+                android:fillColor="#2aabee"
+                android:fillAlpha="0"/>
+            <group android:name="mark">
+                <path
+                    android:name="bridge0"
+                    android:pathData="M108.539,138.621Q123.547,160 108.539,181.379L137.401,181.379Q122.393,160 137.401,138.621Z"
+                    android:fillColor="#ffffff"
+                    android:fillAlpha="0"/>
+                <path
+                    android:name="bridge1"
+                    android:pathData="M182.599,138.621Q197.607,160 182.599,181.379L211.461,181.379Q196.453,160 211.461,138.621Z"
+                    android:fillColor="#ffffff"
+                    android:fillAlpha="0"/>
+                <path
+                    android:name="bridge2"
+                    android:pathData="M115.754,151.118Q141.774,148.81 152.784,172.498L167.216,147.502Q141.196,149.81 130.185,126.123Z"
+                    android:fillColor="#ffffff"
+                    android:fillAlpha="0"/>
+                <path
+                    android:name="bridge3"
+                    android:pathData="M167.216,172.498Q178.226,148.81 204.246,151.118L189.815,126.123Q178.804,149.81 152.784,147.502Z"
+                    android:fillColor="#ffffff"
+                    android:fillAlpha="0"/>
                 <group
-                    android:name="fg"
+                    android:name="cell0"
                     android:pivotX="160"
                     android:pivotY="160"
-                    android:scaleX="0.5"
-                    android:scaleY="0.5">
-                    <clip-path
-                        android:name="mask"
-                        android:pathData="M 160 60 C 133.489 60 108.036 70.543 89.289 89.289 C 70.543 108.036 60 133.489 60 160 C 60 186.511 70.543 211.964 89.289 230.711 C 108.036 249.457 133.489 260 160 260 C 186.511 260 211.964 249.457 230.711 230.711 C 249.457 211.964 260 186.511 260 160 C 260 133.489 249.457 108.036 230.711 89.289 C 211.964 70.543 186.511 60 160 60 Z"/>
+                    android:scaleX="0"
+                    android:scaleY="0">
                     <path
-                        android:name="plane"
-                        android:pathData="M -14.734 278.944 C 14.418 266.243 33.857 257.87 43.583 253.824 C 71.355 242.273 77.125 240.267 80.886 240.199 C 81.714 240.186 83.563 240.391 84.761 241.363 C 85.773 242.184 86.051 243.293 86.185 244.071 C 86.318 244.85 86.484 246.623 86.352 248.008 C 84.847 263.82 78.335 302.193 75.022 319.903 C 73.62 327.397 70.86 329.91 68.188 330.155 C 62.381 330.69 57.971 326.318 52.347 322.631 C 43.545 316.861 38.573 313.27 30.03 307.64 C 20.157 301.134 26.557 297.558 32.184 291.714 C 33.656 290.184 59.243 266.911 59.738 264.8 C 59.8 264.536 59.858 263.552 59.273 263.032 C 58.688 262.512 57.825 262.69 57.202 262.831 C 56.32 263.032 42.26 272.325 15.022 290.711 C 11.031 293.452 7.416 294.787 4.177 294.717 C 0.607 294.64 -6.261 292.698 -11.367 291.038 C -17.63 289.003 -22.607 287.927 -22.174 284.469 C -21.948 282.669 -19.468 280.827 -14.734 278.944 Z"
-                        android:fillColor="#ffffff"
-                        android:fillAlpha="0"
-                        android:strokeWidth="1"/>
+                        android:pathData="M157.686,142.095Q160,140.759 162.314,142.095L174.349,149.043Q176.664,150.379 176.664,153.052L176.664,166.948Q176.664,169.621 174.349,170.957L162.314,177.905Q160,179.241 157.686,177.905L145.651,170.957Q143.336,169.621 143.336,166.948L143.336,153.052Q143.336,150.379 145.651,149.043Z"
+                        android:fillColor="#ffffff"/>
+                </group>
+                <group
+                    android:name="cell1"
+                    android:pivotX="160"
+                    android:pivotY="117.241"
+                    android:scaleX="0"
+                    android:scaleY="0">
+                    <path
+                        android:pathData="M157.686,99.336Q160,98 162.314,99.336L174.349,106.284Q176.664,107.621 176.664,110.293L176.664,124.19Q176.664,126.862 174.349,128.198L162.314,135.147Q160,136.483 157.686,135.147L145.651,128.198Q143.336,126.862 143.336,124.19L143.336,110.293Q143.336,107.621 145.651,106.284Z"
+                        android:fillColor="#ffffff"/>
+                </group>
+                <group
+                    android:name="cell2"
+                    android:pivotX="197.03"
+                    android:pivotY="138.621"
+                    android:scaleX="0"
+                    android:scaleY="0">
+                    <path
+                        android:pathData="M194.716,120.716Q197.03,119.379 199.344,120.716L211.379,127.664Q213.694,129 213.694,131.672L213.694,145.569Q213.694,148.241 211.379,149.578L199.344,156.526Q197.03,157.862 194.716,156.526L182.681,149.578Q180.367,148.241 180.367,145.569L180.367,131.672Q180.367,129 182.681,127.664Z"
+                        android:fillColor="#ffffff"/>
+                </group>
+                <group
+                    android:name="cell3"
+                    android:pivotX="197.03"
+                    android:pivotY="181.379"
+                    android:scaleX="0"
+                    android:scaleY="0">
+                    <path
+                        android:pathData="M194.716,163.474Q197.03,162.138 199.344,163.474L211.379,170.422Q213.694,171.759 213.694,174.431L213.694,188.328Q213.694,191 211.379,192.336L199.344,199.284Q197.03,200.621 194.716,199.284L182.681,192.336Q180.367,191 180.367,188.328L180.367,174.431Q180.367,171.759 182.681,170.422Z"
+                        android:fillColor="#ffffff"/>
+                </group>
+                <group
+                    android:name="cell4"
+                    android:pivotX="160"
+                    android:pivotY="202.759"
+                    android:scaleX="0"
+                    android:scaleY="0">
+                    <path
+                        android:pathData="M157.686,184.853Q160,183.517 162.314,184.853L174.349,191.802Q176.664,193.138 176.664,195.81L176.664,209.707Q176.664,212.379 174.349,213.716L162.314,220.664Q160,222 157.686,220.664L145.651,213.716Q143.336,212.379 143.336,209.707L143.336,195.81Q143.336,193.138 145.651,191.802Z"
+                        android:fillColor="#ffffff"/>
+                </group>
+                <group
+                    android:name="cell5"
+                    android:pivotX="122.97"
+                    android:pivotY="181.379"
+                    android:scaleX="0"
+                    android:scaleY="0">
+                    <path
+                        android:pathData="M120.656,163.474Q122.97,162.138 125.284,163.474L137.319,170.422Q139.633,171.759 139.633,174.431L139.633,188.328Q139.633,191 137.319,192.336L125.284,199.284Q122.97,200.621 120.656,199.284L108.621,192.336Q106.306,191 106.306,188.328L106.306,174.431Q106.306,171.759 108.621,170.422Z"
+                        android:fillColor="#ffffff"/>
+                </group>
+                <group
+                    android:name="cell6"
+                    android:pivotX="122.97"
+                    android:pivotY="138.621"
+                    android:scaleX="0"
+                    android:scaleY="0">
+                    <path
+                        android:pathData="M120.656,120.716Q122.97,119.379 125.284,120.716L137.319,127.664Q139.633,129 139.633,131.672L139.633,145.569Q139.633,148.241 137.319,149.578L125.284,156.526Q122.97,157.862 120.656,156.526L108.621,149.578Q106.306,148.241 106.306,145.569L106.306,131.672Q106.306,129 108.621,127.664Z"
+                        android:fillColor="#ffffff"/>
                 </group>
             </group>
         </vector>
@@ -46,7 +114,7 @@
             <set>
                 <objectAnimator
                     android:propertyName="pathData"
-                    android:startOffset="200"
+                    android:startOffset="0"
                     android:duration="300"
                     android:valueFrom="M 160 110 C 146.744 110 134.018 115.271 124.645 124.645 C 115.271 134.018 110 146.744 110 160 C 110 173.256 115.271 185.982 124.645 195.355 C 134.018 204.729 146.744 210 160 210 C 173.256 210 185.982 204.729 195.355 195.355 C 204.729 185.982 210 173.256 210 160 C 210 146.744 204.729 134.018 195.355 124.645 C 185.982 115.271 173.256 110 160 110 Z"
                     android:valueTo="M 160 60 C 133.489 60 108.036 70.543 89.289 89.289 C 70.543 108.036 60 133.489 60 160 C 60 186.511 70.543 211.964 89.289 230.711 C 108.036 249.457 133.489 260 160 260 C 186.511 260 211.964 249.457 230.711 230.711 C 249.457 211.964 260 186.511 260 160 C 260 133.489 249.457 108.036 230.711 89.289 C 211.964 70.543 186.511 60 160 60 Z"
@@ -54,7 +122,7 @@
                     android:interpolator="@android:anim/overshoot_interpolator"/>
                 <objectAnimator
                     android:propertyName="fillAlpha"
-                    android:startOffset="200"
+                    android:startOffset="0"
                     android:duration="100"
                     android:valueFrom="0"
                     android:valueTo="1"
@@ -63,21 +131,13 @@
             </set>
         </aapt:attr>
     </target>
-    <target android:name="plane">
+    <target android:name="bridge0">
         <aapt:attr name="android:animation">
             <set>
                 <objectAnimator
-                    android:propertyName="pathData"
-                    android:startOffset="200"
-                    android:duration="300"
-                    android:valueFrom="M -14.734 278.944 C 14.418 266.243 33.857 257.87 43.583 253.824 C 71.355 242.273 77.125 240.267 80.886 240.199 C 81.714 240.186 83.563 240.391 84.761 241.363 C 85.773 242.184 86.051 243.293 86.185 244.071 C 86.318 244.85 86.484 246.623 86.352 248.008 C 84.847 263.82 78.335 302.193 75.022 319.903 C 73.62 327.397 70.86 329.91 68.188 330.155 C 62.381 330.69 57.971 326.318 52.347 322.631 C 43.545 316.861 38.573 313.27 30.03 307.64 C 20.157 301.134 26.557 297.558 32.184 291.714 C 33.656 290.184 59.243 266.911 59.738 264.8 C 59.8 264.536 59.858 263.552 59.273 263.032 C 58.688 262.512 57.825 262.69 57.202 262.831 C 56.32 263.032 42.26 272.325 15.022 290.711 C 11.031 293.452 7.416 294.787 4.177 294.717 C 0.607 294.64 -6.261 292.698 -11.367 291.038 C -17.63 289.003 -22.607 287.927 -22.174 284.469 C -21.948 282.669 -19.468 280.827 -14.734 278.944 Z"
-                    android:valueTo="M 105.266 158.944 C 134.418 146.243 153.857 137.87 163.583 133.824 C 191.355 122.273 197.125 120.267 200.886 120.199 C 201.714 120.186 203.563 120.391 204.761 121.363 C 205.773 122.184 206.051 123.293 206.185 124.071 C 206.318 124.85 206.484 126.623 206.352 128.008 C 204.847 143.82 198.335 182.193 195.022 199.903 C 193.62 207.397 190.86 209.91 188.188 210.155 C 182.381 210.69 177.971 206.318 172.347 202.631 C 163.545 196.861 158.573 193.27 150.03 187.64 C 140.157 181.134 146.557 177.558 152.184 171.714 C 153.656 170.184 179.243 146.911 179.738 144.8 C 179.8 144.536 179.858 143.552 179.273 143.032 C 178.688 142.512 177.825 142.69 177.202 142.831 C 176.32 143.032 162.26 152.325 135.022 170.711 C 131.031 173.452 127.416 174.787 124.177 174.717 C 120.607 174.64 113.739 172.698 108.633 171.038 C 102.37 169.003 97.393 167.927 97.826 164.469 C 98.052 162.669 100.532 160.827 105.266 158.944 Z"
-                    android:valueType="pathType"
-                    android:interpolator="@android:interpolator/linear_out_slow_in"/>
-                <objectAnimator
                     android:propertyName="fillAlpha"
-                    android:startOffset="200"
-                    android:duration="100"
+                    android:startOffset="450"
+                    android:duration="160"
                     android:valueFrom="0"
                     android:valueTo="1"
                     android:valueType="floatType"
@@ -85,22 +145,196 @@
             </set>
         </aapt:attr>
     </target>
-    <target android:name="fg">
+    <target android:name="bridge1">
+        <aapt:attr name="android:animation">
+            <set>
+                <objectAnimator
+                    android:propertyName="fillAlpha"
+                    android:startOffset="490"
+                    android:duration="160"
+                    android:valueFrom="0"
+                    android:valueTo="1"
+                    android:valueType="floatType"
+                    android:interpolator="@android:interpolator/fast_out_slow_in"/>
+            </set>
+        </aapt:attr>
+    </target>
+    <target android:name="bridge2">
+        <aapt:attr name="android:animation">
+            <set>
+                <objectAnimator
+                    android:propertyName="fillAlpha"
+                    android:startOffset="530"
+                    android:duration="160"
+                    android:valueFrom="0"
+                    android:valueTo="1"
+                    android:valueType="floatType"
+                    android:interpolator="@android:interpolator/fast_out_slow_in"/>
+            </set>
+        </aapt:attr>
+    </target>
+    <target android:name="bridge3">
+        <aapt:attr name="android:animation">
+            <set>
+                <objectAnimator
+                    android:propertyName="fillAlpha"
+                    android:startOffset="570"
+                    android:duration="160"
+                    android:valueFrom="0"
+                    android:valueTo="1"
+                    android:valueType="floatType"
+                    android:interpolator="@android:interpolator/fast_out_slow_in"/>
+            </set>
+        </aapt:attr>
+    </target>
+    <target android:name="cell0">
         <aapt:attr name="android:animation">
             <set>
                 <objectAnimator
                     android:propertyName="scaleX"
-                    android:startOffset="200"
-                    android:duration="300"
-                    android:valueFrom="0.5"
+                    android:startOffset="150"
+                    android:duration="260"
+                    android:valueFrom="0"
                     android:valueTo="1"
                     android:valueType="floatType"
                     android:interpolator="@android:anim/overshoot_interpolator"/>
                 <objectAnimator
                     android:propertyName="scaleY"
-                    android:startOffset="200"
-                    android:duration="300"
-                    android:valueFrom="0.5"
+                    android:startOffset="150"
+                    android:duration="260"
+                    android:valueFrom="0"
+                    android:valueTo="1"
+                    android:valueType="floatType"
+                    android:interpolator="@android:anim/overshoot_interpolator"/>
+            </set>
+        </aapt:attr>
+    </target>
+    <target android:name="cell1">
+        <aapt:attr name="android:animation">
+            <set>
+                <objectAnimator
+                    android:propertyName="scaleX"
+                    android:startOffset="220"
+                    android:duration="260"
+                    android:valueFrom="0"
+                    android:valueTo="1"
+                    android:valueType="floatType"
+                    android:interpolator="@android:anim/overshoot_interpolator"/>
+                <objectAnimator
+                    android:propertyName="scaleY"
+                    android:startOffset="220"
+                    android:duration="260"
+                    android:valueFrom="0"
+                    android:valueTo="1"
+                    android:valueType="floatType"
+                    android:interpolator="@android:anim/overshoot_interpolator"/>
+            </set>
+        </aapt:attr>
+    </target>
+    <target android:name="cell2">
+        <aapt:attr name="android:animation">
+            <set>
+                <objectAnimator
+                    android:propertyName="scaleX"
+                    android:startOffset="255"
+                    android:duration="260"
+                    android:valueFrom="0"
+                    android:valueTo="1"
+                    android:valueType="floatType"
+                    android:interpolator="@android:anim/overshoot_interpolator"/>
+                <objectAnimator
+                    android:propertyName="scaleY"
+                    android:startOffset="255"
+                    android:duration="260"
+                    android:valueFrom="0"
+                    android:valueTo="1"
+                    android:valueType="floatType"
+                    android:interpolator="@android:anim/overshoot_interpolator"/>
+            </set>
+        </aapt:attr>
+    </target>
+    <target android:name="cell3">
+        <aapt:attr name="android:animation">
+            <set>
+                <objectAnimator
+                    android:propertyName="scaleX"
+                    android:startOffset="290"
+                    android:duration="260"
+                    android:valueFrom="0"
+                    android:valueTo="1"
+                    android:valueType="floatType"
+                    android:interpolator="@android:anim/overshoot_interpolator"/>
+                <objectAnimator
+                    android:propertyName="scaleY"
+                    android:startOffset="290"
+                    android:duration="260"
+                    android:valueFrom="0"
+                    android:valueTo="1"
+                    android:valueType="floatType"
+                    android:interpolator="@android:anim/overshoot_interpolator"/>
+            </set>
+        </aapt:attr>
+    </target>
+    <target android:name="cell4">
+        <aapt:attr name="android:animation">
+            <set>
+                <objectAnimator
+                    android:propertyName="scaleX"
+                    android:startOffset="325"
+                    android:duration="260"
+                    android:valueFrom="0"
+                    android:valueTo="1"
+                    android:valueType="floatType"
+                    android:interpolator="@android:anim/overshoot_interpolator"/>
+                <objectAnimator
+                    android:propertyName="scaleY"
+                    android:startOffset="325"
+                    android:duration="260"
+                    android:valueFrom="0"
+                    android:valueTo="1"
+                    android:valueType="floatType"
+                    android:interpolator="@android:anim/overshoot_interpolator"/>
+            </set>
+        </aapt:attr>
+    </target>
+    <target android:name="cell5">
+        <aapt:attr name="android:animation">
+            <set>
+                <objectAnimator
+                    android:propertyName="scaleX"
+                    android:startOffset="360"
+                    android:duration="260"
+                    android:valueFrom="0"
+                    android:valueTo="1"
+                    android:valueType="floatType"
+                    android:interpolator="@android:anim/overshoot_interpolator"/>
+                <objectAnimator
+                    android:propertyName="scaleY"
+                    android:startOffset="360"
+                    android:duration="260"
+                    android:valueFrom="0"
+                    android:valueTo="1"
+                    android:valueType="floatType"
+                    android:interpolator="@android:anim/overshoot_interpolator"/>
+            </set>
+        </aapt:attr>
+    </target>
+    <target android:name="cell6">
+        <aapt:attr name="android:animation">
+            <set>
+                <objectAnimator
+                    android:propertyName="scaleX"
+                    android:startOffset="395"
+                    android:duration="260"
+                    android:valueFrom="0"
+                    android:valueTo="1"
+                    android:valueType="floatType"
+                    android:interpolator="@android:anim/overshoot_interpolator"/>
+                <objectAnimator
+                    android:propertyName="scaleY"
+                    android:startOffset="395"
+                    android:duration="260"
+                    android:valueFrom="0"
                     android:valueTo="1"
                     android:valueType="floatType"
                     android:interpolator="@android:anim/overshoot_interpolator"/>

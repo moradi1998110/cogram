@@ -453,15 +453,10 @@ public class IntroActivity extends BaseFragment implements NotificationCenter.No
     public void onResume() {
         super.onResume();
         if (justCreated) {
-            if (LocaleController.isRTL) {
-                viewPager.setCurrentItem(6);
-                lastPage = 6;
-                introMark.setAlpha(0f);
-            } else {
-                viewPager.setCurrentItem(0);
-                lastPage = 0;
-                introMark.postDelayed(introMark::play, 250);
-            }
+            // Always opens on the first page, where Phogram's mark assembles, in right-to-left languages too.
+            viewPager.setCurrentItem(0);
+            lastPage = 0;
+            introMark.postDelayed(introMark::play, 250);
             justCreated = false;
         }
         AndroidUtilities.lockOrientation(getParentActivity(), ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
