@@ -72,14 +72,17 @@ public final class GnssSheet extends BottomSheet implements GnssMonitor.Listener
 
     @Override
     public void onGnssChanged() {
-        final Location fix = monitor.getLocation();
+        // No satellite fix yet: the network's, in grey and said to be approximate, where the map shows the dot.
+        final boolean bySatellites = monitor.getLocation() != null;
+        final Location fix = bySatellites ? monitor.getLocation() : monitor.getApproximate();
         accuracy.setText(fix != null && fix.hasAccuracy()
                 ? "± " + LocaleController.formatString(R.string.PhogramMapsMeters, Math.round(fix.getAccuracy()))
                 : LocaleController.getString(R.string.PhogramGnssNoFix));
-        accuracy.setTextColor(Theme.getColor(fix != null ? GnssGauge.color(monitor.getQuality()) : Theme.key_windowBackgroundWhiteGrayText));
+        accuracy.setTextColor(Theme.getColor(bySatellites ? GnssGauge.color(monitor.getQuality()) : Theme.key_windowBackgroundWhiteGrayText));
         String summary = monitor.isReported()
                 ? LocaleController.formatString(R.string.PhogramGnssUsed, monitor.getUsed(), monitor.getVisible())
                 : LocaleController.getString(R.string.PhogramGnssUnreported);
+        if (!bySatellites && fix != null) summary = LocaleController.getString(R.string.PhogramGnssApproximate) + "\n" + summary;
         if (monitor.isDualFrequency()) summary += "\n" + LocaleController.getString(R.string.PhogramGnssDualFrequency);
         satellites.setText(summary);
 

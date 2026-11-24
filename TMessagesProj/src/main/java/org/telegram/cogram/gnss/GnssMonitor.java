@@ -49,7 +49,10 @@ public final class GnssMonitor {
     private LocationManager manager;
     private GnssStatus.Callback statusCallback;
 
+    /** The last fix from the satellites, and the last from anything else (Wi-Fi, cell towers): kept apart, as the map
+     * asks for both and a network fix coming a second after a GPS one must not hide it. */
     private Location location;
+    private Location network;
     private final List<Constellation> systems = new ArrayList<>();
     private int visible;
     private int used;
@@ -59,7 +62,11 @@ public final class GnssMonitor {
     private final LocationListener locationListener = new LocationListener() {
         @Override
         public void onLocationChanged(Location changed) {
-            location = changed;
+            if (LocationManager.GPS_PROVIDER.equals(changed.getProvider())) {
+                location = changed;
+            } else {
+                network = changed;
+            }
             notifyListeners();
         }
 
@@ -92,6 +99,7 @@ public final class GnssMonitor {
         if (manager == null) return;
         try {
             location = manager.getLastKnownLocation(LocationManager.GPS_PROVIDER);
+            network = manager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER);
             // Passive: the map's own requests bring the fixes; this one turns no receiver on.
             manager.requestLocationUpdates(LocationManager.PASSIVE_PROVIDER, 1000, 0, locationListener, Looper.getMainLooper());
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
@@ -121,9 +129,18 @@ public final class GnssMonitor {
 
     /** The last GPS fix, or null; a fix older than a minute does not count. */
     public Location getLocation() {
-        if (location == null || !LocationManager.GPS_PROVIDER.equals(location.getProvider())) return null;
-        final long age = (android.os.SystemClock.elapsedRealtimeNanos() - location.getElapsedRealtimeNanos()) / 1_000_000L;
-        return age < 60_000 ? location : null;
+        return recent(location);
+    }
+
+    /** The last fix from the network, or null: where the map's dot is while the satellites have not found it. */
+    public Location getApproximate() {
+        return recent(network);
+    }
+
+    private static Location recent(Location fix) {
+        if (fix == null) return null;
+        final long age = (android.os.SystemClock.elapsedRealtimeNanos() - fix.getElapsedRealtimeNanos()) / 1_000_000L;
+        return age < 60_000 ? fix : null;
     }
 
     public int getQuality() {
