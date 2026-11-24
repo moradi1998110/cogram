@@ -1249,6 +1249,11 @@ final class MapsRouteUi {
             public void onMapBack() {
                 layout();
             }
+
+            @Override
+            public void openPage() {
+                org.telegram.ui.MainTabsActivity.showMaps(host.fragment());
+            }
         };
         TripService.start(outside);
         final Activity activity = host.fragment().getParentActivity();

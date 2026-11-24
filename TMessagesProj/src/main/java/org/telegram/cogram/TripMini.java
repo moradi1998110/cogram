@@ -2,52 +2,44 @@ package org.telegram.cogram;
 
 import static org.telegram.messenger.AndroidUtilities.dp;
 
-import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.RemoteAction;
 import android.content.Context;
-import android.content.Intent;
 import android.graphics.Bitmap;
-import android.graphics.Outline;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.Icon;
 import android.os.Build;
 import android.view.Gravity;
-import android.view.MotionEvent;
 import android.view.View;
-import android.view.ViewConfiguration;
 import android.view.ViewGroup;
-import android.view.ViewOutlineProvider;
-import android.view.WindowManager;
 import android.widget.FrameLayout;
-import android.widget.ImageView;
 
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.ApplicationLoader;
-import org.telegram.messenger.FileLog;
 import org.telegram.messenger.LocaleController;
 import org.telegram.messenger.R;
 import org.telegram.messenger.pip.PipSource;
 import org.telegram.messenger.pip.source.IPipSourceDelegate;
 import org.telegram.messenger.pip.utils.PipActions;
-import org.telegram.messenger.pip.utils.PipUtils;
 import org.telegram.ui.ActionBar.Theme;
 import org.telegram.ui.Components.LayoutHelper;
-import org.telegram.ui.LaunchActivity;
 
 import java.util.ArrayList;
 
 /**
- * The trip in a small window while Phogram is out of sight, the map with the next turn and the speed. As Telegram does
- * for its videos: in its own floating window over other apps when drawing over them is allowed, else in the system's
- * picture-in-picture through Telegram's PipSource. The map itself moves into the window and back, so it goes on
- * following the car.
+ * The trip in a small window while its page is out of sight, the map with the next turn and the speed. Within the
+ * app, and out of it when drawing over other apps is allowed, in the {@link FloatingWindow} Telegram's calls use;
+ * else, leaving the app from the map, in the system's picture-in-picture through Telegram's PipSource. The map itself
+ * moves into the window and back, so it goes on following the car.
  */
 final class TripMini implements IPipSourceDelegate {
 
     interface Host extends TripService.Actions {
         /** The map is back on its page: the page lays its padding out again. */
         void onMapBack();
+
+        /** The floating window was tapped: the map's page comes to the front. */
+        void openPage();
     }
 
     private static final int ACTION_VOICE = 1;
@@ -63,10 +55,11 @@ final class TripMini implements IPipSourceDelegate {
     private final MapKinds.SpeedView speed;
     private final View anchor;
     private final PipSource source;
+    private final FloatingWindow window;
 
     private ViewGroup mapHome;
     private int mapIndex;
-    private boolean floating;
+    private boolean pageShown = true;
 
     TripMini(Activity activity, MapEngine engine, ViewGroup page, Host host) {
         this.activity = activity;
@@ -127,7 +120,7 @@ final class TripMini implements IPipSourceDelegate {
         };
         page.addView(anchor, 0, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT, Gravity.CENTER));
 
-        // With drawing over other apps allowed, Telegram's floating window is used instead, as for its videos.
+        // With drawing over other apps allowed, the floating window goes out of the app too, so this one is not needed.
         source = AndroidUtilities.checkInlinePermissions(activity) ? null : new PipSource.Builder(activity, this)
                 .setTagPrefix("phogram-trip")
                 .setPriority(-1)
@@ -135,6 +128,17 @@ final class TripMini implements IPipSourceDelegate {
                 .setContentView(anchor)
                 .setActionListener(this::onAction)
                 .build();
+        window = new FloatingWindow(activity, 4 / 3f, new FloatingWindow.Listener() {
+            @Override
+            public void onOpen() {
+                host.openPage();
+            }
+
+            @Override
+            public void onClose() {
+                returnMap();
+            }
+        });
     }
 
     void update(MapEngine.NavigationState state) {
@@ -153,17 +157,26 @@ final class TripMini implements IPipSourceDelegate {
         if (source != null) source.invalidateActions();
     }
 
-    /** The map's page shows or leaves: with the app gone to the background, the floating window takes the trip. */
+    /**
+     * The map's page shows or leaves: the floating window takes the trip when another page opens, and when the app is
+     * left unless the system's window does it.
+     */
     void onPageShown(boolean shown) {
+        pageShown = shown;
         if (shown) {
-            hideFloating();
-        } else if (source == null && ApplicationLoader.mainInterfacePaused && AndroidUtilities.checkInlinePermissions(activity)) {
-            showFloating();
+            if (!window.isShown()) return;
+            window.hide();
+            returnMap();
+        } else if (source == null || !ApplicationLoader.mainInterfacePaused) {
+            takeMap();
+            window.setContent(view);
+            window.show();
+            if (!window.isShown()) returnMap();
         }
     }
 
     void destroy() {
-        hideFloating();
+        window.hide();
         if (source != null) source.destroy();
         returnMap();
         AndroidUtilities.removeFromParent(anchor);
@@ -191,7 +204,7 @@ final class TripMini implements IPipSourceDelegate {
         host.onMapBack();
         // Back on a page that is not shown, as when the trip ends from the notification, the map rests; else it draws
         // again at once on its page (leaving the small window paused it).
-        if (ApplicationLoader.mainInterfacePaused) {
+        if (ApplicationLoader.mainInterfacePaused || !pageShown) {
             engine.onPause();
         } else {
             engine.onResume();
@@ -215,111 +228,6 @@ final class TripMini implements IPipSourceDelegate {
         return null;
     }
 
-    // Telegram's floating window, over other apps.
-
-    private WindowManager.LayoutParams floatingParams;
-
-    @SuppressLint("ClickableViewAccessibility")
-    private void showFloating() {
-        if (floating) return;
-        final WindowManager wm = (WindowManager) ApplicationLoader.applicationContext.getSystemService(Context.WINDOW_SERVICE);
-        if (floatingParams == null) {
-            floatingParams = PipUtils.createWindowLayoutParams(activity, false);
-            floatingParams.width = Math.max(dp(150), AndroidUtilities.displaySize.x * 2 / 5);
-            floatingParams.height = floatingParams.width * 4 / 3;
-            floatingParams.x = AndroidUtilities.displaySize.x - floatingParams.width - dp(12);
-            floatingParams.y = AndroidUtilities.statusBarHeight + dp(56);
-            view.setOutlineProvider(new ViewOutlineProvider() {
-                @Override
-                public void getOutline(View v, Outline outline) {
-                    outline.setRoundRect(0, 0, v.getWidth(), v.getHeight(), dp(14));
-                }
-            });
-            view.setClipToOutline(true);
-            view.setElevation(dp(6));
-            // Telegram's small close button, as on its floating videos: the window leaves until the app is left again.
-            final ImageView close = new ImageView(activity);
-            close.setImageResource(R.drawable.miniplayer_close);
-            close.setScaleType(ImageView.ScaleType.CENTER);
-            close.setBackground(Theme.createCircleDrawable(dp(28), 0x66000000));
-            close.setContentDescription(LocaleController.getString(R.string.Close));
-            close.setOnClickListener(v -> hideFloating());
-            view.addView(close, LayoutHelper.createFrame(36, 36, Gravity.BOTTOM | (LocaleController.isRTL ? Gravity.LEFT : Gravity.RIGHT)));
-            view.setOnTouchListener(new FloatingDrag());
-        }
-        try {
-            AndroidUtilities.removeFromParent(view);
-            takeMap();
-            wm.addView(view, floatingParams);
-            floating = true;
-        } catch (Throwable e) {
-            FileLog.e(e);
-            returnMap();
-        }
-    }
-
-    private void hideFloating() {
-        if (!floating) return;
-        floating = false;
-        try {
-            final WindowManager wm = (WindowManager) ApplicationLoader.applicationContext.getSystemService(Context.WINDOW_SERVICE);
-            wm.removeView(view);
-        } catch (Throwable e) {
-            FileLog.e(e);
-        }
-        returnMap();
-    }
-
-    /** The floating window is dragged anywhere on the screen; a tap opens Phogram on the trip. */
-    private final class FloatingDrag implements View.OnTouchListener {
-        private float downX, downY;
-        private int startX, startY;
-        private boolean dragging;
-
-        @Override
-        public boolean onTouch(View v, MotionEvent event) {
-            switch (event.getActionMasked()) {
-                case MotionEvent.ACTION_DOWN:
-                    downX = event.getRawX();
-                    downY = event.getRawY();
-                    startX = floatingParams.x;
-                    startY = floatingParams.y;
-                    dragging = false;
-                    return true;
-                case MotionEvent.ACTION_MOVE:
-                    final float dx = event.getRawX() - downX, dy = event.getRawY() - downY;
-                    if (!dragging && Math.hypot(dx, dy) > ViewConfiguration.get(v.getContext()).getScaledTouchSlop()) {
-                        dragging = true;
-                    }
-                    if (dragging && floating) {
-                        floatingParams.x = Math.max(0, Math.min(AndroidUtilities.displaySize.x - floatingParams.width, startX + (int) dx));
-                        floatingParams.y = Math.max(0, Math.min(AndroidUtilities.displaySize.y - floatingParams.height, startY + (int) dy));
-                        try {
-                            ((WindowManager) ApplicationLoader.applicationContext.getSystemService(Context.WINDOW_SERVICE)).updateViewLayout(view, floatingParams);
-                        } catch (Throwable ignore) {
-                        }
-                    }
-                    return true;
-                case MotionEvent.ACTION_UP:
-                    if (!dragging) openApp();
-                    return true;
-            }
-            return false;
-        }
-    }
-
-    private void openApp() {
-        final Intent intent = new Intent(activity, LaunchActivity.class);
-        intent.setAction(Intent.ACTION_MAIN);
-        intent.addCategory(Intent.CATEGORY_LAUNCHER);
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-        try {
-            activity.startActivity(intent);
-        } catch (Throwable e) {
-            FileLog.e(e);
-        }
-    }
-
     // The system's picture-in-picture, through Telegram's PipSource.
 
     private void onAction(int action) {
@@ -328,6 +236,12 @@ final class TripMini implements IPipSourceDelegate {
         } else if (action == ACTION_VOICE) {
             host.toggleVoice();
         }
+    }
+
+    /** Not while the floating window has the trip, as when the app is left from another page. */
+    @Override
+    public boolean pipIsAvailable() {
+        return !window.isShown();
     }
 
     @Override
