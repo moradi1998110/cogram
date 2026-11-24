@@ -51,7 +51,7 @@ public class DrawingsActivity extends UniversalFragment {
     @Override
     public View createView(Context context) {
         final View view = super.createView(context);
-        actionBar.createMenu().addItem(0, R.drawable.ic_ab_search).setIsSearchField(true)
+        actionBar.createMenu().addItem(0, R.drawable.outline_header_search).setIsSearchField(true)
                 .setActionBarMenuItemSearchListener(new ActionBarMenuItem.ActionBarMenuItemSearchListener() {
                     @Override
                     public void onTextChanged(EditText editText) {

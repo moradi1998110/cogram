@@ -84,7 +84,7 @@ public final class MeasureBar extends LinearLayout {
         final boolean empty = measurement.isEmpty();
         add.setVisibility(VISIBLE);
         undo.setVisibility(VISIBLE);
-        setSaveEnabled(measurement.size() >= (measurement.area ? 3 : 2));
+        enableSave(measurement.size() >= (measurement.area ? 3 : 2));
         undo.setEnabled(!measurement.isEmpty());
         undo.setAlpha(measurement.isEmpty() ? 0.4f : 1f);
         if (empty) {
@@ -105,13 +105,13 @@ public final class MeasureBar extends LinearLayout {
     public void setPoint() {
         add.setVisibility(GONE);
         undo.setVisibility(GONE);
-        setSaveEnabled(true);
+        enableSave(true);
         value.setText(LocaleController.getString(R.string.PhogramDrawingPlaceHint));
         value.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText));
         detail.setVisibility(GONE);
     }
 
-    private void setSaveEnabled(boolean enabled) {
+    private void enableSave(boolean enabled) {
         save.setEnabled(enabled);
         save.setAlpha(enabled ? 1f : 0.4f);
     }
