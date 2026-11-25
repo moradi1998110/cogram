@@ -286,6 +286,10 @@ public interface MapEngine {
         public boolean arrived;
         /** A new route is being found after the driver left this one. */
         public boolean rerouting;
+        /** Starting off the road: how far the route still is, straight; 0 once on it. */
+        public float toRoad;
+        /** The road driven to its end, the destination off it: how far it still is, straight; else 0. */
+        public float toDestination;
         public Route route;
         /** The driver's position put on the route's line, how far the real one is from it, and the road's heading there. */
         public double onRouteLatitude;

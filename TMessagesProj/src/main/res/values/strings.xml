@@ -11839,6 +11839,8 @@
     <string name="PhogramNavSlower">%1$s slower</string>
     <string name="PhogramNavStarting">Starting…</string>
     <string name="PhogramNavRerouting">Finding a new route…</string>
+    <string name="PhogramNavToRoad">Head to the road</string>
+    <string name="PhogramNavToDestination">Leave the road for your destination</string>
     <string name="PhogramNavArrived">You have arrived at %1$s.</string>
     <string name="PhogramNavThen">Then</string>
     <string name="PhogramNavArrival">Arrival</string>

@@ -18,6 +18,15 @@ final class RouteNavigator {
     private static final int SEARCH_AHEAD = 400;
     /** How far ahead a warning is told of. */
     private static final float WARNING_AHEAD_METERS = 400;
+    /**
+     * Off the road (a farm, a park, a car park), as OsmAnd, Google and Waze do: the way to the route is a straight
+     * link, not a reason to find a new route. The driver has joined it once this close; heading away from it by this
+     * much more than the closest they came finds a new one, perhaps through another gate.
+     */
+    private static final float JOIN_METERS = 30;
+    private static final float LEAVE_LINK_METERS = 150;
+    /** The pace counted on the straight links, walking or crawling over a field: about 11 km/h. */
+    private static final float LINK_METERS_PER_SECOND = 3;
 
     /** The index of the route's point the driver was last matched to. */
     int pointIndex() {
@@ -27,9 +36,19 @@ final class RouteNavigator {
     final MapEngine.Route route;
     private int index;
     private int offRoute;
+    /** Still on the way to the route from off the road, and the closest the driver has come to it so far. */
+    private boolean joining = true;
+    private double closest = Double.MAX_VALUE;
+    /** The straight way from the route's end to a destination off the road, 0 when it is on the road. */
+    private final float endLink;
 
     RouteNavigator(MapEngine.Route route) {
         this.route = route;
+        final MapEngine.Place destination = route.destination;
+        final double[] end = route.points.isEmpty() ? null : route.points.get(route.points.size() - 1);
+        final float link = destination == null || end == null ? 0
+                : (float) MapEngine.distance(end[0], end[1], destination.latitude, destination.longitude);
+        endLink = link > ARRIVED_METERS ? link : 0;
     }
 
     /** True when the driver has been away from the route long enough to need a new one. */
@@ -68,7 +87,14 @@ final class RouteNavigator {
                 bestFraction = t;
             }
         }
-        offRoute = best > OFF_ROUTE_METERS ? offRoute + 1 : 0;
+        if (joining && best <= JOIN_METERS) joining = false;
+        if (joining) {
+            closest = Math.min(closest, best);
+            offRoute = best > closest + LEAVE_LINK_METERS ? OFF_ROUTE_COUNT : 0;
+            state.toRoad = (float) best;
+        } else {
+            offRoute = best > OFF_ROUTE_METERS ? offRoute + 1 : 0;
+        }
         index = bestSegment;
         {
             // The point on the line and the heading of its segment, which the arrow and the camera follow.
@@ -86,8 +112,28 @@ final class RouteNavigator {
         state.progress = total > 0 ? Math.min(1, travelled / total) : 1;
         state.remainingSeconds = total > 0 ? route.seconds * state.remainingMeters / total : 0;
         final double[] end = points.get(points.size() - 1);
-        state.arrived = MapEngine.distance(latitude, longitude, end[0], end[1]) < ARRIVED_METERS
+        final boolean roadDone = MapEngine.distance(latitude, longitude, end[0], end[1]) < ARRIVED_METERS
                 || state.remainingMeters < ARRIVED_METERS;
+        if (endLink > 0) {
+            // The destination is off the road: the road's end is not there yet, the destination itself is.
+            final MapEngine.Place destination = route.destination;
+            final float toDestination = (float) MapEngine.distance(latitude, longitude, destination.latitude, destination.longitude);
+            state.arrived = toDestination < ARRIVED_METERS;
+            if (roadDone) {
+                state.toDestination = toDestination;
+                state.remainingMeters = toDestination;
+                state.remainingSeconds = toDestination / LINK_METERS_PER_SECOND;
+                offRoute = 0;
+            }
+        } else {
+            state.arrived = roadDone;
+        }
+        // The straight links count in what is left, at their slow pace.
+        if (state.toDestination == 0) {
+            final float links = state.toRoad + endLink;
+            state.remainingMeters += links;
+            state.remainingSeconds += links / LINK_METERS_PER_SECOND;
+        }
         // The road the driver is on: the last road starting at or before the matched point, its name and limit.
         for (int r = route.roadStarts.length - 1; r >= 0; r--) {
             if (route.roadStarts[r] <= bestSegment) {
