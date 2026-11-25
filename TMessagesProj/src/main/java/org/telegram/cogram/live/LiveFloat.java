@@ -31,6 +31,8 @@ final class LiveFloat implements FloatingWindow.Listener, NotificationCenter.Not
             @Override
             protected void onWindowVisibilityChanged(int visibility) {
                 super.onWindowVisibilityChanged(visibility);
+                // The window goes after its player is taken back to its screen, which must not be paused then.
+                if (player.getParent() != this) return;
                 if (visibility == VISIBLE) {
                     LiveTvActivity.resumePlayer(player);
                 } else {

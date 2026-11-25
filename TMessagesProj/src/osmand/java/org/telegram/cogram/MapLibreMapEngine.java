@@ -903,10 +903,19 @@ final class MapLibreMapEngine implements MapEngine {
     private static final String ROUTE_LABELS = "phogram-route-labels";
     private static final String ALTERNATIVE_LABELS = "phogram-route-alternatives-labels";
 
-    /** A route's line with its color, its place in the list and its time, which the labels on the map show. */
-    private static Feature lineOf(Route route) {
+    /**
+     * A route's line with its color, its place in the list and its time, which the labels on the map show. The route
+     * being driven starts at the driver.
+     */
+    private Feature lineOf(Route route) {
         final List<Point> points = new ArrayList<>(route.points.size());
-        for (double[] point : route.points) {
+        int from = 0;
+        if (navigator != null && aheadOf == navigator && navigator.route == route) {
+            from = Math.min(aheadSegment + 1, route.points.size() - 1);
+            points.add(Point.fromLngLat(aheadStart[1], aheadStart[0]));
+        }
+        for (int i = from; i < route.points.size(); i++) {
+            final double[] point = route.points.get(i);
             points.add(Point.fromLngLat(point[1], point[0]));
         }
         final Feature feature = Feature.fromGeometry(LineString.fromLngLats(points));
@@ -937,9 +946,7 @@ final class MapLibreMapEngine implements MapEngine {
         GeoJsonSource alternativeSource = style.getSourceAs(ALTERNATIVE_SOURCE);
         if (source == null || alternativeSource == null) {
             alternativeSource = new GeoJsonSource(ALTERNATIVE_SOURCE, alternativeLines);
-            // Line metrics let the line be painted along its length, which hides the part already driven.
-            source = new GeoJsonSource(ROUTE_SOURCE, chosenLines,
-                    new org.maplibre.android.style.sources.GeoJsonOptions().withLineMetrics(true));
+            source = new GeoJsonSource(ROUTE_SOURCE, chosenLines);
             style.addSource(alternativeSource);
             style.addSource(source);
             final Expression color = Expression.get("color");
@@ -1496,7 +1503,32 @@ final class MapLibreMapEngine implements MapEngine {
     @SuppressWarnings("MissingPermission")
     private void followDriver(LocationComponent location) {
         map.moveCamera(CameraUpdateFactory.paddingTo(0, driverTopPadding(), 0, 0));
-        location.setCameraMode(CameraMode.TRACKING_GPS, CAMERA_MS, NAVIGATION_ZOOM, null, NAVIGATION_TILT, null);
+        location.setCameraMode(CameraMode.TRACKING_GPS, CAMERA_MS, shownZoom, null, NAVIGATION_TILT, null);
+    }
+
+    /** The driving zoom shown, and the speed it follows, smoothed so the GPS's jitter does not move it. */
+    private double shownZoom = NAVIGATION_ZOOM;
+    private float smoothSpeed = -1;
+    private static final long ZOOM_MS = 1500;
+    /** Closer to the next turn than this, the map is zoomed in on it. */
+    private static final float TURN_NEAR_METERS = 250;
+
+    /**
+     * As in Waze, the faster the car the farther the map sees: close in town, wide on the highway, and close again
+     * as a turn comes near. Only a change worth seeing moves it, in one slow glide.
+     */
+    private void followZoom(NavigationState state) {
+        if (map == null || freeCamera || !map.getLocationComponent().isLocationComponentActivated()) return;
+        final LocationComponent location = map.getLocationComponent();
+        if (location.getCameraMode() != CameraMode.TRACKING_GPS) return;
+        smoothSpeed = smoothSpeed < 0 ? state.speed : smoothSpeed + 0.3f * (state.speed - smoothSpeed);
+        // 17.3 up to 30 km/h, 15.5 from 100 km/h, in a line between.
+        final float t = Math.max(0, Math.min(1, (smoothSpeed - 30) / 70));
+        double zoom = 17.3 - 1.8 * t;
+        if (state.next != null && state.toNext < TURN_NEAR_METERS) zoom = Math.max(zoom, 17);
+        if (Math.abs(zoom - shownZoom) < 0.25) return;
+        shownZoom = zoom;
+        location.zoomWhileTracking(zoom, ZOOM_MS);
     }
 
     private double driverTopPadding() {
@@ -1596,6 +1628,8 @@ final class MapLibreMapEngine implements MapEngine {
         stopNavigation();
         previewTurn++;
         freeCamera = false;
+        shownZoom = NAVIGATION_ZOOM;
+        smoothSpeed = -1;
         navigator = new RouteNavigator(route);
         navigationListener = listener;
         shownRoutes.clear();
@@ -1633,39 +1667,21 @@ final class MapLibreMapEngine implements MapEngine {
         }
     }
 
-    /** How far behind the arrow the driven part fades out, so the line does not end in a hard cut. */
-    private static final float DRIVEN_FADE_METERS = 25;
+    /** The navigator the way ahead was last cut for, and where: the segment the driver is on and the point on it. */
+    private RouteNavigator aheadOf;
+    private int aheadSegment;
+    private double[] aheadStart;
 
     /**
-     * While driving, the part of the route already driven disappears and only the way ahead stays, as in Waze: the
-     * route's line is painted along its length (line-gradient), clear up to the driver and in the route's color after,
-     * with a short fade at the arrow. Only the cut moves on each position; the line itself is not redrawn. A null route
-     * shows the whole line again.
+     * While driving, only the way ahead is drawn, as in Waze: the line starts at the driver's point on the route. (A
+     * gradient along the line cut it in steps of 1/256 of the route, some 200 m on a long trip.)
      */
-    private void showDriven(Route route, float progress) {
-        if (style == null) return;
-        final org.maplibre.android.style.layers.Layer line = style.getLayer(ROUTE_LINE);
-        final org.maplibre.android.style.layers.Layer casing = style.getLayer(ROUTE_CASING);
-        if (line == null || casing == null) return;
-        if (route == null || progress <= 0) {
-            line.setProperties(PropertyFactory.lineGradient((Expression) null));
-            casing.setProperties(PropertyFactory.lineGradient((Expression) null));
-            return;
-        }
-        final float total = route.along.length > 0 ? route.along[route.along.length - 1] : 0;
-        final float fade = total > 0 ? Math.min(0.2f, DRIVEN_FADE_METERS / total) : 0.01f;
-        final float cut = Math.min(Math.max(progress, 0.0001f), 1 - fade - 0.0001f);
-        line.setProperties(PropertyFactory.lineGradient(driven(cut, fade, MapKinds.routeColor(route.index))));
-        casing.setProperties(PropertyFactory.lineGradient(driven(cut, fade, 0xFFFFFFFF)));
-    }
-
-    private static Expression driven(float cut, float fade, int color) {
-        final int clear = color & 0x00FFFFFF;
-        return Expression.interpolate(Expression.linear(), Expression.lineProgress(),
-                Expression.stop(0, Expression.color(clear)),
-                Expression.stop(cut, Expression.color(clear)),
-                Expression.stop(cut + fade, Expression.color(color)),
-                Expression.stop(1, Expression.color(color)));
+    private void showAhead(RouteNavigator current, NavigationState state) {
+        aheadOf = current;
+        aheadSegment = current.pointIndex();
+        aheadStart = new double[] { state.onRouteLatitude, state.onRouteLongitude };
+        final GeoJsonSource source = style == null ? null : style.getSourceAs(ROUTE_SOURCE);
+        if (source != null) source.setGeoJson(FeatureCollection.fromFeatures(new Feature[] { lineOf(current.route) }));
     }
 
     private void onNavigationPosition(Location location) {
@@ -1674,7 +1690,8 @@ final class MapLibreMapEngine implements MapEngine {
         final NavigationState state = current.update(location.getLatitude(), location.getLongitude());
         state.speed = location.hasSpeed() ? location.getSpeed() * 3.6f : 0;
         showDriver(location, state);
-        showDriven(current.route, state.progress);
+        showAhead(current, state);
+        followZoom(state);
         // A stop reached leaves the route's stops, so a new route after a wrong turn does not go back to it.
         if (state.passedStop != null) {
             current.route.stops.remove(state.passedStop);
@@ -1768,7 +1785,8 @@ final class MapLibreMapEngine implements MapEngine {
         navigator = null;
         navigationListener = null;
         rerouting = false;
-        showDriven(null, 0);
+        aheadOf = null;
+        drawRoute();
         drawRoadMarks();
         if (map != null && map.getLocationComponent().isLocationComponentActivated()) {
             final LocationComponent location = map.getLocationComponent();
