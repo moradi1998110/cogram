@@ -1320,6 +1320,12 @@ final class MapsRouteUi {
             bannerDistance.clear();
             bannerStreet.setText(getString(R.string.PhogramNavRerouting));
             bannerThen.setVisibility(View.GONE);
+        } else if (state.toRoad > 0 || state.toDestination > 0) {
+            // Off the road, as in Google and Waze: the dotted link on the map, and how far along it.
+            bannerTurn.setTurn(MapEngine.Maneuver.STRAIGHT, 0);
+            bannerDistance.set(MapsFormat.distanceParts(state.toRoad > 0 ? state.toRoad : state.toDestination), true);
+            bannerStreet.setText(getString(state.toRoad > 0 ? R.string.PhogramNavToRoad : R.string.PhogramNavToDestination));
+            bannerThen.setVisibility(View.GONE);
         } else if (state.next != null) {
             bannerTurn.setTurn(state.next);
             bannerDistance.set(MapsFormat.distanceParts(state.toNext), true);

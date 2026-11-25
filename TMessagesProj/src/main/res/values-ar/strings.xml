@@ -1459,6 +1459,8 @@
     <string name="PhogramNavSlower">أبطأ بـ %1$s</string>
     <string name="PhogramNavStarting">جارٍ البدء…</string>
     <string name="PhogramNavRerouting">جارٍ إيجاد مسار جديد…</string>
+    <string name="PhogramNavToRoad">اتجه إلى الطريق</string>
+    <string name="PhogramNavToDestination">اترك الطريق متجهاً إلى الوجهة</string>
     <string name="PhogramNavArrived">وصلت إلى %1$s.</string>
     <string name="PhogramNavThen">ثم</string>
     <string name="PhogramNavArrival">الوصول</string>

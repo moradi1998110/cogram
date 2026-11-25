@@ -979,6 +979,7 @@ final class MapLibreMapEngine implements MapEngine {
             source.setGeoJson(chosenLines);
             alternativeSource.setGeoJson(alternativeLines);
         }
+        drawLinks();
         final boolean navigating = navigator != null;
         final org.maplibre.android.style.layers.Layer chosenLabels = style.getLayer(ROUTE_LABELS);
         final org.maplibre.android.style.layers.Layer otherLabels = style.getLayer(ALTERNATIVE_LABELS);
@@ -1676,12 +1677,62 @@ final class MapLibreMapEngine implements MapEngine {
      * While driving, only the way ahead is drawn, as in Waze: the line starts at the driver's point on the route. (A
      * gradient along the line cut it in steps of 1/256 of the route, some 200 m on a long trip.)
      */
-    private void showAhead(RouteNavigator current, NavigationState state) {
+    private void showAhead(RouteNavigator current, NavigationState state, Location real) {
         aheadOf = current;
         aheadSegment = current.pointIndex();
         aheadStart = new double[] { state.onRouteLatitude, state.onRouteLongitude };
+        joinFrom = state.toRoad > 0 ? new double[] { real.getLatitude(), real.getLongitude() } : null;
         final GeoJsonSource source = style == null ? null : style.getSourceAs(ROUTE_SOURCE);
         if (source != null) source.setGeoJson(FeatureCollection.fromFeatures(new Feature[] { lineOf(current.route) }));
+        drawLinks();
+    }
+
+    private static final String LINKS_SOURCE = "phogram-route-links";
+    private static final String LINKS_LINE = "phogram-route-links-line";
+    /** Shorter than this, a link is not drawn: it is within the GPS's own error. */
+    private static final double LINK_MIN_METERS = 30;
+    /** Where the driver is while still off the road on the way to the route, else null. */
+    private double[] joinFrom;
+
+    /**
+     * The straight ways off the road, dotted as in Google and Waze: from the driver to the route while they are not on
+     * it yet, and from the route's end to a destination that is not on a road.
+     */
+    private void drawLinks() {
+        if (style == null || style.getLayer(ROUTE_CASING) == null) return;
+        final List<Feature> links = new ArrayList<>();
+        final Route route = chosenRoute < shownRoutes.size() ? shownRoutes.get(chosenRoute) : null;
+        if (route != null && !route.points.isEmpty()) {
+            if (joinFrom != null && navigator != null && aheadOf == navigator && navigator.route == route) {
+                links.add(link(joinFrom, aheadStart));
+            }
+            final double[] end = route.points.get(route.points.size() - 1);
+            final Place destination = route.destination;
+            if (destination != null && MapEngine.distance(end[0], end[1], destination.latitude, destination.longitude) > LINK_MIN_METERS) {
+                links.add(link(end, new double[] { destination.latitude, destination.longitude }));
+            }
+        }
+        final FeatureCollection collection = FeatureCollection.fromFeatures(links);
+        final GeoJsonSource source = style.getSourceAs(LINKS_SOURCE);
+        if (source != null) {
+            source.setGeoJson(collection);
+        } else {
+            style.addSource(new GeoJsonSource(LINKS_SOURCE, collection));
+            // Round dots: dashes of no length with round caps, two line widths apart.
+            style.addLayerBelow(new LineLayer(LINKS_LINE, LINKS_SOURCE).withProperties(PropertyFactory.lineWidth(5f),
+                    PropertyFactory.lineCap(Property.LINE_CAP_ROUND), PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
+                    PropertyFactory.lineDasharray(new Float[] { 0f, 2f })), ROUTE_CASING);
+        }
+        if (route != null) {
+            style.getLayer(LINKS_LINE).setProperties(PropertyFactory.lineColor(MapKinds.routeColor(route.index)));
+        }
+    }
+
+    private static Feature link(double[] from, double[] to) {
+        final List<Point> points = new ArrayList<>(2);
+        points.add(Point.fromLngLat(from[1], from[0]));
+        points.add(Point.fromLngLat(to[1], to[0]));
+        return Feature.fromGeometry(LineString.fromLngLats(points));
     }
 
     private void onNavigationPosition(Location location) {
@@ -1690,7 +1741,7 @@ final class MapLibreMapEngine implements MapEngine {
         final NavigationState state = current.update(location.getLatitude(), location.getLongitude());
         state.speed = location.hasSpeed() ? location.getSpeed() * 3.6f : 0;
         showDriver(location, state);
-        showAhead(current, state);
+        showAhead(current, state, location);
         followZoom(state);
         // A stop reached leaves the route's stops, so a new route after a wrong turn does not go back to it.
         if (state.passedStop != null) {
@@ -1786,6 +1837,7 @@ final class MapLibreMapEngine implements MapEngine {
         navigationListener = null;
         rerouting = false;
         aheadOf = null;
+        joinFrom = null;
         drawRoute();
         drawRoadMarks();
         if (map != null && map.getLocationComponent().isLocationComponentActivated()) {
