@@ -113,6 +113,7 @@ public class LiveTvActivity extends BaseFragment {
         webView.setWebChromeClient(new FullscreenClient());
         webView.setWebViewClient(new PlayerClient(this::onPlayerGone));
         player.addView(webView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
+        if (floated) resumePlayer(webView);
         mini = new LiveMini(getParentActivity(), player, webView);
 
         errorView = new TextView(context);
@@ -208,6 +209,21 @@ public class LiveTvActivity extends BaseFragment {
             destroyPlayer(webView);
         }
         webView = null;
+    }
+
+    /**
+     * The player is in sight again in another window. Moving it paused its video, which onResume alone does not
+     * start again, so YouTube's player is told to play once it is shown.
+     */
+    static void resumePlayer(WebView player) {
+        player.onResume();
+        player.postDelayed(() -> {
+            try {
+                player.evaluateJavascript("cmd('playVideo')", null);
+            } catch (Exception e) {
+                FileLog.e(e);
+            }
+        }, 300);
     }
 
     static void destroyPlayer(WebView player) {

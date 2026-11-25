@@ -32,7 +32,7 @@ final class LiveFloat implements FloatingWindow.Listener, NotificationCenter.Not
             protected void onWindowVisibilityChanged(int visibility) {
                 super.onWindowVisibilityChanged(visibility);
                 if (visibility == VISIBLE) {
-                    player.onResume();
+                    LiveTvActivity.resumePlayer(player);
                 } else {
                     player.onPause();
                 }
