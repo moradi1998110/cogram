@@ -1681,7 +1681,9 @@ final class MapLibreMapEngine implements MapEngine {
         aheadOf = current;
         aheadSegment = current.pointIndex();
         aheadStart = new double[] { state.onRouteLatitude, state.onRouteLongitude };
-        joinFrom = state.toRoad > 0 ? new double[] { real.getLatitude(), real.getLongitude() } : null;
+        final double[] here = new double[] { real.getLatitude(), real.getLongitude() };
+        joinFrom = state.toRoad > 0 ? here : null;
+        finishFrom = state.toDestination > 0 ? here : null;
         final GeoJsonSource source = style == null ? null : style.getSourceAs(ROUTE_SOURCE);
         if (source != null) source.setGeoJson(FeatureCollection.fromFeatures(new Feature[] { lineOf(current.route) }));
         drawLinks();
@@ -1691,25 +1693,32 @@ final class MapLibreMapEngine implements MapEngine {
     private static final String LINKS_LINE = "phogram-route-links-line";
     /** Shorter than this, a link is not drawn: it is within the GPS's own error. */
     private static final double LINK_MIN_METERS = 30;
-    /** Where the driver is while still off the road on the way to the route, else null. */
+    /**
+     * Where the driver is (the arrow) while still off the road on the way to the route, and once the road is left at
+     * its end for a destination off it; else null.
+     */
     private double[] joinFrom;
+    private double[] finishFrom;
 
     /**
-     * The straight ways off the road, dotted as in Google and Waze: from the driver to the route while they are not on
-     * it yet, and from the route's end to a destination that is not on a road.
+     * The straight ways off the road, dotted as in Google and Waze, each starting at the arrow when the driver is on
+     * it: from the driver to the route while they are not on it yet, and to a destination that is not on a road from
+     * the route's end, or from the driver once they have left the road for it.
      */
     private void drawLinks() {
         if (style == null || style.getLayer(ROUTE_CASING) == null) return;
         final List<Feature> links = new ArrayList<>();
         final Route route = chosenRoute < shownRoutes.size() ? shownRoutes.get(chosenRoute) : null;
         if (route != null && !route.points.isEmpty()) {
-            if (joinFrom != null && navigator != null && aheadOf == navigator && navigator.route == route) {
+            final boolean driving = navigator != null && aheadOf == navigator && navigator.route == route;
+            if (driving && joinFrom != null) {
                 links.add(link(joinFrom, aheadStart));
             }
             final double[] end = route.points.get(route.points.size() - 1);
             final Place destination = route.destination;
             if (destination != null && MapEngine.distance(end[0], end[1], destination.latitude, destination.longitude) > LINK_MIN_METERS) {
-                links.add(link(end, new double[] { destination.latitude, destination.longitude }));
+                final double[] to = new double[] { destination.latitude, destination.longitude };
+                links.add(link(driving && finishFrom != null ? finishFrom : end, to));
             }
         }
         final FeatureCollection collection = FeatureCollection.fromFeatures(links);
@@ -1795,7 +1804,8 @@ final class MapLibreMapEngine implements MapEngine {
      */
     private void showDriver(Location real, NavigationState state) {
         if (map == null || !map.getLocationComponent().isLocationComponentActivated()) return;
-        final boolean onRoute = state.route != null && state.fromRoute <= 45;
+        // Off the road at the start or the end, the arrow is where the driver is, at the dotted line's start.
+        final boolean onRoute = state.route != null && state.fromRoute <= 45 && state.toRoad == 0 && state.toDestination == 0;
         final Location shown = new Location(real);
         if (onRoute) {
             shown.setLatitude(state.onRouteLatitude);
@@ -1838,6 +1848,7 @@ final class MapLibreMapEngine implements MapEngine {
         rerouting = false;
         aheadOf = null;
         joinFrom = null;
+        finishFrom = null;
         drawRoute();
         drawRoadMarks();
         if (map != null && map.getLocationComponent().isLocationComponentActivated()) {
