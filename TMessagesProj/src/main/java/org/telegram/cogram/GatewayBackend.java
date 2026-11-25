@@ -37,6 +37,10 @@ public interface GatewayBackend {
 
     TLRPC.TL_messages_affectedMessages markRead(long userId, int maxId);
 
+    /** What the user is doing in a private chat (typing, recording, sending a file), for the other side to see. */
+    default void setTyping(long userId, TLRPC.SendMessageAction action) {
+    }
+
     int pts();
 
     /**
