@@ -164,6 +164,35 @@ public interface GatewayBackend {
         return null;
     }
 
+    /** Sends a photo or video to be seen once ({@code seconds} is Telegram's view-once value) or for some seconds. */
+    default TLObject sendTimedFile(long userId, java.io.File file, String mime, List<TLRPC.DocumentAttribute> attributes,
+                                   boolean photo, long randomId, String caption, int seconds) {
+        file.delete();
+        return null;
+    }
+
+    /** Telegram opened these messages' content: a voice message played, a timed file seen. */
+    default TLObject readContents(List<Integer> messageIds) {
+        return null;
+    }
+
+    default TLObject sendTodo(long userId, TLRPC.TodoList todo, long randomId) {
+        return null;
+    }
+
+    /** Marks tasks of a checklist done or undone. */
+    default TLObject toggleTodo(int listId, List<Integer> done, List<Integer> undone) {
+        return null;
+    }
+
+    default TLObject appendTodo(int listId, List<TLRPC.TodoItem> added) {
+        return null;
+    }
+
+    /** Lets messages to this contact go unencrypted for as long as they publish no encryption keys. */
+    default void allowUnencrypted(long userId) {
+    }
+
     /** Whether a room keeps its members' addresses hidden, so its readers cannot be known. */
     default boolean roomReadersUnknown(long channelId) {
         return false;

@@ -4614,7 +4614,7 @@ public class ChatAttachAlert extends BottomSheet implements NotificationCenter.N
             currentAttachLayout.scrollToTop();
             return;
         }
-        if (layout == todoLayout && !UserConfig.getInstance(currentAccount).isPremium()) {
+        if (layout == todoLayout && !UserConfig.getInstance(currentAccount).isPremium() && !org.telegram.cogram.CogramGateway.ENABLED) {
             new PremiumFeatureBottomSheet(baseFragment, PremiumPreviewFragment.PREMIUM_FEATURE_TODO, false).show();
             return;
         }

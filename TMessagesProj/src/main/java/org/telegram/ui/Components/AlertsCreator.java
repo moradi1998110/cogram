@@ -289,6 +289,9 @@ public class AlertsCreator {
         if (error == null || error.code == 406 || error.text == null) {
             return null;
         }
+        if (org.telegram.cogram.CogramGateway.handlesSendError(currentAccount, error, request)) {
+            return null;
+        }
         if ("BALANCE_TOO_LOW".equalsIgnoreCase(error.text)) {
             final long price = StarsController.getAllowedPaidStars(request);
             final long dialogId = StarsController.getPeer(request);

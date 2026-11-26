@@ -64,6 +64,7 @@ import eu.siacs.conversations.ui.interfaces.OnAvatarPublication;
 import eu.siacs.conversations.xmpp.Jid;
 import im.conversations.android.xmpp.model.muc.Affiliation;
 import eu.siacs.conversations.xmpp.jingle.RtpCapability;
+import eu.siacs.conversations.xmpp.manager.DiscoManager;
 import eu.siacs.conversations.xmpp.manager.DisplayedManager;
 import eu.siacs.conversations.xmpp.manager.MessageArchiveManager;
 import eu.siacs.conversations.xmpp.manager.ModerationManager;
@@ -105,6 +106,11 @@ final class XmppBackend implements GatewayBackend {
     private static final long DOWNLOAD_POLL_MS = 250;
     private static final long SESSION_TIMEOUT_MS = 20000;
     private static final String ERROR_SEND_FAILED = "COGRAM_SEND_FAILED";
+    private static final String PREFERENCE_UNENCRYPTED = "unencrypted_";
+    // Timed files: their marker by sender and file id, when each opened one is to go, and who takes them.
+    private static final String PREFERENCE_TIMED = "timed_";
+    private static final String PREFERENCE_TIMED_OPENED = "timed_opened_";
+    private static final String PREFERENCE_TIMED_PEER = "timed_peer_";
 
     private final Context context = ApplicationLoader.applicationContext;
     private final SharedPreferences preferences = context.getSharedPreferences("cogram_xmpp", Activity.MODE_PRIVATE);
@@ -258,6 +264,8 @@ final class XmppBackend implements GatewayBackend {
         Jid address = firstAccountAddress(context);
         selfId = ids.peerId(address.asBareJid().toString());
         self = createUser(selfId, address.getLocal(), address.getLocal(), null, onlineStatus(), true);
+        // Announced from the first presence on, so contacts know they may send files seen once.
+        DiscoManager.APP_FEATURES.add(TimedMedia.FEATURE);
         Intent intent = new Intent(context, XmppConnectionService.class);
         try {
             context.startService(intent);
@@ -347,6 +355,9 @@ final class XmppBackend implements GatewayBackend {
 
     /** Passes on what the engine has that Telegram has not seen. */
     private void sync() {
+        if (System.currentTimeMillis() >= nextTimedDeletion) {
+            deleteSeenTimedMedia();
+        }
         ArrayList<TLRPC.Updates> updates = new ArrayList<>();
         ArrayList<Runnable> finishedSends = new ArrayList<>();
         UpdatesListener target;
@@ -399,6 +410,7 @@ final class XmppBackend implements GatewayBackend {
         final Supplier<TLObject> response;
         final DeferredReply reply = new DeferredReply();
         volatile boolean failed;
+        volatile String error = ERROR_SEND_FAILED;
 
         PendingSend(Message message, long randomId, Supplier<TLObject> response) {
             this.message = message;
@@ -418,6 +430,11 @@ final class XmppBackend implements GatewayBackend {
     }
 
     private void failSend(PendingSend send) {
+        failSend(send, ERROR_SEND_FAILED);
+    }
+
+    private void failSend(PendingSend send, String error) {
+        send.error = error;
         send.failed = true;
         scheduleSync();
     }
@@ -460,7 +477,7 @@ final class XmppBackend implements GatewayBackend {
             }
             TLRPC.TL_error error = new TLRPC.TL_error();
             error.code = 400;
-            error.text = ERROR_SEND_FAILED;
+            error.text = rejected ? ERROR_SEND_FAILED : send.error;
             finished.add(() -> send.reply.complete(null, error));
         }
     }
@@ -470,7 +487,7 @@ final class XmppBackend implements GatewayBackend {
      * Telegram shows it as a failed text the user can send again, instead of losing it without a sign.
      */
     private void sendCaption(Conversation conversation, Message caption) {
-        whenEncryptionDecided(conversation, caption, () -> {
+        whenEncryptionDecided(conversation, caption, reason -> {
             // Never sent bare: it is kept as a failed message of its own, which the sync shows as a text.
             FileLog.e("cogram: caption " + caption.getUuid() + " not sent: no OMEMO session");
             forgetCaption(caption);
@@ -525,27 +542,356 @@ final class XmppBackend implements GatewayBackend {
     }
 
     /**
-     * Encrypts as Conversations does, with OMEMO unless the contact publishes none. Conversations
-     * first builds the sessions from its chat screen, so the first message needs that done here,
-     * and the wait is off the gateway's threads. A message is never sent bare because keys failed.
+     * Encrypts with OMEMO. Conversations first builds the sessions from its chat screen, so the first
+     * message needs that done here, and the wait is off the gateway's threads. A message is never sent
+     * bare because keys failed, nor just because the contact publishes none, since the server that
+     * answers for their keys could hide them: plain text goes only to a contact the user agreed to write
+     * to unencrypted, and that agreement ends once the contact's keys are seen again.
      */
-    private void whenEncryptionDecided(Conversation conversation, Message message, Runnable failed, Runnable send) {
+    private void whenEncryptionDecided(Conversation conversation, Message message,
+                                       java.util.function.Consumer<String> failed, Runnable send) {
         outbox.execute(() -> {
             int encryption = conversation.getNextEncryption();
             if (encryption == Message.ENCRYPTION_AXOLOTL) {
-                AxolotlService.SessionReadiness readiness = conversation.getAccount().getAxolotlService()
-                        .prepareSessions(conversation, SESSION_TIMEOUT_MS);
+                AxolotlService axolotl = conversation.getAccount().getAxolotlService();
+                AxolotlService.SessionReadiness readiness = axolotl.prepareSessions(conversation, SESSION_TIMEOUT_MS);
+                String consent = unencryptedKey(conversation.getAccount(), conversation.getAddress());
                 if (readiness == AxolotlService.SessionReadiness.FAILED) {
-                    failed.run();
+                    failed.accept(ERROR_SEND_FAILED);
                     return;
                 }
                 if (readiness == AxolotlService.SessionReadiness.NO_OMEMO) {
+                    if (!preferences.getBoolean(consent, false)) {
+                        boolean hadKeys = axolotl.getNumTrustedKeys(conversation.getAddress()) > 0;
+                        failed.accept(hadKeys ? CogramGateway.ERROR_ENCRYPTION_GONE : CogramGateway.ERROR_NO_ENCRYPTION);
+                        return;
+                    }
                     encryption = Message.ENCRYPTION_NONE;
+                } else if (preferences.contains(consent)) {
+                    preferences.edit().remove(consent).apply();
                 }
             }
             message.setEncryption(encryption);
             send.run();
         });
+    }
+
+    private static String unencryptedKey(Account account, Jid contact) {
+        return PREFERENCE_UNENCRYPTED + account.getJid().asBareJid() + "/" + contact.asBareJid();
+    }
+
+    @Override
+    public void allowUnencrypted(long userId) {
+        Account account;
+        synchronized (this) {
+            account = account();
+        }
+        Jid contact = addressOf(userId);
+        if (account != null && contact != null) {
+            preferences.edit().putBoolean(unencryptedKey(account, contact), true).apply();
+        }
+    }
+
+    // Timed files, seen once or for some seconds; see TimedMedia.
+
+    @Override
+    public synchronized TLObject sendTimedFile(long userId, File file, String mime, List<TLRPC.DocumentAttribute> attributes,
+                                               boolean photo, long randomId, String caption, int seconds) {
+        PendingSend resumed = resumeSend(userId, randomId);
+        if (resumed != null) {
+            file.delete();
+            return resumed.reply;
+        }
+        Conversation conversation = conversation(userId);
+        if (conversation == null || isRoom(conversation) || !TimedMedia.isValid(seconds) || !takesTimedMedia(conversation.getContact())) {
+            file.delete();
+            DeferredReply refused = new DeferredReply();
+            refused.complete(null, roomError(CogramGateway.ERROR_TIMED_MEDIA_UNAVAILABLE));
+            return refused;
+        }
+        Message message = new Message(conversation, "", Message.ENCRYPTION_NONE);
+        message.setCounterpart(conversation.getNextCounterpart());
+        message.setType(photo ? Message.TYPE_IMAGE : Message.TYPE_FILE);
+        String text = caption == null ? "" : caption.trim();
+        Message marker = new Message(conversation, TimedMedia.markerBody(message.getUuid(), seconds, text), Message.ENCRYPTION_NONE);
+        int id = ids.messageId(message.getUuid(), message.getTimeSent());
+        int date = (int) (message.getTimeSent() / 1000);
+        // Read before the engine takes the file, since it deletes the upload once copied.
+        TLRPC.MessageMedia media = sentMedia(id, date, file, mime, attributes, photo);
+        TimedMedia.apply(media, seconds);
+        storeSentMedia(id, media);
+        snapshots.put(id, snapshot(message));
+        PendingSend send = track(message, randomId, () -> mediaSent(userId, id, date, media, randomId, text, 0));
+        whenEncryptionDecided(conversation, marker, reason -> {
+            file.delete();
+            failSend(send, reason);
+        }, () -> {
+            if (marker.getEncryption() != Message.ENCRYPTION_AXOLOTL) {
+                // Never without OMEMO, even where the user agreed to write unencrypted.
+                file.delete();
+                failSend(send, CogramGateway.ERROR_TIMED_MEDIA_UNAVAILABLE);
+                return;
+            }
+            // The marker goes first, so the file is never shown as an ordinary one.
+            service.sendMessage(marker);
+            message.setEncryption(Message.ENCRYPTION_AXOLOTL);
+            service.attachFile(message, Uri.fromFile(file), mime, file::delete, () -> failSend(send));
+        });
+        return send.reply;
+    }
+
+    /**
+     * Whether every device of the contact that is online announces timed files, or, with none
+     * online, whether all of them did when last seen. A device of another app would keep the file.
+     */
+    private boolean takesTimedMedia(Contact contact) {
+        String key = PREFERENCE_TIMED_PEER + contact.getAddress().asBareJid();
+        DiscoManager disco = contact.getAccount().getXmppConnection().getManager(DiscoManager.class);
+        boolean online = false;
+        for (im.conversations.android.xmpp.model.stanza.Presence presence : contact.getPresences()) {
+            im.conversations.android.xmpp.model.disco.info.InfoQuery info = disco.get(presence.getFrom());
+            if (info == null || !info.getFeatureStrings().contains(TimedMedia.FEATURE)) {
+                preferences.edit().remove(key).apply();
+                return false;
+            }
+            online = true;
+        }
+        if (online) {
+            preferences.edit().putBoolean(key, true).apply();
+        }
+        return preferences.getBoolean(key, false);
+    }
+
+    /** Who sent a file and the id they gave it, which its marker names too. */
+    private String timedKey(Message message) {
+        return PREFERENCE_TIMED + captionSender(message) + "|" + message.getMessageId();
+    }
+
+    /** Keeps the markers seen, so a file is known as timed whenever it is shown, and after a restart. */
+    private void rememberTimedMarkers(List<Message> messages) {
+        for (Message message : messages) {
+            TimedMedia.Marker marker = message.getType() == Message.TYPE_TEXT ? TimedMedia.parse(message.getBody()) : null;
+            if (marker == null) {
+                continue;
+            }
+            String key = PREFERENCE_TIMED + captionSender(message) + "|" + marker.file;
+            if (!preferences.contains(key)) {
+                try {
+                    org.json.JSONObject json = new org.json.JSONObject();
+                    json.put("seconds", marker.seconds);
+                    json.put("marker", message.getUuid());
+                    json.put("caption", marker.caption);
+                    preferences.edit().putString(key, json.toString()).apply();
+                } catch (org.json.JSONException e) {
+                    FileLog.e(e);
+                }
+            }
+        }
+    }
+
+    /** The marker of a timed file, from its own sender, or null for an ordinary file. */
+    private TimedMedia.Marker timedMarker(Message file) {
+        String stored = file.getMessageId() == null ? null : preferences.getString(timedKey(file), null);
+        if (stored == null) {
+            return null;
+        }
+        try {
+            org.json.JSONObject json = new org.json.JSONObject(stored);
+            return new TimedMedia.Marker(json.getString("marker"), json.getInt("seconds"), json.optString("caption"));
+        } catch (org.json.JSONException e) {
+            FileLog.e(e);
+            return null;
+        }
+    }
+
+    /**
+     * Telegram opened these messages' content. A timed file we received is then deleted with its
+     * marker, and the key in them, once it has been seen, as Telegram removes it from the chat.
+     */
+    @Override
+    public synchronized TLRPC.TL_messages_affectedMessages readContents(List<Integer> messageIds) {
+        for (int id : messageIds) {
+            Message message = engineMessage(id);
+            TimedMedia.Marker timed = message == null || message.getStatus() != Message.STATUS_RECEIVED ? null : timedMarker(message);
+            String key = message == null ? null : PREFERENCE_TIMED_OPENED + message.getUuid();
+            if (timed == null || preferences.contains(key)) {
+                continue;
+            }
+            long delay = TimedMedia.keepAfterOpenedMs(timed.seconds);
+            long deadline = System.currentTimeMillis() + delay;
+            preferences.edit().putLong(key, deadline).apply();
+            nextTimedDeletion = Math.min(nextTimedDeletion, deadline);
+            archiveWaits.schedule(this::scheduleSync, delay, TimeUnit.MILLISECONDS);
+        }
+        pts++;
+        savePts();
+        TLRPC.TL_messages_affectedMessages affected = new TLRPC.TL_messages_affectedMessages();
+        affected.pts = pts;
+        affected.pts_count = 1;
+        return affected;
+    }
+
+    // When the next opened timed file is to go: 0 until the stored ones are read after a start.
+    private volatile long nextTimedDeletion;
+
+    /** Deletes the timed files whose time since they were opened is up, here only: the sender keeps theirs. */
+    private synchronized void deleteSeenTimedMedia() {
+        Account account = service == null ? null : account();
+        if (account == null) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        long next = Long.MAX_VALUE;
+        ModerationManager moderation = account.getXmppConnection().getManager(ModerationManager.class);
+        for (Map.Entry<String, ?> entry : preferences.getAll().entrySet()) {
+            if (!entry.getKey().startsWith(PREFERENCE_TIMED_OPENED) || !(entry.getValue() instanceof Long)) {
+                continue;
+            }
+            if ((Long) entry.getValue() > now) {
+                next = Math.min(next, (Long) entry.getValue());
+                continue;
+            }
+            Message file = messageWithUuid(entry.getKey().substring(PREFERENCE_TIMED_OPENED.length()));
+            if (file != null) {
+                TimedMedia.Marker timed = timedMarker(file);
+                // Read back from storage, a marker's file field holds the marker message's own uuid.
+                Message marker = timed == null ? null : messageWithUuid(timed.file);
+                if (marker != null) {
+                    moderation.deleteLocally(marker);
+                }
+                preferences.edit().remove(timedKey(file)).apply();
+                moderation.deleteLocally(file);
+            }
+            preferences.edit().remove(entry.getKey()).apply();
+        }
+        nextTimedDeletion = next;
+    }
+
+    // Checklists: a list and each change to it are text messages, see TodoLists. A change names its
+    // list by the id the list's sender gave it, which stays the same through edits and on every side.
+
+    @Override
+    public synchronized TLObject sendTodo(long userId, TLRPC.TodoList todo, long randomId) {
+        PendingSend resumed = resumeSend(userId, randomId);
+        if (resumed != null) {
+            return resumed.reply;
+        }
+        Conversation conversation = conversation(userId);
+        if (conversation == null) {
+            return null;
+        }
+        Message message = new Message(conversation, TodoLists.listBody(todo), Message.ENCRYPTION_NONE);
+        int id = ids.messageId(message.getUuid(), message.getTimeSent());
+        int date = (int) (message.getTimeSent() / 1000);
+        boolean room = isRoom(conversation);
+        PendingSend send = track(message, randomId, () -> room ? roomSent(message, userId, randomId)
+                : mediaSent(userId, id, date, todoMedia(message), randomId, "", 0));
+        whenEncryptionDecided(conversation, message, reason -> failSend(send, reason), () -> service.sendMessage(message));
+        return send.reply;
+    }
+
+    @Override
+    public synchronized TLObject toggleTodo(int listId, List<Integer> done, List<Integer> undone) {
+        Message list = engineMessage(listId);
+        TLRPC.TL_messageMediaToDo todo = list == null ? null : todoMedia(list);
+        return todo == null ? null : sendTodoChange(list, TodoLists.doneBody(list.getMessageId(), todo.todo, done, undone));
+    }
+
+    @Override
+    public synchronized TLObject appendTodo(int listId, List<TLRPC.TodoItem> added) {
+        Message list = engineMessage(listId);
+        return list == null || list.getMessageId() == null ? null : sendTodoChange(list, TodoLists.addedBody(list.getMessageId(), added));
+    }
+
+    /** Sends a change to a list, only one its writer may make; Telegram learns of it with the next sync. */
+    private TLObject sendTodoChange(Message list, String body) {
+        TodoLists.Change change = TodoLists.parseChange(body);
+        TLRPC.TodoList todo = TodoLists.parseList(list.getBody());
+        if (change == null || todo == null || !(list.getConversation() instanceof Conversation)
+                || !TodoLists.allows(todo, change, list.getStatus() != Message.STATUS_RECEIVED)) {
+            return null;
+        }
+        Conversation conversation = (Conversation) list.getConversation();
+        Message message = new Message(conversation, body, Message.ENCRYPTION_NONE);
+        DeferredReply reply = new DeferredReply();
+        whenEncryptionDecided(conversation, message, reason -> reply.complete(null, roomError(reason)), () -> {
+            service.sendMessage(message);
+            TLRPC.TL_updates updates = new TLRPC.TL_updates();
+            updates.date = now();
+            reply.complete(updates, null);
+            scheduleSync();
+        });
+        return reply;
+    }
+
+    /** The list a text message is, with the changes made to it so far by those allowed to, or null. */
+    private TLRPC.TL_messageMediaToDo todoMedia(Message list) {
+        TLRPC.TodoList todo = TodoLists.parseList(list.getBody());
+        if (todo == null || list.getMessageId() == null || !(list.getConversation() instanceof Conversation)) {
+            return null;
+        }
+        TodoLists.State state = new TodoLists.State(todo);
+        String author = captionSender(list);
+        for (Message message : allMessages((Conversation) list.getConversation())) {
+            TodoLists.Change change = message.getType() == Message.TYPE_TEXT ? TodoLists.parseChange(message.getBody()) : null;
+            if (change != null && change.list.equals(list.getMessageId())) {
+                state.apply(change, captionSender(message).equals(author), todoPeer(message), (int) (message.getTimeSent() / 1000));
+            }
+        }
+        return state.media();
+    }
+
+    /** A change to a list, as the service message Telegram shows for it, or null when it is not one. */
+    private TLRPC.Message todoChange(Message message, TLRPC.Message shown) {
+        TodoLists.Change change = TodoLists.parseChange(message.getBody());
+        if (change == null || !(message.getConversation() instanceof Conversation)) {
+            return null;
+        }
+        Message list = null;
+        for (Message candidate : allMessages((Conversation) message.getConversation())) {
+            if (change.list.equals(candidate.getMessageId()) && candidate.getType() == Message.TYPE_TEXT) {
+                list = candidate;
+                break;
+            }
+        }
+        TLRPC.TodoList todo = list == null ? null : TodoLists.parseList(list.getBody());
+        if (todo == null || !TodoLists.allows(todo, change, captionSender(message).equals(captionSender(list)))) {
+            // Shown as the text it is, rather than as a change that was not made.
+            return null;
+        }
+        TLRPC.TL_messageService entry = new TLRPC.TL_messageService();
+        entry.id = shown.id;
+        entry.out = shown.out;
+        entry.date = shown.date;
+        entry.peer_id = shown.peer_id;
+        entry.from_id = shown.from_id;
+        entry.dialog_id = shown.dialog_id;
+        if (!change.added.isEmpty()) {
+            TLRPC.TL_messageActionTodoAppendTasks action = new TLRPC.TL_messageActionTodoAppendTasks();
+            action.list.addAll(change.added);
+            entry.action = action;
+        } else {
+            TLRPC.TL_messageActionTodoCompletions action = new TLRPC.TL_messageActionTodoCompletions();
+            action.completed.addAll(change.done);
+            action.incompleted.addAll(change.undone);
+            entry.action = action;
+        }
+        TLRPC.TL_messageReplyHeader header = new TLRPC.TL_messageReplyHeader();
+        header.reply_to_msg_id = ids.messageId(list.getUuid(), list.getTimeSent());
+        header.flags |= TLObject.FLAG_4;
+        entry.reply_to = header;
+        entry.flags = TLObject.FLAG_8 | TLObject.FLAG_3;
+        return entry;
+    }
+
+    private static List<Message> allMessages(Conversation conversation) {
+        ArrayList<Message> messages = new ArrayList<>();
+        conversation.populateWithMessages(messages);
+        return messages;
+    }
+
+    private TLRPC.Peer todoPeer(Message message) {
+        return peerUser(message.getStatus() != Message.STATUS_RECEIVED ? selfId : isRoom(message) ? senderId(message) : peerOf(message));
     }
 
     private TLRPC.TL_updateShortSentMessage textSent(int id, int date, String text) {
@@ -843,6 +1189,14 @@ final class XmppBackend implements GatewayBackend {
             // A caption that comes after its file is an edit of the file's message.
             String caption = captionOf(message);
             if (caption != null) snapshot.append('\u0001').append(caption);
+        }
+        TLRPC.TL_messageMediaToDo todo = message.getType() == Message.TYPE_TEXT ? todoMedia(message) : null;
+        if (todo != null) {
+            // A list changes with the messages that change it, and reaches Telegram as an edit.
+            snapshot.append('\u0002').append(todo.todo.list.size());
+            for (TLRPC.TodoCompletion done : todo.completions) {
+                snapshot.append(',').append(done.id).append(':').append(done.completed_by.user_id).append(':').append(done.date);
+            }
         }
         for (eu.siacs.conversations.entities.Reaction reaction : message.getReactions()) {
             snapshot.append('\u0000').append(reaction.normalizedReaction()).append(reaction.received);
@@ -1569,6 +1923,7 @@ final class XmppBackend implements GatewayBackend {
     private List<Message> loadedMessages(Conversation conversation) {
         ArrayList<Message> loaded = new ArrayList<>();
         conversation.populateWithMessages(loaded);
+        rememberTimedMarkers(loaded);
         Map<String, Message> calls = callEntries(loaded);
         Set<String> captions = attachedCaptions(loaded);
         ArrayList<Message> shown = new ArrayList<>();
@@ -1776,7 +2131,9 @@ final class XmppBackend implements GatewayBackend {
     }
 
     private static boolean isShown(Message message) {
-        return message.getType() != Message.TYPE_STATUS;
+        // A timed file's marker is part of its file, not a message of its own.
+        return message.getType() != Message.TYPE_STATUS
+                && !(message.getType() == Message.TYPE_TEXT && TimedMedia.parse(message.getBody()) != null);
     }
 
     private static String textOf(Message message) {
@@ -1823,6 +2180,15 @@ final class XmppBackend implements GatewayBackend {
                 }
             }
             tl.media = sent != null ? sent : media(message, tl.id, tl.date);
+            TimedMedia.Marker timed = timedMarker(message);
+            if (timed != null) {
+                // Telegram then hides it until tapped, keeps it from being saved or forwarded, and blocks screenshots.
+                TimedMedia.apply(tl.media, timed.seconds);
+                tl.media_unread = !out && !preferences.contains(PREFERENCE_TIMED_OPENED + message.getUuid());
+                if (!timed.caption.isEmpty()) {
+                    tl.message = timed.caption;
+                }
+            }
             long album = albumGroup(message);
             if (album != 0) {
                 tl.grouped_id = album;
@@ -1836,9 +2202,17 @@ final class XmppBackend implements GatewayBackend {
                 tl.media = location;
             }
         } else if (message.getType() == Message.TYPE_TEXT && !TEXT_UNREADABLE.equals(tl.message)) {
-            Quote quote = Quote.of(message.getBody());
+            TLRPC.TL_messageMediaToDo todo = todoMedia(message);
+            TLRPC.Message change = todo == null ? todoChange(message, tl) : null;
+            Quote quote = todo == null && change == null ? Quote.of(message.getBody()) : null;
             int replyTo = quote == null ? 0 : quotedMessageId(message, quote);
-            if (replyTo != 0) {
+            if (todo != null) {
+                tl.message = "";
+                tl.media = todo;
+            } else if (change != null) {
+                snapshots.putIfAbsent(tl.id, snapshot(message));
+                return change;
+            } else if (replyTo != 0) {
                 tl.message = quote.text;
                 TLRPC.TL_messageReplyHeader header = new TLRPC.TL_messageReplyHeader();
                 header.reply_to_msg_id = replyTo;
@@ -2762,9 +3136,9 @@ final class XmppBackend implements GatewayBackend {
         boolean room = isRoom(conversation);
         long group = albumGroup(message);
         PendingSend send = track(message, randomId, () -> room ? roomSent(message, userId, randomId) : mediaSent(userId, id, date, media, randomId, text, group));
-        whenEncryptionDecided(conversation, message, () -> {
+        whenEncryptionDecided(conversation, message, reason -> {
             file.delete();
-            failSend(send);
+            failSend(send, reason);
         }, () -> service.attachFile(message, Uri.fromFile(file), mime, file::delete, () -> failSend(send)));
         return send.reply;
     }
@@ -3122,6 +3496,8 @@ final class XmppBackend implements GatewayBackend {
         ArrayList<TLRPC.Message> newestFirst = ids.inTransaction(() -> {
             ArrayList<TLRPC.Message> converted = new ArrayList<>();
             List<Message> scanned = service.databaseBackend.getMessages(conversation, scan, before);
+            // Newest first, so a file comes before its marker here.
+            rememberTimedMarkers(scanned);
             Map<String, Message> calls = callEntries(scanned);
             for (Message message : scanned) {
                 if (isShown(message) && (!isLoggedCall(message) || isShownCall(message, calls))) {
@@ -3183,16 +3559,17 @@ final class XmppBackend implements GatewayBackend {
         int date = (int) (message.getTimeSent() / 1000);
         boolean room = isRoom(conversation);
         PendingSend send = track(message, randomId, () -> room ? roomSent(message, userId, randomId) : textSent(id, date, text));
-        whenEncryptionDecided(conversation, message, () -> failSend(send), () -> service.sendMessage(message));
+        whenEncryptionDecided(conversation, message, reason -> failSend(send, reason), () -> service.sendMessage(message));
         return send.reply;
     }
 
     /** The engine's message behind a Telegram id, from memory or else the engine's database. */
     private Message engineMessage(int id) {
         String uuid = ids.messageUuid(id);
-        if (uuid == null) {
-            return null;
-        }
+        return uuid == null ? null : messageWithUuid(uuid);
+    }
+
+    private Message messageWithUuid(String uuid) {
         Message message = findMessage(uuid);
         if (message != null) {
             return message;
@@ -3810,7 +4187,7 @@ final class XmppBackend implements GatewayBackend {
                 file.setType(original.getType() == Message.TYPE_IMAGE ? Message.TYPE_IMAGE : Message.TYPE_FILE);
                 ids.messageId(file.getUuid(), file.getTimeSent());
                 String mime = original.getMimeType();
-                whenEncryptionDecided(conversation, file, upload::delete,
+                whenEncryptionDecided(conversation, file, reason -> upload.delete(),
                         () -> service.attachFile(file, Uri.fromFile(upload), mime, upload::delete, () -> FileLog.e("cogram: could not forward a file")));
                 copy = file;
             } else {
@@ -3820,7 +4197,7 @@ final class XmppBackend implements GatewayBackend {
                 }
                 Message message = new Message(conversation, text, Message.ENCRYPTION_NONE);
                 ids.messageId(message.getUuid(), message.getTimeSent());
-                whenEncryptionDecided(conversation, message, () -> FileLog.e("cogram: could not encrypt a forwarded message"),
+                whenEncryptionDecided(conversation, message, reason -> FileLog.e("cogram: forwarded message not sent: " + reason),
                         () -> service.sendMessage(message));
                 copy = message;
             }
