@@ -51,6 +51,9 @@ public class DiscoManager extends AbstractManager {
 
     public static final String CAPABILITY_NODE = "http://conversations.im";
 
+    // Features the app that embeds the engine adds on top of it, announced with the engine's own.
+    public static final Set<String> APP_FEATURES = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
     private final List<String> STATIC_FEATURES =
             Arrays.asList(
                     Namespace.JINGLE,
@@ -336,6 +339,7 @@ public class DiscoManager extends AbstractManager {
         final var account = this.getAccount();
         final ImmutableList.Builder<String> features = ImmutableList.builder();
         features.addAll(STATIC_FEATURES);
+        features.addAll(APP_FEATURES);
         if (Config.MESSAGE_DISPLAYED_SYNCHRONIZATION) {
             features.add(notify(Namespace.MDS_DISPLAYED));
         }

@@ -35,6 +35,13 @@ public final class CogramGateway {
 
     public static final boolean ENABLED = true;
     public static final String ERROR_UNSUPPORTED = "COGRAM_UNSUPPORTED";
+    // A contact publishes no OMEMO keys and the user has not agreed to write to them unencrypted.
+    static final String ERROR_NO_ENCRYPTION = "COGRAM_NO_ENCRYPTION";
+    // The same, for a contact who had keys before, which their server may now be hiding.
+    static final String ERROR_ENCRYPTION_GONE = "COGRAM_ENCRYPTION_GONE";
+    private static final String ERROR_SCHEDULE_TEXT_ONLY = "COGRAM_SCHEDULE_TEXT_ONLY";
+    // A file to be seen once, for a contact not on Phogram on every device, or without encryption.
+    static final String ERROR_TIMED_MEDIA_UNAVAILABLE = "COGRAM_TIMED_MEDIA_UNAVAILABLE";
 
     public interface Reply {
         void run(TLObject response, TLRPC.TL_error error);
@@ -133,10 +140,13 @@ public final class CogramGateway {
     private volatile GatewayBackend backend;
 
     private final NotifySettingsStore notifySettings;
+    // Only the first account has a backend, so only it keeps scheduled messages.
+    private final ScheduledMessages scheduled;
 
     private CogramGateway(int account) {
         this.account = account;
         this.notifySettings = new NotifySettingsStore(account);
+        this.scheduled = account == 0 ? new ScheduledMessages(account) : null;
         selectBackend();
     }
 
@@ -199,6 +209,69 @@ public final class CogramGateway {
         return current != null && current.roomReadersUnknown(chatId);
     }
 
+    /**
+     * A message that was not sent because its contact has no encryption keys: asks whether to write to
+     * them unencrypted, which is never done without that answer. True when the error was this one.
+     */
+    public static boolean handlesSendError(int account, TLRPC.TL_error error, TLObject request) {
+        if (!ENABLED || error == null) {
+            return false;
+        }
+        if (ERROR_SCHEDULE_TEXT_ONLY.equals(error.text) || ERROR_TIMED_MEDIA_UNAVAILABLE.equals(error.text)) {
+            org.telegram.ui.Components.AlertsCreator.showSimpleAlert(null, org.telegram.messenger.LocaleController.getString(
+                    ERROR_SCHEDULE_TEXT_ONLY.equals(error.text) ? org.telegram.messenger.R.string.PhogramScheduleTextOnly
+                            : org.telegram.messenger.R.string.PhogramTimedMediaUnavailable));
+            return true;
+        }
+        boolean keysGone = ERROR_ENCRYPTION_GONE.equals(error.text);
+        if (!keysGone && !ERROR_NO_ENCRYPTION.equals(error.text)) {
+            return false;
+        }
+        TLRPC.InputPeer peer = request instanceof TLRPC.TL_messages_sendMessage ? ((TLRPC.TL_messages_sendMessage) request).peer
+                : request instanceof TLRPC.TL_messages_sendMedia ? ((TLRPC.TL_messages_sendMedia) request).peer
+                : request instanceof TLRPC.TL_messages_sendMultiMedia ? ((TLRPC.TL_messages_sendMultiMedia) request).peer
+                : request instanceof TLRPC.TL_messages_toggleTodoCompleted ? ((TLRPC.TL_messages_toggleTodoCompleted) request).peer
+                : request instanceof TLRPC.TL_messages_appendTodoList ? ((TLRPC.TL_messages_appendTodoList) request).peer
+                : null;
+        long userId = peer == null ? 0 : peer.user_id;
+        if (userId != 0) {
+            UnencryptedSendDialog.show(account, userId, keysGone);
+        }
+        return true;
+    }
+
+    private static boolean schedulesFile(TLObject request) {
+        return request instanceof TLRPC.TL_messages_sendMedia && ((TLRPC.TL_messages_sendMedia) request).schedule_date != 0
+                || request instanceof TLRPC.TL_messages_sendMultiMedia && ((TLRPC.TL_messages_sendMultiMedia) request).schedule_date != 0
+                || request instanceof TLRPC.TL_messages_forwardMessages && ((TLRPC.TL_messages_forwardMessages) request).schedule_date != 0;
+    }
+
+    /**
+     * Timed files that cannot go as such: in an album, or a file sent before, which Telegram names
+     * instead of uploading. A single new one goes through {@link GatewayBackend#sendTimedFile}.
+     */
+    private static boolean sendsTimedMedia(TLObject request) {
+        if (request instanceof TLRPC.TL_messages_sendMedia) {
+            TLRPC.InputMedia media = ((TLRPC.TL_messages_sendMedia) request).media;
+            return media != null && media.ttl_seconds != 0 && mediaRef(media) != 0;
+        }
+        if (request instanceof TLRPC.TL_messages_sendMultiMedia) {
+            for (TLRPC.TL_inputSingleMedia single : ((TLRPC.TL_messages_sendMultiMedia) request).multi_media) {
+                if (single.media != null && single.media.ttl_seconds != 0) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    void allowUnencrypted(long userId) {
+        GatewayBackend current = backend;
+        if (current != null) {
+            current.allowUnencrypted(userId);
+        }
+    }
+
     public static boolean isAssistantDialog(long dialogId) {
         return ENABLED && AssistantBot.isAssistant(dialogId);
     }
@@ -229,8 +302,22 @@ public final class CogramGateway {
         updateTimer.scheduleWithFixedDelay(() -> {
             if (backend != null) {
                 ConnectionsManager.onUpdate(account);
+                tickScheduled();
             }
         }, UPDATE_TICK_MS, UPDATE_TICK_MS, java.util.concurrent.TimeUnit.MILLISECONDS);
+    }
+
+    /** Sends the scheduled messages that are due; also run by their alarm when the app was closed. */
+    void tickScheduled() {
+        GatewayBackend current = backend;
+        if (scheduled != null && current != null) {
+            try {
+                scheduled.tick(current);
+            } catch (RuntimeException e) {
+                // The timer would stop for good on an exception, and with it every later tick.
+                FileLog.e(e);
+            }
+        }
     }
 
     /** Signs the first account in locally, so the app opens on the chat list. */
@@ -346,6 +433,19 @@ public final class CogramGateway {
     }
 
     private TLObject handle(TLObject request) {
+        // Before the assistant, so a message scheduled for its chat waits too.
+        TLObject scheduledResponse = scheduled == null ? null : scheduled.handle(request, backend);
+        if (scheduledResponse != null) {
+            return scheduledResponse;
+        }
+        if (schedulesFile(request)) {
+            // Sending it now would go against what the user asked for.
+            throw new GatewayError(ERROR_SCHEDULE_TEXT_ONLY);
+        }
+        if (sendsTimedMedia(request)) {
+            // Sent as ordinary files, they would stay with the receiver for good.
+            throw new GatewayError(ERROR_TIMED_MEDIA_UNAVAILABLE);
+        }
         // The assistant's chat is answered by the assistant, before the engine sees the request.
         AssistantBot bot = assistant;
         if (bot != null) {
@@ -399,6 +499,23 @@ public final class CogramGateway {
             TLRPC.TL_messages_sendMessage send = (TLRPC.TL_messages_sendMessage) request;
             int replyTo = send.reply_to instanceof TLRPC.TL_inputReplyToMessage ? ((TLRPC.TL_inputReplyToMessage) send.reply_to).reply_to_msg_id : 0;
             return backend.sendText(peerId(send.peer), send.message, replyTo, send.random_id);
+        } else if (request instanceof TLRPC.TL_messages_readMessageContents) {
+            return backend.readContents(((TLRPC.TL_messages_readMessageContents) request).id);
+        } else if (request instanceof TLRPC.TL_messages_toggleTodoCompleted) {
+            TLRPC.TL_messages_toggleTodoCompleted toggle = (TLRPC.TL_messages_toggleTodoCompleted) request;
+            return backend.toggleTodo(toggle.msg_id, toggle.completed, toggle.incompleted);
+        } else if (request instanceof TLRPC.TL_messages_appendTodoList) {
+            TLRPC.TL_messages_appendTodoList append = (TLRPC.TL_messages_appendTodoList) request;
+            return backend.appendTodo(append.msg_id, append.list);
+        } else if (request instanceof TLRPC.TL_messages_editMessage
+                && ((TLRPC.TL_messages_editMessage) request).media instanceof TLRPC.TL_inputMediaTodo) {
+            // A checklist is a text message, so editing it corrects that text.
+            TLRPC.TL_messages_editMessage edit = (TLRPC.TL_messages_editMessage) request;
+            TLRPC.Updates updates = backend.editText(peerId(edit.peer), edit.id, TodoLists.listBody(((TLRPC.TL_inputMediaTodo) edit.media).todo));
+            if (updates == null) {
+                throw new GatewayError("MESSAGE_EDIT_TIME_EXPIRED");
+            }
+            return updates;
         } else if (request instanceof TLRPC.TL_messages_editMessage) {
             TLRPC.TL_messages_editMessage edit = (TLRPC.TL_messages_editMessage) request;
             if (edit.message == null || edit.media != null) {
@@ -851,6 +968,9 @@ public final class CogramGateway {
             String uri = geoUri(media);
             return uri == null ? null : backend.sendText(peerId(request.peer), uri, 0, request.random_id);
         }
+        if (media instanceof TLRPC.TL_inputMediaTodo) {
+            return backend.sendTodo(peerId(request.peer), ((TLRPC.TL_inputMediaTodo) media).todo, request.random_id);
+        }
         long sentBefore = mediaRef(media);
         if (sentBefore != 0) {
             // A picture sent before, which Telegram names instead of uploading it again.
@@ -868,7 +988,11 @@ public final class CogramGateway {
         if (mime == null || mime.isEmpty()) {
             mime = "application/octet-stream";
         }
-        return backend.sendFile(peerId(request.peer), file, mime, photo ? new ArrayList<>() : media.attributes, photo, request.random_id, request.message, null);
+        ArrayList<TLRPC.DocumentAttribute> attributes = photo ? new ArrayList<>() : media.attributes;
+        if (media.ttl_seconds != 0) {
+            return backend.sendTimedFile(peerId(request.peer), file, mime, attributes, photo, request.random_id, request.message, media.ttl_seconds);
+        }
+        return backend.sendFile(peerId(request.peer), file, mime, attributes, photo, request.random_id, request.message, null);
     }
 
     /** The id of a photo or file Telegram names instead of uploading, or 0. */

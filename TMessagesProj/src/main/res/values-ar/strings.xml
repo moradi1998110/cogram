@@ -1534,4 +1534,11 @@
     <string name="PhogramAssistantNotReady">سيتوفر المساعد قريباً.</string>
     <string name="PhogramAssistantSampleReply">هذا رد تجريبي يظهر بالطريقة التي ستظهر بها إجابات المساعد. سيُربط المساعد بخدمة الذكاء الاصطناعي في المرحلة القادمة.\n\nكتبتَ: %1$s</string>
     <string name="PhogramAssistantFailed">تعذّر على المساعد الرد هذه المرة. حاول مجدداً بعد قليل.</string>
+    <string name="PhogramNoEncryptionTitle">غير مشفّرة</string>
+    <string name="PhogramNoEncryptionText">لا توجد مفاتيح تشفير لدى **%1$s**، فلم تُرسل رسالتك. إذا أرسلتها دون تشفير فسيستطيع الخادم قراءتها وحفظها.\n\nبعد الموافقة، اضغط على الرسالة الفاشلة لإرسالها مجدداً.</string>
+    <string name="PhogramEncryptionGoneTitle">اختفت مفاتيح التشفير</string>
+    <string name="PhogramEncryptionGoneText">كان **%1$s** يستخدم التشفير، لكن مفاتيحه غير موجودة الآن. قد يحدث هذا إذا غيّر تطبيقه، أو إذا كان أحد يحاول قراءة رسائلك. لم تُرسل رسالتك.\n\nلا ترسل دون تشفير إلا إذا كنت متأكداً، ثم اضغط على الرسالة الفاشلة لإرسالها مجدداً.</string>
+    <string name="PhogramSendUnencrypted">أرسل دون تشفير</string>
+    <string name="PhogramTimedMediaUnavailable">الصور والفيديوهات التي تختفي بعد المشاهدة تُرسل واحدةً واحدة، مشفّرة، في محادثة فردية مع من يستخدم فوكرام على كل أجهزته. لم يُرسل ملفك، فلن يبقى عند المستلم للأبد.</string>
+    <string name="PhogramScheduleTextOnly">لا يمكن حالياً جدولة سوى الرسائل النصية. أرسل هذه الرسالة الآن، أو جدول نصها.</string>
 </resources>

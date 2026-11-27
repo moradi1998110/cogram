@@ -11914,4 +11914,11 @@
     <string name="PhogramAssistantNotReady">The assistant will be available soon.</string>
     <string name="PhogramAssistantSampleReply">This is a sample reply, written out the way the assistant\'s answers will appear. The assistant will be connected to the AI service in the next step.\n\nYou wrote: %1$s</string>
     <string name="PhogramAssistantFailed">The assistant couldn\'t answer this time. Try again in a moment.</string>
+    <string name="PhogramNoEncryptionTitle">Not encrypted</string>
+    <string name="PhogramNoEncryptionText">**%1$s** has no encryption keys, so your message wasn\'t sent. If you send it unencrypted, the server can read it and keep it.\n\nAfter you agree, tap the failed message to send it again.</string>
+    <string name="PhogramEncryptionGoneTitle">Encryption keys disappeared</string>
+    <string name="PhogramEncryptionGoneText">**%1$s** used encryption before, but their keys can\'t be found now. This can happen if they changed apps, or if someone is trying to read your messages. Your message wasn\'t sent.\n\nSend unencrypted only if you\'re sure. Then tap the failed message to send it again.</string>
+    <string name="PhogramSendUnencrypted">Send unencrypted</string>
+    <string name="PhogramTimedMediaUnavailable">Photos and videos that disappear after viewing can only be sent one at a time, encrypted, in a one-to-one chat with someone who uses Phogram on all their devices. Your file wasn\'t sent, so it won\'t stay with the receiver for good.</string>
+    <string name="PhogramScheduleTextOnly">Only text messages can be scheduled for now. Send this one now, or schedule its text.</string>
 </resources>
