@@ -1,7 +1,12 @@
 package org.telegram.cogram;
 
+import android.content.Context;
+import android.media.AudioManager;
+
+import org.telegram.messenger.ApplicationLoader;
 import org.telegram.messenger.BuildVars;
 import org.telegram.messenger.FileLog;
+import org.telegram.messenger.Utilities;
 import org.telegram.messenger.voip.VideoCapturerDevice;
 import org.telegram.tgnet.TLRPC;
 import org.telegram.tgnet.tl.TL_phone;
@@ -91,6 +96,17 @@ final class XmppCalls implements XmppConnectionService.OnJingleRtpConnectionUpda
     /** Whether the contact's client answers audio or video calls, which decides Telegram's call buttons. */
     static RtpCapability.Capability capability(Contact contact) {
         return RtpCapability.checkWithFallback(contact);
+    }
+
+    /**
+     * Whether a phone call or another app's call is going on, which reading the audio mode tells without a
+     * permission. Only a call in progress counts: the system may set the ringtone mode for our own incoming
+     * call, and nothing of ours is in a call mode before Telegram's call service starts.
+     */
+    static boolean otherCallActive() {
+        AudioManager audio = (AudioManager) ApplicationLoader.applicationContext.getSystemService(Context.AUDIO_SERVICE);
+        int mode = audio == null ? AudioManager.MODE_NORMAL : audio.getMode();
+        return mode == AudioManager.MODE_IN_CALL || mode == AudioManager.MODE_IN_COMMUNICATION;
     }
 
     private JingleManager jingle() {
@@ -257,6 +273,19 @@ final class XmppCalls implements XmppConnectionService.OnJingleRtpConnectionUpda
         WeakReference<JingleRtpConnection> reference = jingle().findJingleRtpConnection(with, sessionId);
         JingleRtpConnection connection = reference == null ? null : reference.get();
         if (connection == null) {
+            return null;
+        }
+        if (otherCallActive()) {
+            // Ringing would cut into a phone call or another app's call. The caller hears busy, and the
+            // chat shows the call as missed so it is not lost.
+            Utilities.globalQueue.postRunnable(() -> {
+                try {
+                    connection.rejectCall();
+                } catch (IllegalStateException e) {
+                    FileLog.e(e);
+                }
+            });
+            peers.callEnded(sessionId, REASON_MISSED);
             return null;
         }
         boolean video = connection.getMedia().contains(Media.VIDEO);

@@ -1,6 +1,13 @@
 package org.telegram.cogram;
 
+import android.content.Context;
+import android.media.AudioManager;
+import android.os.Build;
+import android.telephony.PhoneStateListener;
+import android.telephony.TelephonyManager;
+
 import org.telegram.messenger.AndroidUtilities;
+import org.telegram.messenger.ApplicationLoader;
 import org.telegram.messenger.FileLog;
 import org.telegram.messenger.Utilities;
 import org.telegram.messenger.voip.Instance;
@@ -32,7 +39,9 @@ final class XmppCallInstance extends NativeInstance {
     private VideoTrack attachedLocalTrack;
     private VideoTrack attachedRemoteTrack;
     private boolean established;
-    private boolean stopped;
+    private volatile boolean stopped;
+    // Watches for a phone call answered during ours; used on the UI thread only.
+    private Object phoneWatch;
     private boolean videoRequested;
     private int videoRetries;
     private volatile boolean microphoneMuted;
@@ -41,6 +50,8 @@ final class XmppCallInstance extends NativeInstance {
     XmppCallInstance(JingleRtpConnection connection, VideoSink remoteSink) {
         this.connection = connection;
         this.remoteSink = remoteSink;
+        // A phone state listener needs a looper thread, and the UI thread keeps watching and unwatching in order.
+        AndroidUtilities.runOnUIThread(this::watchPhoneCalls);
     }
 
     /** A key both users derive the same way from the call's DTLS fingerprints, for Telegram's emoji. */
@@ -155,10 +166,80 @@ final class XmppCallInstance extends NativeInstance {
         attachedLocalTrack = null;
     }
 
+    /**
+     * Answering a phone call takes the microphone and speaker from ours, so ours ends then rather than
+     * going on in silence. Neither way of seeing it needs a permission.
+     */
+    private void watchPhoneCalls() {
+        if (stopped) {
+            return;
+        }
+        Context context = ApplicationLoader.applicationContext;
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                AudioManager audio = (AudioManager) context.getSystemService(Context.AUDIO_SERVICE);
+                AudioManager.OnModeChangedListener listener = mode -> {
+                    if (mode == AudioManager.MODE_IN_CALL) {
+                        endConnection();
+                    }
+                };
+                audio.addOnModeChangedListener(context.getMainExecutor(), listener);
+                phoneWatch = listener;
+            } else {
+                TelephonyManager telephony = (TelephonyManager) context.getSystemService(Context.TELEPHONY_SERVICE);
+                PhoneStateListener listener = new PhoneStateListener() {
+                    @Override
+                    public void onCallStateChanged(int state, String number) {
+                        if (state == TelephonyManager.CALL_STATE_OFFHOOK) {
+                            endConnection();
+                        }
+                    }
+                };
+                telephony.listen(listener, PhoneStateListener.LISTEN_CALL_STATE);
+                phoneWatch = listener;
+            }
+        } catch (RuntimeException e) {
+            FileLog.e(e);
+        }
+    }
+
+    private void unwatchPhoneCalls() {
+        Context context = ApplicationLoader.applicationContext;
+        try {
+            if (phoneWatch instanceof PhoneStateListener) {
+                ((TelephonyManager) context.getSystemService(Context.TELEPHONY_SERVICE)).listen((PhoneStateListener) phoneWatch, PhoneStateListener.LISTEN_NONE);
+            } else if (phoneWatch != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                ((AudioManager) context.getSystemService(Context.AUDIO_SERVICE)).removeOnModeChangedListener((AudioManager.OnModeChangedListener) phoneWatch);
+            }
+        } catch (RuntimeException e) {
+            FileLog.e(e);
+        }
+        phoneWatch = null;
+    }
+
+    /**
+     * Ends the engine's call unless it already ended. Telegram can stop its side without asking the
+     * engine to end the call, which would leave our microphone streaming to the other side.
+     */
+    private void endConnection() {
+        Utilities.globalQueue.postRunnable(() -> {
+            if (connection.isTerminated()) {
+                return;
+            }
+            try {
+                connection.endCall();
+            } catch (IllegalStateException e) {
+                FileLog.e(e);
+            }
+        });
+    }
+
     @Override
     public Instance.FinalState stop() {
         stopped = true;
+        AndroidUtilities.runOnUIThread(this::unwatchPhoneCalls);
         detachVideo();
+        endConnection();
         return new Instance.FinalState(null, "", new Instance.TrafficStats(0, 0, 0, 0), false);
     }
 

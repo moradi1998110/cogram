@@ -1541,4 +1541,5 @@
     <string name="PhogramSendUnencrypted">أرسل دون تشفير</string>
     <string name="PhogramTimedMediaUnavailable">الصور والفيديوهات التي تختفي بعد المشاهدة تُرسل واحدةً واحدة، مشفّرة، في محادثة فردية مع من يستخدم فوكرام على كل أجهزته. لم يُرسل ملفك، فلن يبقى عند المستلم للأبد.</string>
     <string name="PhogramScheduleTextOnly">لا يمكن حالياً جدولة سوى الرسائل النصية. أرسل هذه الرسالة الآن، أو جدول نصها.</string>
+    <string name="PhogramOtherCallActive">أنت في مكالمة أخرى، هاتفية أو في تطبيق آخر. أنهِها أولاً ثم اتصل مجدداً.</string>
 </resources>

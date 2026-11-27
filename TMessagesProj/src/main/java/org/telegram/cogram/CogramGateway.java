@@ -730,6 +730,21 @@ public final class CogramGateway {
         return current == null ? null : current.address(userId);
     }
 
+    /**
+     * Stops a call of ours from starting over a phone call or another app's call, which would take its
+     * microphone. True when it was stopped and the user told why.
+     */
+    public static boolean refusesCallDuringOtherCall(android.app.Activity activity) {
+        if (!ENABLED || org.telegram.messenger.voip.VoIPService.getSharedInstance() != null || !XmppCalls.otherCallActive()) {
+            return false;
+        }
+        new org.telegram.ui.ActionBar.AlertDialog.Builder(activity)
+                .setMessage(org.telegram.messenger.LocaleController.getString(org.telegram.messenger.R.string.PhogramOtherCallActive))
+                .setPositiveButton(org.telegram.messenger.LocaleController.getString(org.telegram.messenger.R.string.OK), null)
+                .show();
+        return true;
+    }
+
     /** Creates the engine for a call Telegram's call service is starting, or null when the call is gone. */
     public NativeInstance createCallInstance(long callId, VideoSink remoteSink) {
         GatewayBackend current = backend;

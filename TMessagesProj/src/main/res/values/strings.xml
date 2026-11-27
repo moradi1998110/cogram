@@ -11921,4 +11921,5 @@
     <string name="PhogramSendUnencrypted">Send unencrypted</string>
     <string name="PhogramTimedMediaUnavailable">Photos and videos that disappear after viewing can only be sent one at a time, encrypted, in a one-to-one chat with someone who uses Phogram on all their devices. Your file wasn\'t sent, so it won\'t stay with the receiver for good.</string>
     <string name="PhogramScheduleTextOnly">Only text messages can be scheduled for now. Send this one now, or schedule its text.</string>
+    <string name="PhogramOtherCallActive">You\'re in another call, on the phone or in another app. End it first, then call again.</string>
 </resources>

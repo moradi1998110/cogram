@@ -101,6 +101,9 @@ public class VoIPHelper {
 			}
 			return;
 		}
+		if (org.telegram.cogram.CogramGateway.refusesCallDuringOtherCall(activity)) {
+			return;
+		}
 
 		if (Build.VERSION.SDK_INT >= 23) {
 			int code;
