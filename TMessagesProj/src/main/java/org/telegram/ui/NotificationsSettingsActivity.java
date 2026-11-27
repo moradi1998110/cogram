@@ -44,6 +44,8 @@ import org.telegram.messenger.MessagesController;
 import org.telegram.messenger.MessagesStorage;
 import org.telegram.messenger.NotificationCenter;
 import org.telegram.messenger.NotificationsController;
+import org.telegram.cogram.BackgroundActivity;
+import org.telegram.cogram.CogramGateway;
 import org.telegram.messenger.R;
 import org.telegram.messenger.SharedConfig;
 import org.telegram.messenger.UserConfig;
@@ -103,6 +105,7 @@ public class NotificationsSettingsActivity extends BaseFragment implements Notif
 
     private int notificationsServiceRow;
     private int notificationsServiceConnectionRow;
+    private int phogramBackgroundRow;
 
     private int notificationsSectionRow;
     @Keep
@@ -213,8 +216,17 @@ public class NotificationsSettingsActivity extends BaseFragment implements Notif
         otherSection2Row = rowCount++;
 
         otherSectionRow = rowCount++;
-        notificationsServiceRow = rowCount++;
-        notificationsServiceConnectionRow = rowCount++;
+        if (CogramGateway.ENABLED) {
+            // Phogram's messages come over the XMPP engine's connection, which Telegram's keep-alive service and push
+            // connection do not touch; the phone's settings for that connection have their own page.
+            notificationsServiceRow = -1;
+            notificationsServiceConnectionRow = -1;
+            phogramBackgroundRow = rowCount++;
+        } else {
+            notificationsServiceRow = rowCount++;
+            notificationsServiceConnectionRow = rowCount++;
+            phogramBackgroundRow = -1;
+        }
         androidAutoAlertRow = -1;
         repeatRow = rowCount++;
         resetSection2Row = rowCount++;
@@ -754,6 +766,8 @@ public class NotificationsSettingsActivity extends BaseFragment implements Notif
                         }
                     }
                 }
+            } else if (position == phogramBackgroundRow) {
+                presentFragment(new BackgroundActivity());
             } else if (position == notificationsServiceRow) {
                 SharedPreferences preferences = MessagesController.getNotificationsSettings(currentAccount);
                 enabled = preferences.getBoolean("pushService", getMessagesController().keepAliveService);
@@ -1147,7 +1161,9 @@ public class NotificationsSettingsActivity extends BaseFragment implements Notif
                 case 5: {
                     TextSettingsCell textCell = (TextSettingsCell) holder.itemView;
                     SharedPreferences preferences = MessagesController.getNotificationsSettings(currentAccount);
-                    if (position == callsRingtoneRow) {
+                    if (position == phogramBackgroundRow) {
+                        textCell.setText(getString(R.string.PhogramBackground), true);
+                    } else if (position == callsRingtoneRow) {
                         String value = preferences.getString("CallsRingtone", getString("DefaultRingtone", R.string.DefaultRingtone));
                         if (value.equals("NoSound")) {
                             value = getString("NoSound", R.string.NoSound);

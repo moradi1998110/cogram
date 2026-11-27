@@ -12,6 +12,7 @@ import android.annotation.SuppressLint;
 import android.app.Activity;
 import eu.siacs.conversations.Conversations;
 import eu.siacs.conversations.services.ExternalCallUi;
+import eu.siacs.conversations.services.NotificationService;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -35,6 +36,7 @@ import androidx.annotation.NonNull;
 
 
 import org.json.JSONObject;
+import org.telegram.cogram.BackgroundHealth;
 import org.telegram.cogram.CogramGateway;
 import org.telegram.cogram.CrashReporter;
 import org.telegram.messenger.utils.Choreographer60FpsContent;
@@ -348,6 +350,9 @@ public class ApplicationLoader extends Conversations {
                 super.onActivityStarted(activity);
                 if (wasInBackground) {
                     ensureCurrentNetworkGet(true);
+                    if (CogramGateway.ENABLED) {
+                        BackgroundHealth.keepEngineRunning(applicationContext);
+                    }
                 }
             }
         };
@@ -368,7 +373,11 @@ public class ApplicationLoader extends Conversations {
             // a swipe away. Telegram's call screen must ring then too, and only the gateway set up by
             // the accounts can start it, so the accounts start here as they would for a push.
             ExternalCallUi.enable(null);
+            // Signing out is in Phogram's settings. The engine's log out on its notification would stop the
+            // connection until the process restarts, even with the app open.
+            NotificationService.showLogOutAction = false;
             AndroidUtilities.runOnUIThread(ApplicationLoader::postInitApplication);
+            BackgroundHealth.recordStops(applicationContext);
         }
 
         LauncherIconController.tryFixLauncherIconIfNeeded();
