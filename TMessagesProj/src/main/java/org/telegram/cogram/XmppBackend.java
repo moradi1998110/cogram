@@ -9,6 +9,7 @@ import android.content.SharedPreferences;
 import android.graphics.BitmapFactory;
 import android.net.Uri;
 import android.os.IBinder;
+import android.os.PowerManager;
 import android.text.TextUtils;
 
 import org.telegram.messenger.ApplicationLoader;
@@ -58,6 +59,7 @@ import eu.siacs.conversations.entities.RtpSessionStatus;
 import eu.siacs.conversations.entities.Transferable;
 import eu.siacs.conversations.persistance.DatabaseBackend;
 import eu.siacs.conversations.persistance.FileBackend;
+import eu.siacs.conversations.utils.Compatibility;
 import eu.siacs.conversations.utils.MimeUtils;
 import eu.siacs.conversations.services.XmppConnectionService;
 import eu.siacs.conversations.ui.interfaces.OnAvatarPublication;
@@ -116,6 +118,8 @@ final class XmppBackend implements GatewayBackend {
     private final SharedPreferences preferences = context.getSharedPreferences("cogram_xmpp", Activity.MODE_PRIVATE);
     private final XmppIdMap ids = new XmppIdMap(context);
     private final ExecutorService events = Executors.newSingleThreadExecutor();
+    private static final long SYNC_WAKE_LOCK_MS = 5_000;
+    private final PowerManager.WakeLock syncWakeLock = createSyncWakeLock(context);
     // Chats whose server archive is being fetched for a history answer; see whenHistoryReady.
     private final Set<Long> awaitingArchive = java.util.concurrent.ConcurrentHashMap.newKeySet();
     private final java.util.concurrent.ScheduledExecutorService archiveWaits = Executors.newSingleThreadScheduledExecutor();
@@ -266,14 +270,22 @@ final class XmppBackend implements GatewayBackend {
         self = createUser(selfId, address.getLocal(), address.getLocal(), null, onlineStatus(), true);
         // Announced from the first presence on, so contacts know they may send files seen once.
         DiscoManager.APP_FEATURES.add(TimedMedia.FEATURE);
-        Intent intent = new Intent(context, XmppConnectionService.class);
-        try {
-            context.startService(intent);
-        } catch (Exception e) {
-            // Starting is refused in the background, and binding below still creates the service.
-            FileLog.e(e);
+        // Started as a foreground service, the one way Android lets its connection run on with no screen open.
+        // Android refuses it in the background without an exemption; the binding below still creates the service,
+        // and the app's next time on screen starts it again (BackgroundHealth.keepEngineRunning).
+        Compatibility.startService(context, new Intent(context, XmppConnectionService.class));
+        context.bindService(new Intent(context, XmppConnectionService.class), connection, Context.BIND_AUTO_CREATE);
+    }
+
+    /** One lock for every sync, so a burst of messages keeps the phone awake once, not once per message. */
+    private static PowerManager.WakeLock createSyncWakeLock(Context context) {
+        PowerManager power = context.getSystemService(PowerManager.class);
+        if (power == null) {
+            return null;
         }
-        context.bindService(intent, connection, Context.BIND_AUTO_CREATE);
+        PowerManager.WakeLock lock = power.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "phogram:sync");
+        lock.setReferenceCounted(false);
+        return lock;
     }
 
     static boolean hasAccount(Context context) {
@@ -345,6 +357,11 @@ final class XmppBackend implements GatewayBackend {
     }
 
     private void scheduleSync() {
+        // What arrived must reach Telegram's notification before the phone sleeps again. Telegram posts it on its
+        // own queues after sync() returns, so the lock runs out by itself rather than being released here.
+        if (syncWakeLock != null) {
+            syncWakeLock.acquire(SYNC_WAKE_LOCK_MS);
+        }
         if (syncPending.compareAndSet(false, true)) {
             events.execute(() -> {
                 syncPending.set(false);

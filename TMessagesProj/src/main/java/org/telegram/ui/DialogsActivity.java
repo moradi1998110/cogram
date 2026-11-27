@@ -7096,6 +7096,9 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
                     }
                 }, afterSignup && (hasNotContactsPermission || hasNotNotificationsPermission) ? 4000 : 0);
             }
+        } else if (!onlySelect && folderId == 0 && communityId == 0 && getParentActivity() != null && org.telegram.cogram.BackgroundHealth.shouldAskBattery(getParentActivity())) {
+            // Phogram has no push service, so with battery optimization the phone may stop its connection unseen.
+            showDialog(org.telegram.cogram.BackgroundHealth.createBatteryDialog(getParentActivity()));
         } else if (!onlySelect && folderId == 0 && communityId == 0 && XiaomiUtilities.isMIUI() && !XiaomiUtilities.isCustomPermissionGranted(XiaomiUtilities.OP_SHOW_WHEN_LOCKED)) {
             if (getParentActivity() == null) {
                 return;

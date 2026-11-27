@@ -92,6 +92,13 @@ public class NotificationService {
 
     public static final Object CATCHUP_LOCK = new Object();
 
+    /**
+     * Whether the foreground notification offers to log out. An app embedding the engine that signs out in its
+     * own settings turns it off: the soft log out lasts until the engine's own activities come back, which such
+     * an app never shows.
+     */
+    public static volatile boolean showLogOutAction = true;
+
     private static final int LED_COLOR = 0xff00ff00;
 
     private static final long[] CALL_PATTERN = {0, 500, 300, 600, 3000};
@@ -1864,13 +1871,15 @@ public class NotificationService {
 
         if (Compatibility.twentySix()) {
             mBuilder.setChannelId("foreground");
-            mBuilder.addAction(
-                    R.drawable.ic_logout_24dp,
-                    mXmppConnectionService.getString(R.string.log_out),
-                    pendingServiceIntent(
-                            mXmppConnectionService,
-                            XmppConnectionService.ACTION_TEMPORARILY_DISABLE,
-                            87));
+            if (showLogOutAction) {
+                mBuilder.addAction(
+                        R.drawable.ic_logout_24dp,
+                        mXmppConnectionService.getString(R.string.log_out),
+                        pendingServiceIntent(
+                                mXmppConnectionService,
+                                XmppConnectionService.ACTION_TEMPORARILY_DISABLE,
+                                87));
+            }
             mBuilder.addAction(
                     R.drawable.ic_notifications_off_24dp,
                     mXmppConnectionService.getString(R.string.hide_notification),
